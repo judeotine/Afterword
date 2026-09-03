@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/hlog"
 )
@@ -103,7 +105,7 @@ func schemaState(ctx context.Context, pinger Pinger) (string, error) {
 
 	version, dirty, err := reporter.SchemaVersion(ctx)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) || isUndefinedTable(err) {
 			return migrationsPending, nil
 		}
 		return migrationsUnknown, err
@@ -123,6 +125,11 @@ func schemaState(ctx context.Context, pinger Pinger) (string, error) {
 	default:
 		return migrationsOK, nil
 	}
+}
+
+func isUndefinedTable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UndefinedTable
 }
 
 func schemaReporterFor(pinger Pinger) (SchemaReporter, bool) {

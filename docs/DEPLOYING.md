@@ -52,9 +52,13 @@ bash /path/to/deploy/bootstrap.sh
 `deploy/bootstrap.sh` is idempotent; run it as often as you like. It:
 
 1. installs `ca-certificates curl git gnupg fail2ban ufw unattended-upgrades`;
-2. writes `/etc/docker/daemon.json` with `json-file` logging capped at 10 MB ×
-   3 files, backing up any existing file first and restarting Docker only if
-   the contents actually changed;
+2. makes sure `/etc/docker/daemon.json` caps `json-file` logging at 10 MB × 3
+   files. An existing file is **merged**, not replaced: `python3` (or `jq`)
+   fills in only the missing keys, so your own settings and any log sizes you
+   already chose survive. The previous file is copied to a timestamped `.bak`
+   and the path is logged. If the file exists and neither tool is available,
+   the script refuses and prints the keys to add rather than guessing. Docker
+   is restarted only when the contents actually changed;
 3. installs Docker Engine and the Compose plugin from Docker's own apt
    repository, and enables the service;
 4. creates the `afterword` user, adds it to the `docker` group, and creates
@@ -121,7 +125,7 @@ openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 | `S3_BUCKETS` | Space-separated list used by `minio-init` and by the backup job. |
 | `PRIVACY_URL` | **Required by the bot image.** The consent announcement reads this URL to every participant, so it must describe *this* deployment. Compose refuses to render without it. |
 | `BOT_WORKER_REPLICAS` | Bots per box. One on a 4 GB box; see section 7. |
-| `BACKUP_*` | Offsite target. `BACKUP_PROVIDER` is an rclone S3 provider name (`Cloudflare` for R2, `Other` for B2's S3 API). `BACKUP_MAX_DELETE` caps how many objects one mirror may delete off site. |
+| `BACKUP_*` | Offsite target. `BACKUP_PROVIDER` is an rclone S3 provider name (`Cloudflare` for R2, `Other` for B2's S3 API). `BACKUP_MAX_DELETE` (default 1000) caps how many objects one mirror may delete off site; see section 8 before raising it. |
 
 ### `deploy/api.env`
 
@@ -218,9 +222,9 @@ signal every automated check uses.
 |---|---|---|---|
 | `up` | `ok` | 200 | Database answers and the schema matches the migrations in this image. |
 | `up` | `ahead` | 200 | The schema is newer than this image — normal during a rollback, which is why it is not a failure. |
-| `up` | `pending` | 503 | Migrations have not been run, or the schema is behind this image. |
+| `up` | `pending` | 503 | Migrations have never been run (`schema_migrations` does not exist, or is empty), or the schema is behind this image. |
 | `up` | `dirty` | 503 | A migration failed part way through. Needs a human; see section 6. |
-| `up` | `unknown` | 503 | `schema_migrations` could not be read. |
+| `up` | `unknown` | 503 | `schema_migrations` could not be read for some other reason — a permissions problem, or a driver error. |
 | `down` | `unknown` | 503 | The database is unreachable. |
 | `unknown` | `unknown` | 503 | The process started without a database pool at all. |
 
@@ -333,6 +337,41 @@ Take a backup (`docker compose exec backup /usr/local/bin/backup.sh --once`)
 before you start, and prefer restoring last night's dump over hand-editing if
 the failed migration wrote data.
 
+### Upgrading an existing box to the two-file configuration
+
+Boxes bootstrapped before the `.env` / `api.env` split have one file, and the
+`api` service now expects two. The deploy workflow checks for `deploy/api.env`
+**before** it touches `.env`, `.last_tag` or any container: if the file is
+missing it prints this procedure and stops, leaving the running stack exactly
+as it was. Do the migration once, by hand, as the `afterword` user:
+
+```bash
+cd /opt/afterword/deploy
+cp api.env.example api.env && chmod 600 api.env
+```
+
+Then move these values out of `.env` and into `api.env`, keeping your real
+secrets rather than the example placeholders:
+
+`JWT_SECRET`, `DATABASE_MAX_CONNS`, `TRUSTED_PROXY_CIDRS`, `REQUEST_TIMEOUT`,
+`SHUTDOWN_TIMEOUT`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`GOOGLE_REDIRECT_URL`, `EMAIL_SENDER`, `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMS_SENDER`,
+and the four `S3_BUCKET_*` names.
+
+Delete those lines from `.env`, and add the two variables the split introduced:
+`COMPOSE_PROFILES=` (empty unless you run workers) and
+`BACKUP_MAX_DELETE=1000`. Quote `SMTP_FROM` if it contains spaces. Then check
+your work before re-running the deploy:
+
+```bash
+docker compose config -q
+docker compose config | grep -A2 'SMTP_FROM\|JWT_SECRET'
+```
+
+`docker compose config -q` fails loudly on anything still missing, which is
+much cheaper than finding out during a deploy.
+
 ### By hand
 
 ```bash
@@ -416,10 +455,15 @@ The `backup` container runs `backup.sh --loop`, which sleeps until
 6. prunes off-site dumps and soft-deleted objects older than
    `BACKUP_RETENTION_DAYS` (30).
 
-Every step is checked. If any one fails, the run stops there, logs
-`backup failed`, and — in `--loop` mode — waits for the next window rather than
-reporting success. A truncated dump is never uploaded and never announced as
-complete.
+Every step is checked. If any one fails, the run logs `backup failed` and —
+in `--loop` mode — waits for the next window rather than reporting success. A
+truncated dump is never uploaded and never announced as complete.
+
+The database steps are strictly sequential: a failed dump or upload stops the
+run immediately. Object mirroring is not. Each bucket is mirrored on its own,
+a failure is logged and counted, and the remaining buckets are still mirrored
+and the off-site prune still runs, so one broken bucket cannot quietly skip the
+others or let retention drift. The run then reports failure overall.
 
 ### The mirror guards
 
@@ -430,8 +474,13 @@ things prevent that:
 - **Empty-source refusal.** If a bucket lists zero objects but the off-site
   copy is not empty, the run fails loudly instead of syncing. If both are
   empty — a fresh deployment — it logs and moves on.
-- **`--max-delete $BACKUP_MAX_DELETE`** (default 100) aborts a sync that would
-  delete more than that many objects.
+- **`--max-delete $BACKUP_MAX_DELETE`** (default 1000) aborts a sync that would
+  delete more than that many objects. This is a tripwire, not a policy: a
+  legitimate large sweep — a retention run that expires a year of audio, or a
+  workspace deleting thousands of meetings — will trip it, and that bucket will
+  then **fail every night** until you raise `BACKUP_MAX_DELETE` in `deploy/.env`
+  and restart the backup container. Confirm the deletions were intended, raise
+  it for one run, then put it back.
 - **`--backup-dir …/deleted/<stamp>/<bucket>`** turns every deletion into a
   dated soft-delete, kept for `BACKUP_RETENTION_DAYS`. A wrong sync is
   recoverable for 30 days.

@@ -62,11 +62,8 @@ install_base_packages() {
         unattended-upgrades
 }
 
-configure_docker_daemon() {
-    log "configuring docker log caps"
-    install -d -m 0755 /etc/docker
-    staged=$(mktemp)
-    cat >"$staged" <<'CONF'
+docker_daemon_defaults() {
+    cat <<'CONF'
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -75,16 +72,68 @@ configure_docker_daemon() {
   }
 }
 CONF
+}
+
+merge_docker_daemon() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$1" <<'MERGE'
+import json
+import sys
+
+with open(sys.argv[1]) as handle:
+    data = json.load(handle)
+
+data.setdefault("log-driver", "json-file")
+options = data.setdefault("log-opts", {})
+options.setdefault("max-size", "10m")
+options.setdefault("max-file", "3")
+
+json.dump(data, sys.stdout, indent=2, sort_keys=True)
+sys.stdout.write("\n")
+MERGE
+        return $?
+    fi
+    if command -v jq >/dev/null 2>&1; then
+        jq '."log-driver" //= "json-file"
+            | ."log-opts" //= {}
+            | ."log-opts"."max-size" //= "10m"
+            | ."log-opts"."max-file" //= "3"' "$1"
+        return $?
+    fi
+    return 1
+}
+
+configure_docker_daemon() {
+    log "configuring docker log caps"
+    install -d -m 0755 /etc/docker
+
+    staged=$(mktemp)
+    if [ ! -f /etc/docker/daemon.json ]; then
+        docker_daemon_defaults >"$staged"
+    elif ! merge_docker_daemon /etc/docker/daemon.json >"$staged"; then
+        rm -f "$staged"
+        log "/etc/docker/daemon.json exists but neither python3 nor jq is available to merge into it"
+        log "add these keys by hand, then run this script again:"
+        log '  "log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}'
+        fail "refusing to overwrite /etc/docker/daemon.json"
+    fi
+
     if [ -f /etc/docker/daemon.json ] && cmp -s "$staged" /etc/docker/daemon.json; then
         rm -f "$staged"
+        log "docker log caps already in place"
         return 0
     fi
+
     if [ -f /etc/docker/daemon.json ]; then
-        cp /etc/docker/daemon.json "/etc/docker/daemon.json.$(date -u +%Y%m%dT%H%M%SZ).bak"
+        saved="/etc/docker/daemon.json.$(date -u +%Y%m%dT%H%M%SZ).bak"
+        cp /etc/docker/daemon.json "$saved"
+        log "saved the previous daemon.json to $saved"
     fi
+
     install -m 0644 "$staged" /etc/docker/daemon.json
     rm -f "$staged"
     DOCKER_DAEMON_CHANGED=true
+    log "wrote /etc/docker/daemon.json"
 }
 
 install_docker() {

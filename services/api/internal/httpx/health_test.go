@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type stubPinger struct {
@@ -182,6 +183,17 @@ func TestHealthReportsPendingWhenNoMigrationHasRun(t *testing.T) {
 	assertHealth(t, serveHealth(t, pinger), http.StatusServiceUnavailable, "pending")
 	if pinger.schemaCalls != 1 {
 		t.Errorf("schema read called %d times, want 1", pinger.schemaCalls)
+	}
+}
+
+func TestHealthReportsPendingWhenTheMigrationsTableDoesNotExist(t *testing.T) {
+	pinger := &stubPinger{schemaErr: &pgconn.PgError{Code: "42P01", Message: "relation \"schema_migrations\" does not exist"}}
+
+	recorder := serveHealth(t, pinger)
+
+	assertHealth(t, recorder, http.StatusServiceUnavailable, "pending")
+	if body := recorder.Body.String(); strings.Contains(body, "schema_migrations") {
+		t.Errorf("response leaks driver detail: %s", body)
 	}
 }
 

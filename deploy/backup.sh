@@ -5,7 +5,7 @@ STAGING_DIR=${STAGING_DIR:-/backups}
 BACKUP_PREFIX=${BACKUP_PREFIX:-afterword}
 BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
 BACKUP_HOUR_UTC=${BACKUP_HOUR_UTC:-3}
-BACKUP_MAX_DELETE=${BACKUP_MAX_DELETE:-100}
+BACKUP_MAX_DELETE=${BACKUP_MAX_DELETE:-1000}
 BUCKETS=${BUCKETS:-audio transcripts clips exports}
 USAGE="usage: backup.sh [--once|--loop]"
 
@@ -92,9 +92,18 @@ mirror_bucket() {
 
 mirror_objects() {
     stamp=$1
+    failures=0
     for bucket in $BUCKETS; do
-        mirror_bucket "$bucket" "$stamp" || return 1
+        if mirror_bucket "$bucket" "$stamp"; then
+            continue
+        fi
+        log "mirror of $bucket failed, continuing with the remaining buckets"
+        failures=$(( failures + 1 ))
     done
+    if [ "$failures" -gt 0 ]; then
+        log "$failures of the configured buckets failed to mirror"
+        return 1
+    fi
 }
 
 prune_offsite() {
@@ -112,8 +121,16 @@ run_backup() {
     dump_database "$dump_file" || return 1
     upload_dump "$dump_file" || return 1
     rm -f "$dump_file" || return 1
-    mirror_objects "$stamp" || return 1
-    prune_offsite || return 1
+
+    mirrored=0
+    mirror_objects "$stamp" || mirrored=1
+
+    pruned=0
+    prune_offsite || pruned=1
+
+    if [ "$mirrored" -ne 0 ] || [ "$pruned" -ne 0 ]; then
+        return 1
+    fi
 
     log "backup complete in $(( $(date -u +%s) - started ))s"
 }

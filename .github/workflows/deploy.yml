@@ -198,6 +198,19 @@ jobs:
             git checkout --detach "$GIT_REF"
             cd "$APP_DIR/deploy"
 
+            if [ ! -f api.env ]; then
+              echo "deploy/api.env is missing on this box" >&2
+              echo "this release splits deploy/.env into two files and nothing has been changed yet" >&2
+              echo "on the box, in /opt/afterword/deploy, as the afterword user:" >&2
+              echo "  cp api.env.example api.env && chmod 600 api.env" >&2
+              echo "  move JWT_SECRET, DATABASE_MAX_CONNS, TRUSTED_PROXY_CIDRS, REQUEST_TIMEOUT," >&2
+              echo "  SHUTDOWN_TIMEOUT, the GOOGLE_ and SMTP_ values, SMS_SENDER and the S3_BUCKET_" >&2
+              echo "  values from .env into api.env, then delete them from .env" >&2
+              echo "  docker compose config -q" >&2
+              echo "then re-run this workflow" >&2
+              exit 1
+            fi
+
             PREVIOUS_TAG=$(cat .last_tag 2>/dev/null || echo "")
 
             write_tag() {
