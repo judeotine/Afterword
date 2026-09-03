@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,11 +17,19 @@ import (
 type LookupFunc func(key string) (string, bool)
 
 type S3Config struct {
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	Region    string
-	UseSSL    bool
+	Endpoint          string
+	AccessKey         string
+	SecretKey         string
+	Region            string
+	UseSSL            bool
+	UsePathStyle      bool
+	AudioBucket       string
+	TranscriptsBucket string
+	ClipsBucket       string
+	ExportsBucket     string
+	UploadTTL         time.Duration
+	DownloadTTL       time.Duration
+	MaxAudioBytes     int64
 }
 
 type SMTPConfig struct {
@@ -84,11 +93,19 @@ func Load(lookup LookupFunc) (Config, error) {
 		APIBaseURL:       reader.baseURL("API_BASE_URL", "http://localhost:8080"),
 		LogLevel:         reader.logLevel("LOG_LEVEL", "info"),
 		S3: S3Config{
-			Endpoint:  reader.optional("S3_ENDPOINT", "http://localhost:9000"),
-			AccessKey: reader.optional("S3_ACCESS_KEY", ""),
-			SecretKey: reader.optional("S3_SECRET_KEY", ""),
-			Region:    reader.optional("S3_REGION", "us-east-1"),
-			UseSSL:    reader.boolean("S3_USE_SSL", false),
+			Endpoint:          reader.optional("S3_ENDPOINT", "http://localhost:9000"),
+			AccessKey:         reader.optional("S3_ACCESS_KEY", ""),
+			SecretKey:         reader.optional("S3_SECRET_KEY", ""),
+			Region:            reader.optional("S3_REGION", "us-east-1"),
+			UseSSL:            reader.boolean("S3_USE_SSL", false),
+			UsePathStyle:      reader.boolean("S3_USE_PATH_STYLE", true),
+			AudioBucket:       reader.bucket("S3_BUCKET_AUDIO", "audio"),
+			TranscriptsBucket: reader.bucket("S3_BUCKET_TRANSCRIPTS", "transcripts"),
+			ClipsBucket:       reader.bucket("S3_BUCKET_CLIPS", "clips"),
+			ExportsBucket:     reader.bucket("S3_BUCKET_EXPORTS", "exports"),
+			UploadTTL:         reader.duration("S3_UPLOAD_TTL", 30*time.Minute),
+			DownloadTTL:       reader.duration("S3_DOWNLOAD_TTL", 15*time.Minute),
+			MaxAudioBytes:     int64(reader.boundedInt("S3_MAX_AUDIO_MB", 2048, 1, 102400)) << 20,
 		},
 		Auth: AuthConfig{
 			GoogleClientID:     reader.optional("GOOGLE_CLIENT_ID", ""),
@@ -141,6 +158,10 @@ var (
 	emailSenders = []string{emailSenderLog, emailSenderSMTP}
 	smsSenders   = []string{smsSenderLog, smsSenderNoop}
 )
+
+func (c Config) StorageConfigured() bool {
+	return c.S3.Endpoint != "" && c.S3.AccessKey != "" && c.S3.SecretKey != ""
+}
 
 func (c Config) GoogleConfigured() bool {
 	return c.Auth.GoogleClientID != "" && c.Auth.GoogleClientSecret != ""
@@ -298,6 +319,21 @@ func (r *reader) choice(key, fallback string, allowed []string) string {
 	}
 	r.reject(key, "must be one of "+strings.Join(allowed, ", "))
 	return fallback
+}
+
+var bucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+
+func (r *reader) bucket(key, fallback string) string {
+	value, ok := r.raw(key)
+	if !ok {
+		return fallback
+	}
+	name := strings.ToLower(value)
+	if !bucketPattern.MatchString(name) {
+		r.reject(key, "must be a valid bucket name of lowercase letters, numbers, dots and dashes")
+		return fallback
+	}
+	return name
 }
 
 func (r *reader) baseURL(key, fallback string) string {

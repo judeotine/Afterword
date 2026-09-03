@@ -326,3 +326,70 @@ func TestAuthRejectsIncompleteConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestStorageDefaults(t *testing.T) {
+	cfg, err := Load(lookupFrom(baseEnv()))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.S3.AudioBucket != "audio" || cfg.S3.TranscriptsBucket != "transcripts" {
+		t.Fatalf("unexpected buckets: %+v", cfg.S3)
+	}
+	if cfg.S3.ClipsBucket != "clips" || cfg.S3.ExportsBucket != "exports" {
+		t.Fatalf("unexpected buckets: %+v", cfg.S3)
+	}
+	if !cfg.S3.UsePathStyle {
+		t.Fatal("path style addressing should be the default for MinIO")
+	}
+	if cfg.S3.UploadTTL != 30*time.Minute || cfg.S3.DownloadTTL != 15*time.Minute {
+		t.Fatalf("unexpected presign windows: %v %v", cfg.S3.UploadTTL, cfg.S3.DownloadTTL)
+	}
+	if cfg.S3.MaxAudioBytes != 2048<<20 {
+		t.Fatalf("max audio bytes %d", cfg.S3.MaxAudioBytes)
+	}
+	if cfg.StorageConfigured() {
+		t.Fatal("storage reported itself configured without credentials")
+	}
+}
+
+func TestStorageOverrides(t *testing.T) {
+	env := baseEnv()
+	env["S3_ACCESS_KEY"] = "key"
+	env["S3_SECRET_KEY"] = "secret"
+	env["S3_BUCKET_AUDIO"] = "Recordings"
+	env["S3_BUCKET_TRANSCRIPTS"] = "notes"
+	env["S3_USE_PATH_STYLE"] = "false"
+	env["S3_MAX_AUDIO_MB"] = "64"
+
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.S3.AudioBucket != "recordings" || cfg.S3.TranscriptsBucket != "notes" {
+		t.Fatalf("unexpected buckets: %+v", cfg.S3)
+	}
+	if cfg.S3.UsePathStyle {
+		t.Fatal("path style addressing was not disabled")
+	}
+	if cfg.S3.MaxAudioBytes != 64<<20 {
+		t.Fatalf("max audio bytes %d", cfg.S3.MaxAudioBytes)
+	}
+	if !cfg.StorageConfigured() {
+		t.Fatal("storage should be configured once credentials are present")
+	}
+}
+
+func TestStorageRejectsABadBucketName(t *testing.T) {
+	env := baseEnv()
+	env["S3_BUCKET_CLIPS"] = "Not A Bucket!"
+
+	_, err := Load(lookupFrom(env))
+	if err == nil {
+		t.Fatal("a malformed bucket name was accepted")
+	}
+	if !strings.Contains(err.Error(), "S3_BUCKET_CLIPS") {
+		t.Fatalf("error %v does not name the variable", err)
+	}
+}
