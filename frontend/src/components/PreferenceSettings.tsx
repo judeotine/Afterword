@@ -14,7 +14,8 @@ export function PreferenceSettings() {
     storageLocations,
     isLoadingPreferences,
     loadPreferences,
-    updateNotificationSettings
+    updateNotificationSettings,
+    refreshNotificationSettings
   } = useConfig();
 
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
@@ -139,6 +140,9 @@ export function PreferenceSettings() {
     setConsentGiven(consent);
     try {
       await invoke('set_notification_consent', { consent });
+      // Consent lives in the backend; pull the stored state back into the
+      // context so later settings writes are not built on a stale copy.
+      await refreshNotificationSettings();
     } catch (error) {
       console.error('Failed to update notification consent:', error);
       setConsentGiven(!consent);

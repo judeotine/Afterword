@@ -196,21 +196,31 @@ impl<R: Runtime> NotificationManager<R> {
     }
 
     /// Update notification settings
+    ///
+    /// The payload comes from the UI, which caches the whole struct and can send
+    /// a stale copy; consent and permission state is therefore taken from the
+    /// live settings rather than the payload. Those change only through
+    /// [`Self::set_consent`] and [`Self::request_permission`].
     pub async fn update_settings(&self, new_settings: NotificationSettings) -> Result<()> {
         log_info!("📝 Updating notification settings:");
         log_info!("   show_recording_started: {}", new_settings.notification_preferences.show_recording_started);
         log_info!("   show_recording_stopped: {}", new_settings.notification_preferences.show_recording_stopped);
 
+        let merged = {
+            let current = self.settings.read().await;
+            crate::notifications::settings::preserve_consent_state(&current, new_settings)
+        };
+
         // Validate settings
-        crate::notifications::settings::validate_settings(&new_settings)?;
+        crate::notifications::settings::validate_settings(&merged)?;
 
         // Save to disk
-        self.consent_manager.save_settings(&new_settings).await?;
+        self.consent_manager.save_settings(&merged).await?;
         log_info!("💾 Settings saved to disk");
 
         // Update in-memory settings
         let mut settings = self.settings.write().await;
-        *settings = new_settings;
+        *settings = merged;
 
         log_info!("✅ Notification settings updated successfully");
         Ok(())
@@ -348,4 +358,170 @@ pub struct NotificationStats {
     pub system_dnd_active: bool,
     pub recording_notifications_enabled: bool,
     pub meeting_reminders_enabled: bool,
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notifications::settings::NotificationSettings;
+    use std::sync::Mutex as StdMutex;
+
+    /// The settings file path is process-wide, so tests that redirect it run one
+    /// at a time.
+    static SETTINGS_ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    struct TestApp {
+        _dir: tempfile::TempDir,
+        _app: tauri::App<tauri::test::MockRuntime>,
+        manager: NotificationManager<tauri::test::MockRuntime>,
+    }
+
+    /// Build a NotificationManager backed by a throwaway settings file. The
+    /// optional `existing` settings are written before the manager loads them.
+    async fn test_manager(existing: Option<&str>) -> TestApp {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("notifications.json");
+        if let Some(contents) = existing {
+            std::fs::write(&path, contents).expect("seed settings");
+        }
+        std::env::set_var("AFTERWORD_TEST_NOTIFICATION_SETTINGS", &path);
+
+        let app = tauri::test::mock_app();
+        let manager = NotificationManager::new(app.handle().clone())
+            .await
+            .expect("notification manager");
+
+        TestApp {
+            _dir: dir,
+            _app: app,
+            manager,
+        }
+    }
+
+    #[tokio::test]
+    async fn update_settings_cannot_revoke_consent() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
+        let app = test_manager(None).await;
+        let manager = &app.manager;
+
+        manager.set_consent(true).await.unwrap();
+        assert!(manager.get_settings().await.consent_given);
+
+        // A stale payload from the UI still carrying consent_given: false.
+        let mut stale = manager.get_settings().await;
+        stale.consent_given = false;
+        stale.system_permission_granted = false;
+        stale.consent_migration_v1 = false;
+        stale.respect_do_not_disturb = false;
+
+        manager.update_settings(stale).await.unwrap();
+
+        let settings = manager.get_settings().await;
+        assert!(
+            settings.consent_given,
+            "consent must survive a settings write"
+        );
+        assert!(
+            settings.system_permission_granted,
+            "system permission must survive a settings write"
+        );
+        assert!(
+            settings.consent_migration_v1,
+            "migration marker must survive a settings write"
+        );
+        // The fields the payload is actually allowed to change still apply.
+        assert!(!settings.respect_do_not_disturb);
+    }
+
+    #[tokio::test]
+    async fn set_consent_false_still_revokes_consent() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
+        let app = test_manager(None).await;
+        let manager = &app.manager;
+
+        manager.set_consent(true).await.unwrap();
+        manager.set_consent(false).await.unwrap();
+
+        assert!(!manager.get_settings().await.consent_given);
+    }
+
+    #[tokio::test]
+    async fn auto_granted_consent_is_reset_once_for_upgrades() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
+        // Settings as written by a build that auto-granted consent at startup:
+        // no consent_migration_v1 marker.
+        let legacy = serde_json::json!({
+            "recording_notifications": true,
+            "time_based_reminders": true,
+            "meeting_reminders": true,
+            "respect_do_not_disturb": true,
+            "notification_sound": true,
+            "system_permission_granted": true,
+            "consent_given": true,
+            "manual_dnd_mode": false,
+            "notification_preferences": {
+                "show_recording_started": true,
+                "show_recording_stopped": true,
+                "show_recording_paused": true,
+                "show_recording_resumed": true,
+                "show_transcription_complete": true,
+                "show_meeting_reminders": true,
+                "show_system_errors": true,
+                "meeting_reminder_minutes": [15, 5]
+            }
+        })
+        .to_string();
+
+        let app = test_manager(Some(&legacy)).await;
+        let settings = app.manager.get_settings().await;
+
+        assert!(!settings.consent_given, "auto-granted consent is revoked");
+        assert!(!settings.system_permission_granted);
+        assert!(settings.consent_migration_v1, "marker is written");
+        // Unrelated preferences survive the migration.
+        assert!(settings.notification_preferences.show_recording_started);
+    }
+
+    #[tokio::test]
+    async fn consent_survives_a_reload_once_the_marker_is_set() {
+        let _guard = SETTINGS_ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("notifications.json");
+        std::env::set_var("AFTERWORD_TEST_NOTIFICATION_SETTINGS", &path);
+
+        {
+            let app = tauri::test::mock_app();
+            let manager = NotificationManager::new(app.handle().clone()).await.unwrap();
+            manager.set_consent(true).await.unwrap();
+        }
+
+        // A second launch must not re-run the migration and revoke consent.
+        let app = tauri::test::mock_app();
+        let manager = NotificationManager::new(app.handle().clone()).await.unwrap();
+        let settings = manager.get_settings().await;
+
+        assert!(settings.consent_given, "migration runs only once");
+        assert!(settings.consent_migration_v1);
+    }
+
+    #[test]
+    fn preserve_consent_state_keeps_only_consent_fields() {
+        let mut current = NotificationSettings::default();
+        current.consent_given = true;
+        current.system_permission_granted = true;
+        current.consent_migration_v1 = true;
+        current.notification_sound = true;
+
+        let mut incoming = NotificationSettings::default();
+        incoming.consent_given = false;
+        incoming.system_permission_granted = false;
+        incoming.consent_migration_v1 = false;
+        incoming.notification_sound = false;
+
+        let merged = crate::notifications::settings::preserve_consent_state(&current, incoming);
+
+        assert!(merged.consent_given);
+        assert!(merged.system_permission_granted);
+        assert!(merged.consent_migration_v1);
+        assert!(!merged.notification_sound, "other fields come from the payload");
+    }
 }

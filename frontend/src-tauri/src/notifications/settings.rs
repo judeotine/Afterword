@@ -31,6 +31,11 @@ pub struct NotificationSettings {
     /// Manual DND mode (user-controlled)
     pub manual_dnd_mode: bool,
 
+    /// Marker for the one-time reset of consent that older builds granted
+    /// automatically at startup. Absent in files written before that reset.
+    #[serde(default)]
+    pub consent_migration_v1: bool,
+
     /// Notification preferences for different types
     pub notification_preferences: NotificationPreferences,
 }
@@ -73,6 +78,7 @@ impl Default for NotificationSettings {
             system_permission_granted: false,
             consent_given: false,
             manual_dnd_mode: false,
+            consent_migration_v1: false,
             notification_preferences: NotificationPreferences::default(),
         }
     }
@@ -112,6 +118,12 @@ impl<R: Runtime> ConsentManager<R> {
 
     /// Get the path where notification settings are stored
     fn get_settings_path() -> Result<PathBuf> {
+        // Tests redirect the settings file so they never touch the real one.
+        #[cfg(test)]
+        if let Ok(path) = std::env::var("AFTERWORD_TEST_NOTIFICATION_SETTINGS") {
+            return Ok(PathBuf::from(path));
+        }
+
         let mut path = dirs::config_dir()
             .ok_or_else(|| anyhow!("Could not find config directory"))?;
 
@@ -232,13 +244,41 @@ impl<R: Runtime> ConsentManager<R> {
 
     /// Get settings with migration if needed
     pub async fn get_settings_with_migration(&self) -> Result<NotificationSettings> {
-        let settings = self.load_settings().await.unwrap_or_default();
+        let mut settings = self.load_settings().await.unwrap_or_default();
 
-        // Perform any necessary migrations here
-        // For example, if we add new settings in the future
+        // consent_migration_v1: older builds granted notification consent on the
+        // user's behalf at every startup. Revoke that once, so "notifications are
+        // opt-in" is true for existing installs as well as new ones.
+        if !settings.consent_migration_v1 {
+            if settings.consent_given {
+                log_info!("Resetting notification consent that was granted automatically by an older build");
+            }
+            settings.consent_given = false;
+            settings.system_permission_granted = false;
+            settings.consent_migration_v1 = true;
+        }
 
         self.save_settings(&settings).await?;
         Ok(settings)
+    }
+
+}
+
+/// Carry over the fields that only consent/permission flows may change.
+///
+/// `set_notification_settings` receives a whole settings struct from the UI,
+/// which can easily be stale (it is cached in the frontend). Preserving these
+/// three fields from the live settings means a preferences write can never
+/// silently revoke consent.
+pub fn preserve_consent_state(
+    current: &NotificationSettings,
+    incoming: NotificationSettings,
+) -> NotificationSettings {
+    NotificationSettings {
+        consent_given: current.consent_given,
+        system_permission_granted: current.system_permission_granted,
+        consent_migration_v1: current.consent_migration_v1,
+        ..incoming
     }
 }
 
@@ -272,6 +312,7 @@ pub fn merge_with_defaults(partial: NotificationSettings) -> NotificationSetting
         system_permission_granted: partial.system_permission_granted,
         consent_given: partial.consent_given,
         manual_dnd_mode: partial.manual_dnd_mode,
+        consent_migration_v1: partial.consent_migration_v1,
         notification_preferences: partial.notification_preferences,
     }
 }

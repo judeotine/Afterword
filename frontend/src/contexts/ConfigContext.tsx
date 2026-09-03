@@ -30,6 +30,9 @@ export interface NotificationSettings {
   system_permission_granted: boolean;
   consent_given: boolean;
   manual_dnd_mode: boolean;
+  /// Marker for the one-time reset of consent auto-granted by older builds.
+  /// Owned by the backend; sending a stale value does not change it.
+  consent_migration_v1?: boolean;
   notification_preferences: {
     show_recording_started: boolean;
     show_recording_stopped: boolean;
@@ -99,6 +102,7 @@ interface ConfigContextType {
   isLoadingPreferences: boolean;
   loadPreferences: () => Promise<void>;
   updateNotificationSettings: (settings: NotificationSettings) => Promise<void>;
+  refreshNotificationSettings: () => Promise<NotificationSettings | null>;
 }
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
@@ -467,16 +471,33 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Re-read notification settings from the backend, which owns consent state
+  const refreshNotificationSettings = useCallback(async (): Promise<NotificationSettings | null> => {
+    try {
+      const settings = await invoke<NotificationSettings>('get_notification_settings');
+      setNotificationSettings(settings);
+      return settings;
+    } catch (error) {
+      console.error('[ConfigContext] Failed to refresh notification settings:', error);
+      return null;
+    }
+  }, []);
+
   // Update notification settings
   const updateNotificationSettings = useCallback(async (settings: NotificationSettings) => {
     try {
       await invoke('set_notification_settings', { settings });
-      setNotificationSettings(settings);
+      // The backend keeps consent and permission state out of this payload, so
+      // read back what it actually stored instead of trusting the payload.
+      const stored = await refreshNotificationSettings();
+      if (!stored) {
+        setNotificationSettings(settings);
+      }
     } catch (error) {
       console.error('[ConfigContext] Failed to update notification settings:', error);
       throw error; // Re-throw so component can handle error
     }
-  }, []);
+  }, [refreshNotificationSettings]);
 
   // Wrapper for setSelectedLanguage that persists to localStorage and syncs to Rust
   const handleSetSelectedLanguage = useCallback((lang: string) => {
@@ -515,6 +536,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isLoadingPreferences,
     loadPreferences,
     updateNotificationSettings,
+    refreshNotificationSettings,
   }), [
     modelConfig,
     isAutoSummary,
@@ -537,6 +559,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isLoadingPreferences,
     loadPreferences,
     updateNotificationSettings,
+    refreshNotificationSettings,
   ]);
 
   return (
