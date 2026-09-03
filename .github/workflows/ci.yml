@@ -167,3 +167,50 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  api:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: services/api
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: afterword
+          POSTGRES_PASSWORD: afterword
+          POSTGRES_DB: afterword_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U afterword -d afterword_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://afterword:afterword@localhost:5432/afterword_test?sslmode=disable
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: services/api/go.sum
+
+      - name: Generate sqlc code
+        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+
+      - name: Build
+        run: go build ./...
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          working-directory: services/api
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Integration test
+        run: go test -race -tags integration ./...
