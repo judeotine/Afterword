@@ -310,7 +310,8 @@ Key components:
 
 **Testing Audio Changes**:
 ```bash
-# Enable verbose audio logging
+# Enable verbose audio logging (RUST_LOG takes env-filter style directives:
+# a bare level, or comma-separated `target=level` pairs)
 RUST_LOG=app_lib::audio=debug ./clean_run.sh
 
 # Monitor audio metrics in real-time
@@ -329,8 +330,13 @@ Do not add new endpoints to `backend/app/main.py`; that FastAPI code is legacy a
 
 **Enable Rust Logging**:
 ```bash
-# macOS
+# macOS: a level for everything...
+./clean_run.sh debug
 RUST_LOG=debug ./clean_run.sh
+
+# ...or per-target levels (comma separated; unknown directives are ignored
+# with a warning on stderr)
+RUST_LOG=info,app_lib::audio=debug,afterword_core=trace ./clean_run.sh
 
 # Windows (PowerShell)
 $env:RUST_LOG="debug"; ./clean_run_windows.bat

@@ -3,18 +3,24 @@
 # Exit on error
 set -e
 
-# Add log level selector with default to INFO
-LOG_LEVEL=${1:-info}
+# Optional log level argument. Without one, an already-exported RUST_LOG is
+# kept, so `RUST_LOG=app_lib::audio=debug ./clean_run.sh` works; the app parses
+# env-filter style directives (`level` or `target=level`, comma separated).
+LOG_LEVEL=${1:-}
 
-case $LOG_LEVEL in
-    info|debug|trace)
-        export RUST_LOG=$LOG_LEVEL
-        ;;
-    *)
-        echo "Invalid log level: $LOG_LEVEL. Valid options: info, debug, trace"
-        exit 1
-        ;;
-esac
+if [ -n "$LOG_LEVEL" ]; then
+    case $LOG_LEVEL in
+        info|debug|trace)
+            export RUST_LOG=$LOG_LEVEL
+            ;;
+        *)
+            echo "Invalid log level: $LOG_LEVEL. Valid options: info, debug, trace"
+            exit 1
+            ;;
+    esac
+elif [ -z "${RUST_LOG:-}" ]; then
+    export RUST_LOG=info
+fi
 
 # Clean up previous builds
 echo "Cleaning up previous builds..."

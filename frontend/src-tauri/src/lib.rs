@@ -362,17 +362,88 @@ pub fn get_language_preference_internal() -> Option<String> {
     LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
 }
 
-/// Log level for the app: `RUST_LOG` when it parses, otherwise Info.
-fn configured_log_level() -> log::LevelFilter {
-    std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|value| value.trim().parse::<log::LevelFilter>().ok())
-        .unwrap_or(log::LevelFilter::Info)
+/// `RUST_LOG` parsed into the levels the log plugin needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LogDirectives {
+    /// Level for every target without a directive of its own.
+    global: log::LevelFilter,
+    /// Per-target overrides, in the order they were written.
+    targets: Vec<(String, log::LevelFilter)>,
+    /// Directives that could not be understood, kept so the caller can warn.
+    ignored: Vec<String>,
+}
+
+impl Default for LogDirectives {
+    fn default() -> Self {
+        Self {
+            global: log::LevelFilter::Info,
+            targets: Vec::new(),
+            ignored: Vec::new(),
+        }
+    }
+}
+
+impl LogDirectives {
+    /// The most verbose level any directive asks for. `log::set_max_level` is a
+    /// global cap, so a per-target `debug` only reaches the logger if the cap
+    /// allows it.
+    fn max_level(&self) -> log::LevelFilter {
+        self.targets
+            .iter()
+            .map(|(_, level)| *level)
+            .chain(std::iter::once(self.global))
+            .max()
+            .unwrap_or(self.global)
+    }
+}
+
+/// Parse an env-filter style `RUST_LOG` value.
+///
+/// Directives are comma separated. Each is either a bare level (`debug`) that
+/// sets the global level, or `target=level` (`app_lib::audio=debug`) that sets
+/// one target's level. Anything else is ignored and reported in `ignored`.
+fn parse_rust_log(value: &str) -> LogDirectives {
+    let mut directives = LogDirectives::default();
+
+    for raw in value.split(',') {
+        let directive = raw.trim();
+        if directive.is_empty() {
+            continue;
+        }
+
+        match directive.split_once('=') {
+            Some((target, level)) => {
+                let target = target.trim();
+                match (target.is_empty(), level.trim().parse::<log::LevelFilter>()) {
+                    (false, Ok(level)) => directives.targets.push((target.to_string(), level)),
+                    _ => directives.ignored.push(directive.to_string()),
+                }
+            }
+            None => match directive.parse::<log::LevelFilter>() {
+                Ok(level) => directives.global = level,
+                Err(_) => directives.ignored.push(directive.to_string()),
+            },
+        }
+    }
+
+    directives
+}
+
+/// Log directives for the app: `RUST_LOG` when set, otherwise the defaults.
+fn configured_log_directives() -> LogDirectives {
+    match std::env::var("RUST_LOG") {
+        Ok(value) => parse_rust_log(&value),
+        Err(_) => LogDirectives::default(),
+    }
 }
 
 pub fn run() {
-    let log_level = configured_log_level();
-    log::set_max_level(log_level);
+    let log_directives = configured_log_directives();
+    // The logger is not installed yet, so a bad directive has to go to stderr.
+    for ignored in &log_directives.ignored {
+        eprintln!("warning: ignoring unrecognized RUST_LOG directive `{}`", ignored);
+    }
+    log::set_max_level(log_directives.max_level());
 
     let mut builder = tauri::Builder::default();
 
@@ -389,21 +460,23 @@ pub fn run() {
         }));
     }
 
+    let mut log_plugin = tauri_plugin_log::Builder::new()
+        .targets([
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                file_name: Some("afterword".into()),
+            }),
+        ])
+        .level(log_directives.global)
+        .max_file_size(10_000_000)
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll);
+
+    for (target, level) in &log_directives.targets {
+        log_plugin = log_plugin.level_for(target.clone(), *level);
+    }
+
     builder
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("afterword".into()),
-                    }),
-                ])
-                .level(log_level)
-                .level_for("app_lib::audio", log::LevelFilter::Info)
-                .max_file_size(10_000_000)
-                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
-                .build(),
-        )
+        .plugin(log_plugin.build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -757,4 +830,98 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod log_directive_tests {
+    use super::{parse_rust_log, LogDirectives};
+    use log::LevelFilter;
+
+    #[test]
+    fn empty_value_keeps_the_default() {
+        assert_eq!(parse_rust_log(""), LogDirectives::default());
+        assert_eq!(parse_rust_log("   "), LogDirectives::default());
+        assert_eq!(LogDirectives::default().global, LevelFilter::Info);
+    }
+
+    #[test]
+    fn bare_level_sets_the_global_level() {
+        let parsed = parse_rust_log("debug");
+        assert_eq!(parsed.global, LevelFilter::Debug);
+        assert!(parsed.targets.is_empty());
+        assert!(parsed.ignored.is_empty());
+        assert_eq!(parsed.max_level(), LevelFilter::Debug);
+    }
+
+    #[test]
+    fn bare_level_is_case_insensitive() {
+        assert_eq!(parse_rust_log("TRACE").global, LevelFilter::Trace);
+        assert_eq!(parse_rust_log("Off").global, LevelFilter::Off);
+    }
+
+    #[test]
+    fn target_directive_becomes_a_per_target_level() {
+        let parsed = parse_rust_log("app_lib::audio=debug");
+        assert_eq!(parsed.global, LevelFilter::Info);
+        assert_eq!(
+            parsed.targets,
+            vec![("app_lib::audio".to_string(), LevelFilter::Debug)]
+        );
+        assert!(parsed.ignored.is_empty());
+        // The global cap has to allow the most verbose target through.
+        assert_eq!(parsed.max_level(), LevelFilter::Debug);
+    }
+
+    #[test]
+    fn directives_are_comma_separated_and_trimmed() {
+        let parsed = parse_rust_log(" warn , app_lib::audio = trace ,afterword_core=debug");
+        assert_eq!(parsed.global, LevelFilter::Warn);
+        assert_eq!(
+            parsed.targets,
+            vec![
+                ("app_lib::audio".to_string(), LevelFilter::Trace),
+                ("afterword_core".to_string(), LevelFilter::Debug),
+            ]
+        );
+        assert!(parsed.ignored.is_empty());
+        assert_eq!(parsed.max_level(), LevelFilter::Trace);
+    }
+
+    #[test]
+    fn empty_directives_are_skipped_without_a_warning() {
+        let parsed = parse_rust_log("debug,,");
+        assert_eq!(parsed.global, LevelFilter::Debug);
+        assert!(parsed.ignored.is_empty());
+    }
+
+    #[test]
+    fn unknown_tokens_are_ignored_and_reported() {
+        let parsed = parse_rust_log("info,not_a_level,app_lib::audio=louder,=debug");
+        assert_eq!(parsed.global, LevelFilter::Info);
+        assert!(parsed.targets.is_empty());
+        assert_eq!(
+            parsed.ignored,
+            vec![
+                "not_a_level".to_string(),
+                "app_lib::audio=louder".to_string(),
+                "=debug".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_last_bare_level_wins() {
+        assert_eq!(parse_rust_log("warn,debug").global, LevelFilter::Debug);
+    }
+
+    #[test]
+    fn audio_is_no_longer_pinned_to_info() {
+        // Regression: the plugin used to hard-code level_for("app_lib::audio", Info),
+        // so RUST_LOG=app_lib::audio=debug could never take effect.
+        let parsed = parse_rust_log("app_lib::audio=trace");
+        assert_eq!(
+            parsed.targets,
+            vec![("app_lib::audio".to_string(), LevelFilter::Trace)]
+        );
+    }
 }
