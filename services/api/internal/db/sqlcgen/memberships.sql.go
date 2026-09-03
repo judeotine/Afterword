@@ -12,6 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countWorkspaceOwners = `-- name: CountWorkspaceOwners :one
+SELECT count(*) FROM memberships
+WHERE workspace_id = $1 AND role = 'owner'
+`
+
+func (q *Queries) CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countWorkspaceOwners, workspaceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMembership = `-- name: CreateMembership :one
 INSERT INTO memberships (workspace_id, user_id, role)
 VALUES ($1, $2, $3)
@@ -124,6 +136,59 @@ func (q *Queries) ListMembershipsByWorkspace(ctx context.Context, arg ListMember
 	return items, nil
 }
 
+const listWorkspaceMembersWithUsers = `-- name: ListWorkspaceMembersWithUsers :many
+SELECT
+    memberships.workspace_id,
+    memberships.user_id,
+    memberships.role,
+    memberships.created_at,
+    users.email,
+    users.phone,
+    users.name
+FROM memberships
+JOIN users ON users.id = memberships.user_id
+WHERE memberships.workspace_id = $1
+ORDER BY memberships.created_at ASC, memberships.user_id ASC
+`
+
+type ListWorkspaceMembersWithUsersRow struct {
+	WorkspaceID uuid.UUID          `json:"workspace_id"`
+	UserID      uuid.UUID          `json:"user_id"`
+	Role        string             `json:"role"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Email       *string            `json:"email"`
+	Phone       *string            `json:"phone"`
+	Name        string             `json:"name"`
+}
+
+func (q *Queries) ListWorkspaceMembersWithUsers(ctx context.Context, workspaceID uuid.UUID) ([]ListWorkspaceMembersWithUsersRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceMembersWithUsers, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceMembersWithUsersRow{}
+	for rows.Next() {
+		var i ListWorkspaceMembersWithUsersRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Role,
+			&i.CreatedAt,
+			&i.Email,
+			&i.Phone,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMembership = `-- name: UpdateMembership :one
 UPDATE memberships SET role = $1
 WHERE workspace_id = $2 AND user_id = $3
@@ -138,6 +203,31 @@ type UpdateMembershipParams struct {
 
 func (q *Queries) UpdateMembership(ctx context.Context, arg UpdateMembershipParams) (Membership, error) {
 	row := q.db.QueryRow(ctx, updateMembership, arg.Role, arg.WorkspaceID, arg.UserID)
+	var i Membership
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const upsertMembership = `-- name: UpsertMembership :one
+INSERT INTO memberships (workspace_id, user_id, role)
+VALUES ($1, $2, $3)
+ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = excluded.role
+RETURNING workspace_id, user_id, role, created_at
+`
+
+type UpsertMembershipParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	UserID      uuid.UUID `json:"user_id"`
+	Role        string    `json:"role"`
+}
+
+func (q *Queries) UpsertMembership(ctx context.Context, arg UpsertMembershipParams) (Membership, error) {
+	row := q.db.QueryRow(ctx, upsertMembership, arg.WorkspaceID, arg.UserID, arg.Role)
 	var i Membership
 	err := row.Scan(
 		&i.WorkspaceID,

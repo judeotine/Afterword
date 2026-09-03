@@ -31,3 +31,21 @@ RETURNING *;
 
 -- name: DeleteWorkspace :execrows
 DELETE FROM workspaces WHERE id = sqlc.arg(id);
+
+-- name: ListWorkspacesWithRoleByUser :many
+SELECT workspaces.*, memberships.role AS membership_role
+FROM workspaces
+JOIN memberships ON memberships.workspace_id = workspaces.id
+WHERE memberships.user_id = sqlc.arg(user_id)
+ORDER BY memberships.created_at ASC, workspaces.id ASC;
+
+-- name: WorkspaceSlugExists :one
+SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = sqlc.arg(slug));
+
+-- name: GetDefaultWorkspaceForUser :one
+SELECT workspaces.*, memberships.role AS membership_role
+FROM workspaces
+JOIN memberships ON memberships.workspace_id = workspaces.id
+WHERE memberships.user_id = sqlc.arg(user_id)
+ORDER BY memberships.created_at ASC, workspaces.id ASC
+LIMIT 1;

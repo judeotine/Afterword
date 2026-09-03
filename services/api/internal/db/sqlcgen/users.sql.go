@@ -66,6 +66,40 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 	return i, err
 }
 
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id, email, phone, name, created_at FROM users WHERE email IS NOT NULL AND lower(email) = lower($1)
+`
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getUserByPhone = `-- name: GetUserByPhone :one
+SELECT id, email, phone, name, created_at FROM users WHERE phone IS NOT NULL AND phone = $1::text
+`
+
+func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByPhone, phone)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Phone,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getUserInWorkspace = `-- name: GetUserInWorkspace :one
 SELECT users.id, users.email, users.phone, users.name, users.created_at FROM users
 JOIN memberships ON memberships.user_id = users.id

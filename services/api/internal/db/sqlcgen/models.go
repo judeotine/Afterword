@@ -29,6 +29,18 @@ type AuditLog struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type AuthOtp struct {
+	ID          uuid.UUID          `json:"id"`
+	Channel     string             `json:"channel"`
+	Destination string             `json:"destination"`
+	CodeHash    string             `json:"code_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	Attempts    int32              `json:"attempts"`
+	ConsumedAt  pgtype.Timestamptz `json:"consumed_at"`
+	RequestIp   string             `json:"request_ip"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type BotJob struct {
 	ID                 uuid.UUID          `json:"id"`
 	WorkspaceID        uuid.UUID          `json:"workspace_id"`
@@ -168,6 +180,17 @@ type Membership struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type OauthState struct {
+	ID           uuid.UUID          `json:"id"`
+	Provider     string             `json:"provider"`
+	StateHash    string             `json:"state_hash"`
+	CodeVerifier string             `json:"code_verifier"`
+	RedirectTo   string             `json:"redirect_to"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt   pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type Payment struct {
 	ID          uuid.UUID          `json:"id"`
 	WorkspaceID uuid.UUID          `json:"workspace_id"`
@@ -179,6 +202,18 @@ type Payment struct {
 	Status      string             `json:"status"`
 	Raw         []byte             `json:"raw"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type RefreshToken struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	FamilyID   uuid.UUID          `json:"family_id"`
+	TokenHash  string             `json:"token_hash"`
+	DeviceID   string             `json:"device_id"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type ShareLink struct {
@@ -229,4 +264,18 @@ type Workspace struct {
 	BotName       string             `json:"bot_name"`
 	RetentionDays int32              `json:"retention_days"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkspaceInvite struct {
+	ID               uuid.UUID          `json:"id"`
+	WorkspaceID      uuid.UUID          `json:"workspace_id"`
+	Email            string             `json:"email"`
+	Role             string             `json:"role"`
+	TokenHash        string             `json:"token_hash"`
+	InvitedByUserID  *uuid.UUID         `json:"invited_by_user_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt       pgtype.Timestamptz `json:"accepted_at"`
+	AcceptedByUserID *uuid.UUID         `json:"accepted_by_user_id"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }

@@ -25,3 +25,27 @@ RETURNING *;
 -- name: DeleteMembership :execrows
 DELETE FROM memberships
 WHERE workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id);
+
+-- name: CountWorkspaceOwners :one
+SELECT count(*) FROM memberships
+WHERE workspace_id = sqlc.arg(workspace_id) AND role = 'owner';
+
+-- name: UpsertMembership :one
+INSERT INTO memberships (workspace_id, user_id, role)
+VALUES (sqlc.arg(workspace_id), sqlc.arg(user_id), sqlc.arg(role))
+ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = excluded.role
+RETURNING *;
+
+-- name: ListWorkspaceMembersWithUsers :many
+SELECT
+    memberships.workspace_id,
+    memberships.user_id,
+    memberships.role,
+    memberships.created_at,
+    users.email,
+    users.phone,
+    users.name
+FROM memberships
+JOIN users ON users.id = memberships.user_id
+WHERE memberships.workspace_id = sqlc.arg(workspace_id)
+ORDER BY memberships.created_at ASC, memberships.user_id ASC;

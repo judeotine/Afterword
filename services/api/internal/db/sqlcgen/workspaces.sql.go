@@ -56,6 +56,40 @@ func (q *Queries) DeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, err
 	return result.RowsAffected(), nil
 }
 
+const getDefaultWorkspaceForUser = `-- name: GetDefaultWorkspaceForUser :one
+SELECT workspaces.id, workspaces.name, workspaces.slug, workspaces.bot_name, workspaces.retention_days, workspaces.created_at, memberships.role AS membership_role
+FROM workspaces
+JOIN memberships ON memberships.workspace_id = workspaces.id
+WHERE memberships.user_id = $1
+ORDER BY memberships.created_at ASC, workspaces.id ASC
+LIMIT 1
+`
+
+type GetDefaultWorkspaceForUserRow struct {
+	ID             uuid.UUID          `json:"id"`
+	Name           string             `json:"name"`
+	Slug           string             `json:"slug"`
+	BotName        string             `json:"bot_name"`
+	RetentionDays  int32              `json:"retention_days"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	MembershipRole string             `json:"membership_role"`
+}
+
+func (q *Queries) GetDefaultWorkspaceForUser(ctx context.Context, userID uuid.UUID) (GetDefaultWorkspaceForUserRow, error) {
+	row := q.db.QueryRow(ctx, getDefaultWorkspaceForUser, userID)
+	var i GetDefaultWorkspaceForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.BotName,
+		&i.RetentionDays,
+		&i.CreatedAt,
+		&i.MembershipRole,
+	)
+	return i, err
+}
+
 const getWorkspace = `-- name: GetWorkspace :one
 SELECT id, name, slug, bot_name, retention_days, created_at FROM workspaces WHERE id = $1
 `
@@ -143,6 +177,52 @@ func (q *Queries) ListWorkspacesByUser(ctx context.Context, arg ListWorkspacesBy
 	return items, nil
 }
 
+const listWorkspacesWithRoleByUser = `-- name: ListWorkspacesWithRoleByUser :many
+SELECT workspaces.id, workspaces.name, workspaces.slug, workspaces.bot_name, workspaces.retention_days, workspaces.created_at, memberships.role AS membership_role
+FROM workspaces
+JOIN memberships ON memberships.workspace_id = workspaces.id
+WHERE memberships.user_id = $1
+ORDER BY memberships.created_at ASC, workspaces.id ASC
+`
+
+type ListWorkspacesWithRoleByUserRow struct {
+	ID             uuid.UUID          `json:"id"`
+	Name           string             `json:"name"`
+	Slug           string             `json:"slug"`
+	BotName        string             `json:"bot_name"`
+	RetentionDays  int32              `json:"retention_days"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	MembershipRole string             `json:"membership_role"`
+}
+
+func (q *Queries) ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspacesWithRoleByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspacesWithRoleByUserRow{}
+	for rows.Next() {
+		var i ListWorkspacesWithRoleByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Slug,
+			&i.BotName,
+			&i.RetentionDays,
+			&i.CreatedAt,
+			&i.MembershipRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateWorkspace = `-- name: UpdateWorkspace :one
 UPDATE workspaces SET
     name = COALESCE($1, name),
@@ -179,4 +259,15 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const workspaceSlugExists = `-- name: WorkspaceSlugExists :one
+SELECT EXISTS (SELECT 1 FROM workspaces WHERE slug = $1)
+`
+
+func (q *Queries) WorkspaceSlugExists(ctx context.Context, slug string) (bool, error) {
+	row := q.db.QueryRow(ctx, workspaceSlugExists, slug)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

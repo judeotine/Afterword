@@ -32,3 +32,9 @@ RETURNING *;
 
 -- name: DeleteUser :execrows
 DELETE FROM users WHERE id = sqlc.arg(id);
+
+-- name: GetUserByEmail :one
+SELECT * FROM users WHERE email IS NOT NULL AND lower(email) = lower(sqlc.arg(email));
+
+-- name: GetUserByPhone :one
+SELECT * FROM users WHERE phone IS NOT NULL AND phone = sqlc.arg(phone)::text;
