@@ -22,3 +22,6 @@ out/
 .idea/
 .vscode/
 *.swp
+
+# Build-time downloaded sidecars (ffmpeg, llama-helper)
+frontend/src-tauri/binaries/

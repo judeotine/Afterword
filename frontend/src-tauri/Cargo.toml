@@ -1,10 +1,10 @@
 [package]
-name = "meetily"
+name = "afterword"
 version = "0.4.0"
-description = "A Tauri App for meeting minutes"
-authors = ["Sujith S"]
+description = "Afterword - local-first AI meeting assistant (desktop app)"
+authors = ["Afterword contributors", "Sujith S (Meetily upstream)"]
 license = "MIT"
-repository = "https://github.com/Zackriya-Solutions/meeting-minutes"
+repository = "https://github.com/judeotine/Afterword"
 edition = "2021"
 rust-version = "1.77"
 

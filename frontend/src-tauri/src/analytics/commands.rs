@@ -9,7 +9,10 @@ static ANALYTICS_CLIENT: std::sync::Mutex<Option<Arc<AnalyticsClient>>> = std::s
 #[command]
 pub async fn init_analytics() -> Result<(), String> {
     let config = AnalyticsConfig {
-        api_key: "phc_Aa9PqeCkDkVbtbRsYjtmHANBfcscjCVupxZwrtL5vZ77".to_string(),
+        // Afterword: the upstream Meetily PostHog project key was removed so opted-in
+        // users do not report to a third party. Set AFTERWORD_POSTHOG_KEY at build time
+        // to enable analytics; an empty key makes AnalyticsClient a no-op.
+        api_key: option_env!("AFTERWORD_POSTHOG_KEY").unwrap_or("").to_string(),
         host: Some("https://us.i.posthog.com".to_string()),
         enabled: true,
     };
