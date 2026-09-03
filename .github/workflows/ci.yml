@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - main
   pull_request:
 
 concurrency:
@@ -67,6 +67,29 @@ jobs:
       - name: cargo clippy (afterword-core)
         if: runner.os == 'Linux'
         run: cargo clippy -p afterword-core --all-targets -- -D warnings
+
+      # Windows: the ort crate ships onnxruntime.dll next to the profile dir
+      # (target/debug), but test executables live in target/debug/deps and
+      # Windows resolves DLLs from the exe directory then System32, which
+      # carries an older onnxruntime.dll -> STATUS_ENTRYPOINT_NOT_FOUND.
+      # Build the tests first so the DLL exists, then stage it beside them.
+      - name: Build tests (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --no-run
+
+      - name: Stage onnxruntime.dll beside test executables (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dlls = Get-ChildItem -Path target\debug -Recurse -Filter 'onnxruntime*.dll' |
+            Where-Object { $_.FullName -notmatch '\\deps\\' }
+          if (-not $dlls) { throw 'onnxruntime.dll not found under target\debug' }
+          New-Item -ItemType Directory -Force -Path target\debug\deps | Out-Null
+          foreach ($d in $dlls) {
+            Copy-Item $d.FullName -Destination target\debug\deps -Force
+            Copy-Item $d.FullName -Destination target\debug -Force
+            Write-Host "staged $($d.FullName)"
+          }
 
       - name: cargo test
         run: cargo test --workspace
