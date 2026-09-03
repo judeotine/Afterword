@@ -40,6 +40,14 @@ console.log(''); // Empty line for spacing
 const platform = os.platform();
 const env = { ...process.env };
 
+const cargoBin = path.join(os.homedir(), '.cargo', 'bin');
+if (fs.existsSync(path.join(cargoBin, 'cargo'))) {
+  const pathEntries = (env.PATH || '').split(path.delimiter);
+  if (!pathEntries.includes(cargoBin)) {
+    env.PATH = [cargoBin, env.PATH].filter(Boolean).join(path.delimiter);
+  }
+}
+
 if (platform === 'linux' && feature === 'cuda') {
   console.log('🐧 Linux/CUDA detected: Setting CMAKE flags for NVIDIA GPU');
   env.CMAKE_CUDA_ARCHITECTURES = '75';
