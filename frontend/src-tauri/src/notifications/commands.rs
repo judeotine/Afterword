@@ -5,7 +5,7 @@ use crate::notifications::{
 };
 
 use anyhow::Result;
-use log::{info as log_info, error as log_error};
+use log::{info as log_info, error as log_error, debug as log_debug};
 use tauri::{State, AppHandle, Runtime, Wry};
 use tauri_plugin_notification::NotificationExt;
 use std::sync::Arc;
@@ -292,6 +292,38 @@ pub async fn get_notification_stats(
     }
 }
 
+/// Whether a fallback notification may be shown.
+///
+/// The fallback path runs when the notification manager could not be
+/// initialized, so it has to reproduce the manager's consent checks itself:
+/// notifications are opt-in, and neither user consent nor the system
+/// permission may be assumed. `preference` is the per-notification-type
+/// preference for the notification about to be shown.
+fn fallback_allowed(settings: &NotificationSettings, preference: bool) -> bool {
+    settings.consent_given && settings.system_permission_granted && preference
+}
+
+/// Load settings for the fallback path through the same migration-aware call
+/// the manager uses, so a fallback can never see a more permissive view of
+/// consent than the manager would.
+async fn load_fallback_settings<R: Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Option<NotificationSettings> {
+    match crate::notifications::settings::ConsentManager::new(app_handle.clone()) {
+        Ok(consent_manager) => match consent_manager.get_settings_with_migration().await {
+            Ok(settings) => Some(settings),
+            Err(e) => {
+                log_debug!("Could not load notification settings for fallback: {}", e);
+                None
+            }
+        },
+        Err(e) => {
+            log_debug!("Could not open notification settings for fallback: {}", e);
+            None
+        }
+    }
+}
+
 // Helper functions for showing specific notification types
 // These are used internally by the app and don't need to be Tauri commands
 
@@ -334,13 +366,18 @@ pub async fn show_recording_started_notification<R: Runtime>(
             Err(e) => {
                 log_error!("Failed to initialize notification manager: {}", e);
 
-                // Check settings before showing fallback notification
-                use crate::notifications::settings::ConsentManager;
-                let consent_manager = ConsentManager::new(app_handle.clone())?;
-                let settings = consent_manager.load_settings().await.unwrap_or_default();
+                // Consent gate: the fallback must honour the same opt-in the
+                // manager enforces, not just the per-type preference.
+                let Some(settings) = load_fallback_settings(app_handle).await else {
+                    log_debug!("Skipping fallback notification: notification settings unavailable");
+                    return Ok(());
+                };
 
-                if !settings.notification_preferences.show_recording_started {
-                    log_info!("Recording started notification is disabled in settings, skipping fallback");
+                if !fallback_allowed(
+                    &settings,
+                    settings.notification_preferences.show_recording_started,
+                ) {
+                    log_debug!("Skipping fallback recording started notification: not consented or disabled");
                     return Ok(());
                 }
 
@@ -384,13 +421,18 @@ pub async fn show_recording_stopped_notification<R: Runtime>(
         drop(manager_lock);
         log_info!("Notification manager not initialized for stop notification, using fallback...");
 
-        // Check settings before showing fallback notification
-        use crate::notifications::settings::ConsentManager;
-        let consent_manager = ConsentManager::new(app_handle.clone())?;
-        let settings = consent_manager.load_settings().await.unwrap_or_default();
+        // Consent gate: the fallback must honour the same opt-in the manager
+        // enforces, not just the per-type preference.
+        let Some(settings) = load_fallback_settings(app_handle).await else {
+            log_debug!("Skipping fallback notification: notification settings unavailable");
+            return Ok(());
+        };
 
-        if !settings.notification_preferences.show_recording_stopped {
-            log_info!("Recording stopped notification is disabled in settings, skipping fallback");
+        if !fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_stopped,
+        ) {
+            log_debug!("Skipping fallback recording stopped notification: not consented or disabled");
             return Ok(());
         }
 
@@ -468,5 +510,68 @@ pub async fn show_system_error_notification(
     } else {
         log_error!("Cannot show system error notification: manager not initialized");
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notifications::settings::NotificationSettings;
+
+    fn consenting_settings() -> NotificationSettings {
+        let mut settings = NotificationSettings::default();
+        settings.consent_given = true;
+        settings.system_permission_granted = true;
+        settings.notification_preferences.show_recording_started = true;
+        settings.notification_preferences.show_recording_stopped = true;
+        settings
+    }
+
+    #[test]
+    fn fallback_requires_consent() {
+        let mut settings = consenting_settings();
+        settings.consent_given = false;
+        assert!(!fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_started
+        ));
+    }
+
+    #[test]
+    fn fallback_requires_system_permission() {
+        let mut settings = consenting_settings();
+        settings.system_permission_granted = false;
+        assert!(!fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_started
+        ));
+    }
+
+    #[test]
+    fn fallback_requires_the_per_type_preference() {
+        let mut settings = consenting_settings();
+        settings.notification_preferences.show_recording_stopped = false;
+        assert!(!fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_stopped
+        ));
+    }
+
+    #[test]
+    fn fallback_allowed_when_consented_and_enabled() {
+        let settings = consenting_settings();
+        assert!(fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_started
+        ));
+        assert!(fallback_allowed(
+            &settings,
+            settings.notification_preferences.show_recording_stopped
+        ));
+    }
+
+    #[test]
+    fn default_settings_never_allow_a_fallback() {
+        let settings = NotificationSettings::default();
+        assert!(!fallback_allowed(&settings, true));
     }
 }
