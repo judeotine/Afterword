@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Afterword
+Comment=Local-first AI meeting notes and summaries
+Exec=afterword
+Icon=com.afterword.app
+Terminal=false
+Categories=Office;AudioVideo;
+Keywords=meeting;transcription;notes;
+StartupNotify=true

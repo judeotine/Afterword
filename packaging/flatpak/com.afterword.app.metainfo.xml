@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.afterword.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Afterword</name>
+  <summary>Local-first AI meeting notes and summaries</summary>
+  <description>
+    <p>
+      Afterword is a privacy-first AI meeting assistant that captures, transcribes, and
+      summarizes meetings entirely on your own machine. It records microphone and system
+      audio together, transcribes speech locally, and produces structured notes and
+      summaries without sending your conversations to a third-party server by default.
+    </p>
+    <p>
+      Recordings are saved to your Videos folder and transcription models are stored
+      under your local application data directory, so meeting content stays on disk
+      under your control. Network access is only used for actions you choose yourself,
+      such as downloading a transcription model or calling an external LLM API for
+      summarization.
+    </p>
+    <p>
+      Afterword integrates with the desktop through system notifications and a tray
+      icon, and can capture both your microphone and the audio played by other
+      applications (via PulseAudio/PipeWire monitor sources), so you can transcribe
+      calls made through any conferencing app.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.afterword.app.desktop</launchable>
+  <url type="homepage">https://github.com/judeotine/Afterword</url>
+  <url type="bugtracker">https://github.com/judeotine/Afterword/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.4.0" date="2026-09-03">
+      <description>
+        <p>See the GitHub release notes for details.</p>
+      </description>
+    </release>
+  </releases>
+  <!-- TODO: add <screenshots> with hosted image URLs once release screenshots are published -->
+</component>

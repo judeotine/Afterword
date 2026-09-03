@@ -1,0 +1,59 @@
+app-id: com.afterword.app
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+command: afterword
+
+# webkit2gtk-4.1 (required by the Tauri 2 / GTK3 shell) ships as part of the
+# org.gnome.Platform runtime at this version, so no separate webkit module is
+# declared here.
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio
+  - --share=network
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-documents
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+modules:
+  - name: afterword
+    buildsystem: simple
+    sources:
+      # Prebuilt .deb published to the GitHub Release for this version.
+      # After `release.yml` runs, replace the sha256 below with the digest
+      # it prints/uploads for afterword_0.4.0_amd64.deb (e.g. from the
+      # workflow's checksums output or `sha256sum afterword_0.4.0_amd64.deb`).
+      - type: file
+        url: https://github.com/judeotine/Afterword/releases/download/v0.4.0/afterword_0.4.0_amd64.deb
+        sha256: 0000000000000000000000000000000000000000000000000000000000000000000000000000  # PLACEHOLDER - paste real sha256 from release.yml before building/submitting
+      - type: file
+        path: com.afterword.app.desktop
+      - type: file
+        path: com.afterword.app.metainfo.xml
+    build-commands:
+      # Unpack the .deb payload (control.tar.* is not needed here).
+      - ar x afterword_*.deb
+      - tar -xf data.tar.*
+
+      # Main binary.
+      - install -Dm755 usr/bin/afterword /app/bin/afterword
+
+      # Sidecars bundled next to the main binary by Tauri's externalBin config
+      # (llama-helper for local summarization, ffmpeg for audio muxing).
+      - install -Dm755 usr/bin/llama-helper /app/bin/llama-helper
+      - install -Dm755 usr/bin/ffmpeg /app/bin/ffmpeg
+
+      # Hicolor icon theme entries produced by the Tauri deb bundler.
+      - mkdir -p /app/share/icons
+      - cp -r usr/share/icons/hicolor /app/share/icons/
+
+      # Desktop entry and AppStream metainfo (sourced from this directory,
+      # already named for the app id so no rename is needed here).
+      - install -Dm644 com.afterword.app.desktop /app/share/applications/com.afterword.app.desktop
+      - install -Dm644 com.afterword.app.metainfo.xml /app/share/metainfo/com.afterword.app.metainfo.xml
