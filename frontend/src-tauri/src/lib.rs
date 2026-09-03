@@ -422,25 +422,19 @@ pub fn run() {
                 log::error!("Failed to create system tray: {}", e);
             }
 
-            // Initialize notification system with proper defaults
+            // Initialize notification system (consent stays user-controlled)
             log::info!("Initializing notification system...");
             let app_for_notif = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let notif_state = app_for_notif.state::<NotificationManagerState<tauri::Wry>>();
                 match notifications::commands::initialize_notification_manager(app_for_notif.clone()).await {
                     Ok(manager) => {
-                        // Set default consent and permissions on first launch
-                        if let Err(e) = manager.set_consent(true).await {
-                            log::error!("Failed to set initial consent: {}", e);
-                        }
-                        if let Err(e) = manager.request_permission().await {
-                            log::error!("Failed to request initial permission: {}", e);
-                        }
-
-                        // Store the initialized manager
+                        // Consent is opt-in: it stays whatever the user chose in
+                        // onboarding or preferences (default off). Do not grant it
+                        // or request system permission on their behalf here.
                         let mut state_lock = notif_state.write().await;
                         *state_lock = Some(manager);
-                        log::info!("Notification system initialized with default permissions");
+                        log::info!("Notification system initialized");
                     }
                     Err(e) => {
                         log::error!("Failed to initialize notification manager: {}", e);

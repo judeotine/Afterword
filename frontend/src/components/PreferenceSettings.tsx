@@ -6,7 +6,7 @@ import { FolderOpen } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
 import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch"
-import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
+import { useConfig, NotificationSettings, SystemDndStatus } from "@/contexts/ConfigContext"
 
 export function PreferenceSettings() {
   const {
@@ -18,6 +18,8 @@ export function PreferenceSettings() {
   } = useConfig();
 
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [dndStatus, setDndStatus] = useState<SystemDndStatus | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
   const hasTrackedViewRef = useRef(false);
@@ -110,6 +112,51 @@ export function PreferenceSettings() {
     handleUpdateNotificationSettings();
   }, [notificationsEnabled, notificationSettings, isInitialLoad, previousNotificationsEnabled, updateNotificationSettings])
 
+  // Mirror the stored consent flag (notifications are opt-in, default off)
+  useEffect(() => {
+    if (notificationSettings) {
+      setConsentGiven(notificationSettings.consent_given);
+    }
+  }, [notificationSettings]);
+
+  // Only offer the DND switch on platforms that can actually report the status
+  useEffect(() => {
+    let cancelled = false;
+    invoke<SystemDndStatus>('get_system_dnd_status')
+      .then((status) => {
+        if (!cancelled) setDndStatus(status);
+      })
+      .catch((error) => {
+        console.error('Failed to read system Do Not Disturb status:', error);
+        if (!cancelled) setDndStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleConsentChange = async (consent: boolean) => {
+    setConsentGiven(consent);
+    try {
+      await invoke('set_notification_consent', { consent });
+    } catch (error) {
+      console.error('Failed to update notification consent:', error);
+      setConsentGiven(!consent);
+    }
+  };
+
+  const handleRespectDndChange = async (respectDnd: boolean) => {
+    if (!notificationSettings) return;
+    try {
+      await updateNotificationSettings({
+        ...notificationSettings,
+        respect_do_not_disturb: respectDnd,
+      });
+    } catch (error) {
+      console.error('Failed to update Do Not Disturb preference:', error);
+    }
+  };
+
   const handleOpenFolder = async (folderType: 'database' | 'models' | 'recordings') => {
     try {
       switch (folderType) {
@@ -149,7 +196,15 @@ export function PreferenceSettings() {
   return (
     <div className="space-y-6">
       {/* Notifications Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Desktop notifications</h3>
+            <p className="text-sm text-gray-600">Let Afterword show system notifications. Off by default.</p>
+          </div>
+          <Switch checked={consentGiven} onCheckedChange={handleConsentChange} />
+        </div>
+
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Notifications</h3>
@@ -157,6 +212,19 @@ export function PreferenceSettings() {
           </div>
           <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
         </div>
+
+        {dndStatus?.supported && (
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Respect Do Not Disturb</h3>
+              <p className="text-sm text-gray-600">Stay quiet while a Focus mode is active on this Mac.</p>
+            </div>
+            <Switch
+              checked={notificationSettings?.respect_do_not_disturb ?? true}
+              onCheckedChange={handleRespectDndChange}
+            />
+          </div>
+        )}
       </div>
 
       {/* Data Storage Locations Section */}

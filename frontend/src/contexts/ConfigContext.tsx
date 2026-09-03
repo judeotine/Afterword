@@ -42,6 +42,14 @@ export interface NotificationSettings {
   };
 }
 
+/// Result of the `get_system_dnd_status` Tauri command.
+/// `supported` is false where the OS state cannot be read (Windows, Linux, or
+/// an unreadable macOS Focus state); `active` is then always false.
+export interface SystemDndStatus {
+  supported: boolean;
+  active: boolean;
+}
+
 interface ConfigContextType {
   // Model configuration
   modelConfig: ModelConfig;

@@ -55,11 +55,12 @@ impl<R: Runtime> NotificationManager<R> {
             log_info!("First launch detected, notification consent will be requested by UI");
         }
 
-        // Try to request system permission if not already granted
-        if !self.consent_manager.has_system_permission().await {
-            match self.system_handler.request_permission().await {
+        // Only ask the system for permission once the user has opted in.
+        if self.consent_manager.has_consent().await
+            && !self.consent_manager.has_system_permission().await
+        {
+            match self.request_permission().await {
                 Ok(granted) => {
-                    self.consent_manager.set_system_permission(granted).await?;
                     if granted {
                         log_info!("System notification permission granted");
                     } else {
@@ -232,8 +233,8 @@ impl<R: Runtime> NotificationManager<R> {
         }
     }
 
-    /// Get system DND status
-    pub async fn get_system_dnd_status(&self) -> bool {
+    /// Get system DND status. `None` means the platform cannot report it.
+    pub async fn get_system_dnd_status(&self) -> Option<bool> {
         self.system_handler.get_system_dnd_status().await
     }
 
@@ -266,8 +267,17 @@ impl<R: Runtime> NotificationManager<R> {
         self.consent_manager.set_consent(consent).await?;
 
         // Update in-memory settings
-        let mut settings = self.settings.write().await;
-        settings.consent_given = consent;
+        {
+            let mut settings = self.settings.write().await;
+            settings.consent_given = consent;
+        }
+
+        // Ask the system for permission only after the user opted in.
+        if consent {
+            if let Err(e) = self.request_permission().await {
+                log_warn!("Failed to request notification permission after consent: {}", e);
+            }
+        }
 
         log_info!("User consent set to: {}", consent);
         Ok(())
@@ -322,7 +332,7 @@ impl<R: Runtime> NotificationManager<R> {
             consent_given: settings.consent_given,
             system_permission_granted: settings.system_permission_granted,
             manual_dnd_active: settings.manual_dnd_mode,
-            system_dnd_active: self.get_system_dnd_status().await,
+            system_dnd_active: self.get_system_dnd_status().await.unwrap_or(false),
             recording_notifications_enabled: settings.notification_preferences.show_recording_started,
             meeting_reminders_enabled: settings.notification_preferences.show_meeting_reminders,
         }

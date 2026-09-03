@@ -1,4 +1,4 @@
-use crate::notifications::types::{Notification, NotificationPriority, NotificationTimeout};
+use crate::notifications::types::{Notification, NotificationTimeout};
 use anyhow::{Result, anyhow};
 use log::{info as log_info, error as log_error};
 use tauri::{AppHandle, Runtime};
@@ -21,11 +21,9 @@ impl<R: Runtime> SystemNotificationHandler<R> {
     pub async fn show_notification(&self, notification: Notification) -> Result<()> {
         log_info!("Attempting to show notification: {}", notification.title);
 
-        // Check if DND is active and respect user settings
-        if self.is_dnd_active().await && self.should_respect_dnd(&notification) {
-            log_info!("DND is active, skipping notification: {}", notification.title);
-            return Ok(());
-        }
+        // DND policy lives in NotificationManager, which knows whether the user
+        // asked us to respect system Do Not Disturb; deciding again here would
+        // override that setting.
 
         // Use Tauri notification for all platforms
         log_info!("Showing Tauri notification: {}", notification.title);
@@ -46,20 +44,20 @@ impl<R: Runtime> SystemNotificationHandler<R> {
         }
     }
 
-    /// Check if Do Not Disturb is currently active
-    /// Note: DND is managed through app settings, not system-level checks
+    /// Check if system Do Not Disturb is currently active.
+    ///
+    /// An unknown status (unsupported platform, unreadable state) counts as
+    /// "not active" so notifications are never silently swallowed.
     pub async fn is_dnd_active(&self) -> bool {
-        // App manages DND through its own notification settings
-        // No need to check system-level DND status
-        false
+        self.get_system_dnd_status().await.unwrap_or(false)
     }
 
-    /// Get the actual system DND status
-    /// Note: DND is managed through app settings, not system-level checks
-    pub async fn get_system_dnd_status(&self) -> bool {
-        // App manages DND through its own notification settings
-        // No need to check system-level DND status
-        false
+    /// Get the actual system DND status.
+    ///
+    /// Returns `None` when the platform cannot report it (Windows, Linux) or
+    /// when the macOS Focus state could not be read.
+    pub async fn get_system_dnd_status(&self) -> Option<bool> {
+        read_system_dnd_status()
     }
 
     /// Request notification permission from the system
@@ -79,14 +77,6 @@ impl<R: Runtime> SystemNotificationHandler<R> {
         self.show_notification(test_notification).await
     }
 
-    /// Determine if we should respect DND for this notification
-    fn should_respect_dnd(&self, notification: &Notification) -> bool {
-        match notification.priority {
-            NotificationPriority::Critical => false, // Always show critical notifications
-            _ => true, // Respect DND for all other priorities
-        }
-    }
-
     /// Clear all notifications (platform-specific)
     pub async fn clear_notifications(&self) -> Result<()> {
         log_info!("Clearing all notifications");
@@ -97,6 +87,42 @@ impl<R: Runtime> SystemNotificationHandler<R> {
 
         Ok(())
     }
+}
+
+/// Read the system Do Not Disturb / Focus status.
+///
+/// macOS stores active Focus assertions in
+/// `~/Library/DoNotDisturb/DB/Assertions.json`; a non-empty
+/// `data[0].storeAssertionRecords` array means a Focus mode is on.
+/// Other platforms have no equivalent we can read, so they report `None`.
+#[cfg(target_os = "macos")]
+fn read_system_dnd_status() -> Option<bool> {
+    let path = dirs::home_dir()?
+        .join("Library")
+        .join("DoNotDisturb")
+        .join("DB")
+        .join("Assertions.json");
+
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&contents).ok()?;
+
+    let records = parsed
+        .get("data")?
+        .get(0)?
+        .get("storeAssertionRecords");
+
+    match records {
+        Some(serde_json::Value::Array(records)) => Some(!records.is_empty()),
+        // The key is absent (or null) when no Focus mode is active.
+        Some(serde_json::Value::Null) | None => Some(false),
+        Some(_) => None,
+    }
+}
+
+/// Windows and Linux expose no readable DND state, so the status is unknown.
+#[cfg(not(target_os = "macos"))]
+fn read_system_dnd_status() -> Option<bool> {
+    None
 }
 
 /// Convert notification timeout to duration

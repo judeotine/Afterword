@@ -121,14 +121,27 @@ pub async fn is_dnd_active(
     }
 }
 
+/// System Do Not Disturb status as reported to the frontend.
+///
+/// `supported` is false on platforms where the state cannot be read (Windows,
+/// Linux) or when macOS Focus state is unreadable; `active` is then always false.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct SystemDndStatus {
+    pub supported: bool,
+    pub active: bool,
+}
+
 /// Get system Do Not Disturb status
 #[tauri::command]
 pub async fn get_system_dnd_status(
     manager_state: State<'_, NotificationManagerState<Wry>>
-) -> Result<bool, String> {
+) -> Result<SystemDndStatus, String> {
     let manager_lock = manager_state.read().await;
     if let Some(manager) = manager_lock.as_ref() {
-        Ok(manager.get_system_dnd_status().await)
+        Ok(match manager.get_system_dnd_status().await {
+            Some(active) => SystemDndStatus { supported: true, active },
+            None => SystemDndStatus { supported: false, active: false },
+        })
     } else {
         Err("Notification manager not initialized".to_string())
     }

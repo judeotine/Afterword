@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Mic, Volume2 } from 'lucide-react';
+import { Bell, Mic, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { PermissionRow } from '../shared';
 import { useOnboarding } from '@/contexts/OnboardingContext';
@@ -9,6 +10,8 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 export function PermissionsStep() {
   const { setPermissionStatus, setPermissionsSkipped, permissions, completeOnboarding } = useOnboarding();
   const [isPending, setIsPending] = useState(false);
+  // Desktop notifications are opt-in: off until the user turns them on here.
+  const [notificationsConsent, setNotificationsConsent] = useState(false);
 
   // Check permissions - only logs current state, doesn't auto-authorize
   // Actual permission checks are done via explicit user actions (clicking Enable)
@@ -93,6 +96,17 @@ export function PermissionsStep() {
     }
   };
 
+  // Store notification consent immediately so it survives skipping the step
+  const handleNotificationsConsentChange = async (consent: boolean) => {
+    setNotificationsConsent(consent);
+    try {
+      await invoke('set_notification_consent', { consent });
+    } catch (err) {
+      console.error('[PermissionsStep] Failed to set notification consent:', err);
+      setNotificationsConsent(!consent);
+    }
+  };
+
   const handleFinish = async () => {
     try {
       await completeOnboarding();
@@ -142,6 +156,26 @@ export function PermissionsStep() {
             isPending={isPending}
             onAction={handleSystemAudioAction}
           />
+
+          {/* Desktop notifications (optional, off by default) */}
+          <div className="flex items-center justify-between gap-4 rounded-lg border border-neutral-200 p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 text-neutral-600">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-medium">Desktop notifications</div>
+                <div className="text-xs text-muted-foreground">
+                  Optional. Get notified when recording starts and stops.
+                </div>
+              </div>
+            </div>
+            <Switch
+              checked={notificationsConsent}
+              onCheckedChange={handleNotificationsConsentChange}
+              aria-label="Desktop notifications"
+            />
+          </div>
         </div>
 
         {/* Action Buttons */}
