@@ -102,6 +102,10 @@ func New(t *testing.T) (*storage.S3Client, storage.Buckets) {
 	if len(suffix) > 40 {
 		suffix = suffix[:40]
 	}
+	suffix = strings.Trim(suffix, "-")
+	if suffix == "" {
+		suffix = "default"
+	}
 	buckets := storage.Buckets{
 		Audio:       "audio-" + suffix,
 		Transcripts: "transcripts-" + suffix,

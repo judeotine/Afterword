@@ -42,8 +42,10 @@ func NewS3Client(opts Options) (*S3Client, error) {
 	}
 
 	cfg := aws.Config{
-		Region:      region,
-		Credentials: credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""),
+		Region:                     region,
+		Credentials:                credentials.NewStaticCredentialsProvider(opts.AccessKey, opts.SecretKey, ""),
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 	}
 	if opts.HTTPClient != nil {
 		cfg.HTTPClient = opts.HTTPClient
