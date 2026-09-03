@@ -362,8 +362,17 @@ pub fn get_language_preference_internal() -> Option<String> {
     LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
 }
 
+/// Log level for the app: `RUST_LOG` when it parses, otherwise Info.
+fn configured_log_level() -> log::LevelFilter {
+    std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|value| value.trim().parse::<log::LevelFilter>().ok())
+        .unwrap_or(log::LevelFilter::Info)
+}
+
 pub fn run() {
-    log::set_max_level(log::LevelFilter::Info);
+    let log_level = configured_log_level();
+    log::set_max_level(log_level);
 
     let mut builder = tauri::Builder::default();
 
@@ -381,6 +390,20 @@ pub fn run() {
     }
 
     builder
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("afterword".into()),
+                    }),
+                ])
+                .level(log_level)
+                .level_for("app_lib::audio", log::LevelFilter::Info)
+                .max_file_size(10_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())

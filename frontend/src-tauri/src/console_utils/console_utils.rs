@@ -1,7 +1,5 @@
 #[cfg(target_os = "windows")]
 use std::ptr;
-#[cfg(target_os = "windows")]
-use env_logger;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
@@ -30,9 +28,8 @@ pub fn show_console() -> Result<String, String> {
             if AllocConsole() == 0 {
                 return Err("Failed to allocate console".to_string());
             }
-            // Reinitialize stdout, stdin, stderr for the new console
-            std::env::set_var("RUST_LOG", "info");
-            env_logger::init();
+            // Logging is already initialized by tauri-plugin-log; the new
+            // console just picks up the plugin's stdout target.
         } else {
             // Show existing console window
             ShowWindow(console_window, SW_SHOW);
