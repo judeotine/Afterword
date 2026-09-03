@@ -29,6 +29,18 @@ type meetingView struct {
 	CreatedAt        time.Time  `json:"created_at"`
 }
 
+type sharedMeetingView struct {
+	ID         uuid.UUID  `json:"id"`
+	Title      string     `json:"title"`
+	Source     string     `json:"source"`
+	Platform   string     `json:"platform,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	DurationS  int32      `json:"duration_s"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+	AudioBytes *int64     `json:"audio_bytes,omitempty"`
+}
+
 type presignView struct {
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
@@ -101,6 +113,25 @@ type segmentWriteView struct {
 	Stored int `json:"stored"`
 }
 
+type shareLinkView struct {
+	ID         uuid.UUID  `json:"id"`
+	Token      string     `json:"token"`
+	URL        string     `json:"url"`
+	Permission string     `json:"permission"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type shareLinkListView struct {
+	Shares []shareLinkView `json:"shares"`
+}
+
+type sharedView struct {
+	Meeting    sharedMeetingView `json:"meeting"`
+	Permission string            `json:"permission"`
+	Download   downloadView      `json:"download"`
+}
+
 func newMeetingView(meeting meetings.Meeting) meetingView {
 	return meetingView{
 		ID:               meeting.ID,
@@ -120,6 +151,20 @@ func newMeetingView(meeting meetings.Meeting) meetingView {
 		AudioObject:      meeting.AudioObject,
 		TranscriptObject: meeting.TranscriptObject,
 		CreatedAt:        meeting.CreatedAt,
+	}
+}
+
+func newSharedMeetingView(meeting meetings.Meeting) sharedMeetingView {
+	return sharedMeetingView{
+		ID:         meeting.ID,
+		Title:      meeting.Title,
+		Source:     meeting.Source,
+		Platform:   meeting.Platform,
+		StartedAt:  meeting.StartedAt,
+		DurationS:  meeting.DurationS,
+		Status:     meeting.Status,
+		CreatedAt:  meeting.CreatedAt,
+		AudioBytes: meeting.AudioBytes,
 	}
 }
 
@@ -179,4 +224,15 @@ func newSegmentListView(page meetings.SegmentPage) segmentListView {
 		view.Segments = append(view.Segments, newSegmentView(segment))
 	}
 	return view
+}
+
+func (s *Server) newShareLinkView(link meetings.ShareLink) shareLinkView {
+	return shareLinkView{
+		ID:         link.ID,
+		Token:      link.Token,
+		URL:        s.shareURL(link.Token),
+		Permission: link.Permission,
+		ExpiresAt:  link.ExpiresAt,
+		CreatedAt:  link.CreatedAt,
+	}
 }

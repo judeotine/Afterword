@@ -555,6 +555,100 @@ func TestFoldersAreScopedToTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestSharedLinkGivesReadOnlyAccessWithoutAuth(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+
+	created := harness.createMeeting(owner, map[string]any{"title": "Board update", "source": "desktop"})
+	harness.memory.Put("transcripts", fmt.Sprintf("ws/%s/meetings/%s/transcript.json", owner.Workspace.ID, created.Meeting.ID), []byte("{}"), "application/json")
+	if got := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/finalize", nil, harness.as(owner)...); got.Status != http.StatusOK {
+		t.Fatalf("finalize: status %d, body %s", got.Status, got.Body)
+	}
+	if got := harness.call(http.MethodPut, "/v1/meetings/"+created.Meeting.ID+"/segments", map[string]any{
+		"segments": []map[string]any{{"seq": 0, "start_s": 0, "end_s": 2, "text": "Welcome"}},
+	}, harness.as(owner)...); got.Status != http.StatusOK {
+		t.Fatalf("segments: status %d, body %s", got.Status, got.Body)
+	}
+
+	shared := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", map[string]any{"permission": "view"}, harness.as(owner)...)
+	if shared.Status != http.StatusCreated {
+		t.Fatalf("share: status %d, body %s", shared.Status, shared.Body)
+	}
+	var link sharePayload
+	shared.decode(t, &link)
+	if link.Token == "" || link.Permission != "view" || link.URL == "" {
+		t.Fatalf("share link %+v", link)
+	}
+
+	anonymous := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil)
+	if anonymous.Status != http.StatusOK {
+		t.Fatalf("shared read: status %d, body %s", anonymous.Status, anonymous.Body)
+	}
+	var view sharedMeetingPayload
+	anonymous.decode(t, &view)
+	if view.Meeting.Title != "Board update" || view.Permission != "view" {
+		t.Fatalf("shared view %+v", view)
+	}
+	if view.Meeting.OwnerUserID != "" || view.Meeting.WorkspaceID != "" {
+		t.Fatalf("the shared view leaked workspace internals: %+v", view.Meeting)
+	}
+	if view.Download.Transcript == nil {
+		t.Fatal("the shared view carries no transcript download url")
+	}
+
+	segments := harness.call(http.MethodGet, "/v1/shared/"+link.Token+"/segments", nil)
+	if segments.Status != http.StatusOK {
+		t.Fatalf("shared segments: status %d, body %s", segments.Status, segments.Body)
+	}
+	var page segmentListPayload
+	segments.decode(t, &page)
+	if page.Total != 1 || page.Segments[0].Text != "Welcome" {
+		t.Fatalf("shared segments %+v", page)
+	}
+
+	for _, method := range []string{http.MethodPatch, http.MethodDelete, http.MethodPost} {
+		if got := harness.call(method, "/v1/shared/"+link.Token, map[string]any{"title": "x"}); got.Status != http.StatusMethodNotAllowed {
+			t.Fatalf("%s on a shared link: status %d, body %s", method, got.Status, got.Body)
+		}
+	}
+
+	if got := harness.call(http.MethodGet, "/v1/shared/definitely-not-a-token", nil); got.Status != http.StatusNotFound {
+		t.Fatalf("unknown token: status %d, body %s", got.Status, got.Body)
+	}
+}
+
+func TestSharedLinkStopsWorkingOnceRevokedOrExpired(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+
+	created := harness.createMeeting(owner, map[string]any{"title": "Temporary", "source": "desktop"})
+	expired := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", map[string]any{
+		"expires_at": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339),
+	}, harness.as(owner)...)
+	if expired.Status != http.StatusCreated {
+		t.Fatalf("share: status %d, body %s", expired.Status, expired.Body)
+	}
+	var stale sharePayload
+	expired.decode(t, &stale)
+	if got := harness.call(http.MethodGet, "/v1/shared/"+stale.Token, nil); got.Status != http.StatusGone {
+		t.Fatalf("expired token: status %d, body %s", got.Status, got.Body)
+	}
+
+	live := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
+	var link sharePayload
+	live.decode(t, &link)
+	if got := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil); got.Status != http.StatusOK {
+		t.Fatalf("live token: status %d, body %s", got.Status, got.Body)
+	}
+
+	if got := harness.call(http.MethodDelete, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...); got.Status != http.StatusNoContent {
+		t.Fatalf("revoke: status %d, body %s", got.Status, got.Body)
+	}
+	if got := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil); got.Status != http.StatusNotFound {
+		t.Fatalf("revoked token: status %d, body %s", got.Status, got.Body)
+	}
+}
+
 func TestTheApiNeverProxiesMedia(t *testing.T) {
 	harness := newLibraryHarness(t)
 	owner := harness.signIn("owner@example.com")

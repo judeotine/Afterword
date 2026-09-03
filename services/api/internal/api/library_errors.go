@@ -14,6 +14,7 @@ const (
 	codeTooManySegments = "too_many_segments"
 	codeFolderNotEmpty  = "folder_not_empty"
 	codeFolderCycle     = "folder_cycle"
+	codeShareExpired    = "share_link_expired"
 )
 
 var libraryErrors = []struct {
@@ -22,6 +23,8 @@ var libraryErrors = []struct {
 }{
 	{meetings.ErrMeetingNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That meeting does not exist."}},
 	{meetings.ErrFolderNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That folder does not exist."}},
+	{meetings.ErrShareLinkNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That share link does not exist."}},
+	{meetings.ErrShareLinkExpired, statusError{http.StatusGone, codeShareExpired, "That share link has expired."}},
 	{meetings.ErrNotPermitted, statusError{http.StatusForbidden, httpx.CodeForbidden, "Your role does not allow that action."}},
 	{meetings.ErrNoObjects, statusError{http.StatusConflict, codeNoObjects, "Upload the audio or the transcript before finalising the meeting."}},
 	{meetings.ErrFolderHasChildren, statusError{http.StatusConflict, codeFolderNotEmpty, "Delete the folders inside this one first."}},

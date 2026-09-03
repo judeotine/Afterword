@@ -23,6 +23,7 @@ const (
 	inviteTokenParam  = "token"
 	meetingParam      = "meetingID"
 	folderParam       = "folderID"
+	shareTokenParam   = "shareToken"
 )
 
 type ServerOptions struct {
@@ -104,6 +105,11 @@ func (s *Server) Routes(router chi.Router) {
 			r.Post("/logout", s.handleLogout)
 		})
 
+		r.Route("/shared/{"+shareTokenParam+"}", func(r chi.Router) {
+			r.Get("/", s.handleSharedMeeting)
+			r.Get("/segments", s.handleSharedSegments)
+		})
+
 		r.Group(func(r chi.Router) {
 			r.Use(s.middleware.RequireAuth)
 
@@ -141,6 +147,9 @@ func (s *Server) Routes(router chi.Router) {
 					r.Post("/finalize", s.handleFinalizeMeeting)
 					r.Put("/segments", s.handleReplaceSegments)
 					r.Get("/segments", s.handleListSegments)
+					r.Post("/share", s.handleCreateShareLink)
+					r.Get("/share", s.handleListShareLinks)
+					r.Delete("/share", s.handleRevokeShareLinks)
 				})
 
 				r.Post("/folders", s.handleCreateFolder)

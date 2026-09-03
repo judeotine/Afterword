@@ -48,6 +48,11 @@ func buildLibraryHarness(t *testing.T, pool *pgxpool.Pool, client storage.Client
 	return buildLibrary(t, pool, client, memory, storage.Buckets{}.WithDefaults())
 }
 
+func buildLibraryHarnessWithBuckets(t *testing.T, pool *pgxpool.Pool, client storage.Client, buckets storage.Buckets) *libraryHarness {
+	t.Helper()
+	return buildLibrary(t, pool, client, nil, buckets)
+}
+
 func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memory *storage.Memory, buckets storage.Buckets) *libraryHarness {
 	t.Helper()
 
@@ -200,6 +205,22 @@ type segmentListPayload struct {
 	Segments []segmentPayload `json:"segments"`
 	Total    int64            `json:"total"`
 	NextSeq  *int32           `json:"next_seq"`
+}
+
+type sharePayload struct {
+	Token      string  `json:"token"`
+	URL        string  `json:"url"`
+	Permission string  `json:"permission"`
+	ExpiresAt  *string `json:"expires_at"`
+}
+
+type sharedMeetingPayload struct {
+	Meeting    meetingPayload `json:"meeting"`
+	Permission string         `json:"permission"`
+	Download   struct {
+		Audio      *presignPayload `json:"audio"`
+		Transcript *presignPayload `json:"transcript"`
+	} `json:"download"`
 }
 
 type validationEnvelope struct {

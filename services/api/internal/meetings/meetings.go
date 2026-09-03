@@ -212,6 +212,17 @@ func folderFromRow(row sqlcgen.Folder) Folder {
 	}
 }
 
+func shareLinkFromRow(row sqlcgen.ShareLink) ShareLink {
+	return ShareLink{
+		ID:         row.ID,
+		MeetingID:  row.MeetingID,
+		Token:      row.Token,
+		Permission: row.Permission,
+		ExpiresAt:  optionalMoment(row.ExpiresAt),
+		CreatedAt:  moment(row.CreatedAt),
+	}
+}
+
 func (m Meeting) VisibleTo(actor auth.Membership) bool {
 	if m.WorkspaceID != actor.WorkspaceID {
 		return false
