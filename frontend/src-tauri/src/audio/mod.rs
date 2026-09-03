@@ -1,9 +1,13 @@
 // src/audio/mod.rs
-pub mod audio_processing;
-pub mod decoder;
+//
+// The Tauri-free parts of the audio pipeline live in the `afterword-core`
+// crate and are re-exported here so existing `crate::audio::...` paths keep
+// working unchanged.
+pub use afterword_core::audio::{audio_processing, decoder, ffmpeg, hardware_detector, vad};
+pub use afterword_core::audio::constants;
+
+// App-side shim: `AudioInput` carries an `AudioDevice`, which stays in the app.
 pub mod encode;
-pub mod ffmpeg;
-pub mod vad;
 
 // Modularized device management
 pub mod devices;
@@ -28,7 +32,6 @@ pub mod level_monitor;
 pub mod simple_level_monitor;
 pub mod buffer_pool;
 pub mod post_processor;
-pub mod hardware_detector;
 pub mod async_logger;
 pub mod batch_processor;
 pub mod system_detector;
@@ -41,9 +44,6 @@ pub mod transcription;
 
 // Shared utilities for import and retranscription
 pub(crate) mod common;
-
-// Shared constants
-pub mod constants;
 
 // Retranscription module (re-process stored audio with different settings)
 pub mod retranscription;

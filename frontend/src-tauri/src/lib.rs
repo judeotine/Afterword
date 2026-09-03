@@ -3,34 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 // Removed unused import
 
-// Performance optimization: Conditional logging macros for hot paths
-#[cfg(debug_assertions)]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {
-        log::debug!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_debug {
-    ($($arg:tt)*) => {};
-}
-
-#[cfg(debug_assertions)]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {
-        log::trace!($($arg)*)
-    };
-}
-
-#[cfg(not(debug_assertions))]
-macro_rules! perf_trace {
-    ($($arg:tt)*) => {};
-}
-
-// Make these macros available to other modules
-pub(crate) use perf_debug;
-pub(crate) use perf_trace;
+// Performance optimization: Conditional logging macros for hot paths.
+// Defined in afterword-core so the shared pipeline modules can use them too.
+pub(crate) use afterword_core::{perf_debug, perf_trace};
 
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
@@ -38,7 +13,7 @@ pub(crate) use perf_trace;
 pub mod analytics;
 pub mod api;
 pub mod audio;
-pub mod config;
+pub use afterword_core::config;
 pub mod console_utils;
 pub mod database;
 pub mod notifications;

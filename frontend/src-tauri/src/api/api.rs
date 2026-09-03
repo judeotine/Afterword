@@ -152,19 +152,8 @@ pub struct SaveTranscriptRequest {
     pub transcripts: Vec<TranscriptSegment>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TranscriptSegment {
-    pub id: String,
-    pub text: String,
-    pub timestamp: String,
-    // NEW: Recording-relative timestamps for playback synchronization
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_start_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audio_end_time: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<f64>,
-}
+// Defined in afterword-core so the shared pipeline can build these segments.
+pub use afterword_core::transcript::ApiTranscriptSegment as TranscriptSegment;
 
 // Helper function to get auth token from store (optional)
 #[allow(dead_code)]

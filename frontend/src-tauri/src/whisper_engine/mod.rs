@@ -1,9 +1,6 @@
-pub mod whisper_engine;
-pub mod acceleration;
 pub mod commands;
-// pub mod stderr_suppressor;
 
-pub use whisper_engine::*;
-pub use acceleration::*;
+// Engine and acceleration detection live in afterword-core; re-exported here
+// so `crate::whisper_engine::...` paths keep working unchanged.
+pub use afterword_core::whisper_engine::*;
 pub use commands::*;
-// pub use stderr_suppressor::*;

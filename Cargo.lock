@@ -23,6 +23,7 @@ dependencies = [
 name = "afterword"
 version = "0.4.0"
 dependencies = [
+ "afterword-core",
  "anyhow",
  "async-trait",
  "bytemuck",
@@ -93,6 +94,40 @@ dependencies = [
  "whisper-rs",
  "xz2",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "afterword-core"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "chrono",
+ "dirs 5.0.1",
+ "ebur128",
+ "ffmpeg-sidecar",
+ "futures-util",
+ "log",
+ "ndarray",
+ "nnnoiseless",
+ "once_cell",
+ "ort",
+ "rayon",
+ "realfft",
+ "regex",
+ "reqwest 0.11.27",
+ "rubato 0.15.0",
+ "serde",
+ "serde_json",
+ "silero",
+ "symphonia",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "which 6.0.3",
+ "whisper-rs",
 ]
 
 [[package]]

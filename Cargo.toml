@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/afterword-core",
     "frontend/src-tauri",
     "llama-helper"
 ]

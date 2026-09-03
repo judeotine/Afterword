@@ -694,7 +694,7 @@ pub fn write_transcript_to_file(
 
 /// Write structured transcript with timestamps to JSON file
 pub fn write_transcript_json_to_file(
-    segments: &[super::recording_saver::TranscriptSegment],
+    segments: &[crate::transcript::TranscriptSegment],
     output_path: &PathBuf,
     meeting_name: Option<&str>,
     audio_filename: &str,

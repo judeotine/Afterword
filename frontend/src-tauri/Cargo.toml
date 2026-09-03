@@ -42,15 +42,15 @@ default = ["platform-default"]  # Automatically enables best backend per platfor
 platform-default = []
 
 # Manual GPU acceleration options (for power users to override defaults)
-metal = ["whisper-rs/metal"]       # macOS: Apple Metal GPU (Auto-enabled on macOS)
-coreml = ["whisper-rs/coreml"]     # macOS: Apple CoreML acceleration
-cuda = ["whisper-rs/cuda"]         # Windows/Linux: NVIDIA CUDA GPU
-vulkan = ["whisper-rs/vulkan"]     # Windows/Linux: AMD/Intel Vulkan GPU
-hipblas = ["whisper-rs/hipblas"]   # Linux: AMD ROCm HIP
+metal = ["whisper-rs/metal", "afterword-core/metal"]       # macOS: Apple Metal GPU (Auto-enabled on macOS)
+coreml = ["whisper-rs/coreml", "afterword-core/coreml"]     # macOS: Apple CoreML acceleration
+cuda = ["whisper-rs/cuda", "afterword-core/cuda"]         # Windows/Linux: NVIDIA CUDA GPU
+vulkan = ["whisper-rs/vulkan", "afterword-core/vulkan"]     # Windows/Linux: AMD/Intel Vulkan GPU
+hipblas = ["whisper-rs/hipblas", "afterword-core/hipblas"]   # Linux: AMD ROCm HIP
 
 # CPU optimizations (fallback for systems without GPU)
-openblas = ["whisper-rs/openblas"] # Optimized BLAS (Auto-enabled on Windows/Linux)
-openmp = ["whisper-rs/openmp"]     # OpenMP parallel processing
+openblas = ["whisper-rs/openblas", "afterword-core/openblas"] # Optimized BLAS (Auto-enabled on Windows/Linux)
+openmp = ["whisper-rs/openmp", "afterword-core/openmp"]     # OpenMP parallel processing
 
 [build-dependencies]
 tauri-build = { version = "2.3.0", features = [] }
@@ -62,6 +62,9 @@ xz2 = "0.1"           # XZ decompression (Linux)
 
 
 [dependencies]
+# Tauri-free transcription/audio pipeline shared with the CLI and server worker
+afterword-core = { path = "../../crates/afterword-core" }
+
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0"

@@ -115,10 +115,10 @@ pub struct ParakeetEngine {
     models_dir: PathBuf,
     current_model: Arc<RwLock<Option<ParakeetModel>>>,
     current_model_name: Arc<RwLock<Option<String>>>,
-    pub(crate) available_models: Arc<RwLock<HashMap<String, ModelInfo>>>,
+    pub available_models: Arc<RwLock<HashMap<String, ModelInfo>>>,
     cancel_download_flag: Arc<RwLock<Option<String>>>, // Model name being cancelled
     // Active downloads tracking to prevent concurrent downloads
-    pub(crate) active_downloads: Arc<RwLock<HashSet<String>>>, // Set of models currently being downloaded
+    pub active_downloads: Arc<RwLock<HashSet<String>>>, // Set of models currently being downloaded
 }
 
 impl ParakeetEngine {

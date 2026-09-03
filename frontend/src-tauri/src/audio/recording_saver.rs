@@ -11,18 +11,8 @@ use super::recording_state::AudioChunk;
 use super::audio_processing::create_meeting_folder;
 use super::incremental_saver::IncrementalAudioSaver;
 
-/// Structured transcript segment for JSON export
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptSegment {
-    pub id: String,
-    pub text: String,
-    pub audio_start_time: f64, // Seconds from recording start
-    pub audio_end_time: f64,   // Seconds from recording start
-    pub duration: f64,          // Segment duration in seconds
-    pub display_time: String,   // Formatted time for display like "[02:15]"
-    pub confidence: f32,
-    pub sequence_id: u64,
-}
+/// Structured transcript segment for JSON export (defined in afterword-core)
+pub use afterword_core::transcript::TranscriptSegment;
 
 /// Meeting metadata structure
 #[derive(Debug, Clone, Serialize, Deserialize)]

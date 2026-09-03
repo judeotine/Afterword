@@ -15,11 +15,9 @@
 //!
 //! - `parakeet_engine`: Main engine implementation
 //! - `model`: ONNX model wrapper and inference logic
-//! - `commands`: Tauri command interface for frontend integration
 
-pub mod commands;
+pub mod model;
+pub mod parakeet_engine;
 
-// Engine and ONNX model wrapper live in afterword-core; re-exported here so
-// `crate::parakeet_engine::...` paths keep working unchanged.
-pub use afterword_core::parakeet_engine::*;
-pub use commands::*;
+pub use parakeet_engine::{ParakeetEngine, ParakeetEngineError, QuantizationType, ModelInfo, ModelStatus, DownloadProgress};
+pub use model::{ParakeetModel, ParakeetError, TimestampedResult};
