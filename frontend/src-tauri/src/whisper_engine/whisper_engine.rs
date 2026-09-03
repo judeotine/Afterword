@@ -307,8 +307,6 @@ impl WhisperEngine {
                 // PERFORMANCE: Suppress verbose C library logs during model loading
                 // This hides the excessive Metal/GGML initialization logs in release builds
                 let ctx = {
-                    // let _suppressor = crate::whisper_engine::StderrSuppressor::new();
-
                     // Load whisper context with hardware-optimized parameters
                     WhisperContext::new_with_params(&model_info.path.to_string_lossy(), context_param)
                         .map_err(|e| anyhow!("Failed to load model {}: {}", model_name, e))?
@@ -579,8 +577,6 @@ impl WhisperEngine {
         // PERFORMANCE: Suppress verbose C library logs during transcription
         // This hides whisper_full_with_state debug logs and beam search details
         let (num_segments, state) = {
-            // let _suppressor = crate::whisper_engine::StderrSuppressor::new();
-
             let mut state = ctx.create_state()?;
             state.full(params, &audio_data)?;
             let num_segments = state.full_n_segments();
