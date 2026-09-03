@@ -94,9 +94,19 @@ jobs:
         working-directory: frontend
         run: pnpm lint
 
-      - name: Test
+      - name: Test (node)
         working-directory: frontend
         run: pnpm test
+
+      # Two of the three test files under frontend/tests/lib are Bun tests
+      # (.ts/.js), which `node --test tests/lib/*.test.mjs` never runs.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Test (bun)
+        working-directory: frontend
+        run: pnpm test:bun
 
       - name: Build
         working-directory: frontend
@@ -122,6 +132,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm run build
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
