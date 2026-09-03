@@ -37,8 +37,12 @@ pub const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 /// Capture channel count. Mono, matching the macOS Core Audio tap.
 pub const CAPTURE_CHANNELS: u8 = 1;
 
-/// Bytes requested per blocking `read()` (4096 f32 samples ≈ 85 ms at 48 kHz).
-const READ_BYTES: usize = 4096 * 4;
+/// Bytes requested per blocking `read()` (1024 f32 samples ≈ 21 ms at 48 kHz).
+///
+/// This also bounds how long `PulseMonitorStream::drop` can block while joining
+/// the capture thread, so keep it comfortably under the 50 ms settle that
+/// `AudioStream::stop` allows after aborting the polling task.
+const READ_BYTES: usize = 1024 * 4;
 
 /// Ring buffer capacity in samples (same as the Core Audio path).
 const RING_CAPACITY: usize = 1024 * 128;
@@ -253,13 +257,20 @@ fn capture_loop(
 }
 
 fn wake_consumer(waker_state: &Arc<Mutex<WakerState>>) {
+    // Only wake on the transition from "drained" to "has data": the consumer
+    // clears `has_data` when it finds the ring empty, so a wake already pending
+    // does not need another one.
     let waker = {
         let mut state = match waker_state.lock() {
             Ok(state) => state,
             Err(poisoned) => poisoned.into_inner(),
         };
-        state.has_data = true;
-        state.waker.take()
+        if state.has_data {
+            None
+        } else {
+            state.has_data = true;
+            state.waker.take()
+        }
     };
     if let Some(waker) = waker {
         waker.wake();
@@ -311,11 +322,31 @@ impl Stream for PulseMonitorStream {
             state.waker = Some(cx.waker().clone());
         }
 
+        // The capture thread may have pushed or terminated between the checks
+        // above and the waker being stored; re-check so we never park on a
+        // stream that will produce no further wake-ups.
+        if let Some(sample) = self.consumer.try_pop() {
+            return Poll::Ready(Some(sample));
+        }
+        if self.should_terminate.load(Ordering::Acquire) {
+            return Poll::Ready(None);
+        }
+
         Poll::Pending
     }
 }
 
 impl Drop for PulseMonitorStream {
+    /// Stops the capture thread and waits for it, so `Simple` is always freed by
+    /// the thread that is blocked inside `read()` on it.
+    ///
+    /// The join is bounded by one fragment (`READ_BYTES`, ≈ 21 ms) as long as the
+    /// monitor keeps producing, which it does whenever the sink is running. A
+    /// fully stalled monitor (e.g. a sink suspended by `module-suspend-on-idle`)
+    /// would block the caller — on Linux that caller is the tokio worker running
+    /// the aborted polling task. If that is ever observed, the structural fix is
+    /// to signal and detach here, and join the capture thread from a dedicated
+    /// std::thread reaper instead of from the runtime.
     fn drop(&mut self) {
         self.should_terminate.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
@@ -357,6 +388,15 @@ mod tests {
         let attr = capture_buffer_attr();
         assert_eq!(attr.maxlength, u32::MAX);
         assert_eq!(attr.fragsize, READ_BYTES as u32);
+
+        // One fragment is 1024 mono f32 samples ≈ 21 ms at 48 kHz, which bounds
+        // the join in `PulseMonitorStream::drop`; it must stay under the 50 ms
+        // settle `AudioStream::stop` allows.
+        assert_eq!(READ_BYTES, 4096);
+        let samples_per_read = READ_BYTES / std::mem::size_of::<f32>();
+        assert_eq!(samples_per_read, 1024);
+        let fragment_ms = samples_per_read as u32 * 1000 / CAPTURE_SAMPLE_RATE;
+        assert!(fragment_ms < 50, "fragment is {} ms", fragment_ms);
     }
 
     #[test]
