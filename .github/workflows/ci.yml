@@ -30,11 +30,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libpulse-dev cmake libssl-dev pkg-config
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libpulse-dev cmake libssl-dev pkg-config ffmpeg
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install cmake
+        run: brew install cmake ffmpeg
 
       - name: Build llama-helper (macOS, metal)
         if: runner.os == 'macOS'
@@ -68,9 +68,34 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy -p afterword-core --all-targets -- -D warnings
 
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
       - name: Build tests (Windows)
         if: runner.os == 'Windows'
         run: cargo test --workspace --no-run
+
+      - name: Write Common Controls v6 manifest beside app test binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $manifest = @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          $exes = Get-ChildItem target\debug\deps -Filter 'app_lib-*.exe'
+          if (-not $exes) { throw 'no app_lib test executable found' }
+          foreach ($exe in $exes) {
+            Set-Content -Path "$($exe.FullName).manifest" -Value $manifest -Encoding UTF8
+            Write-Host "wrote $($exe.Name).manifest"
+          }
 
       - name: cargo test (core crates, Windows)
         if: runner.os == 'Windows'

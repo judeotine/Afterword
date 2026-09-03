@@ -18,7 +18,6 @@ fn main() {
     // Download and bundle FFmpeg binary at build-time
     ffmpeg::ensure_ffmpeg_binary();
 
-    embed_common_controls_manifest_for_tests();
 
     tauri_build::build()
 }
@@ -91,17 +90,4 @@ fn detect_and_report_gpu_capabilities() {
         println!("cargo:warning=📊 Performance: CPU-only builds are significantly slower than GPU/BLAS builds");
         println!("cargo:warning=📚 See README.md for GPU/BLAS setup instructions");
     }
-}
-
-fn embed_common_controls_manifest_for_tests() {
-    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() != "windows" {
-        return;
-    }
-    if std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default() != "msvc" {
-        return;
-    }
-    println!("cargo:rustc-link-arg-tests=/MANIFEST:EMBED");
-    println!(
-        "cargo:rustc-link-arg-tests=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
-    );
 }
