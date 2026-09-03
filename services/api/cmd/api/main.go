@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -16,6 +17,9 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/config"
 	"github.com/judeotine/afterword/services/api/internal/db"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
+	"github.com/judeotine/afterword/services/api/internal/jobs"
+	"github.com/judeotine/afterword/services/api/internal/meetings"
+	"github.com/judeotine/afterword/services/api/internal/storage"
 	"github.com/judeotine/afterword/services/api/internal/version"
 )
 
@@ -64,9 +68,26 @@ func run() error {
 		logger.Warn().Err(err).Msg("database not reachable at startup, serving in degraded mode")
 	}
 
-	apiServer, err := buildAPI(cfg, pool, logger)
+	library, err := buildLibrary(cfg, pool, logger)
 	if err != nil {
 		return err
+	}
+
+	apiServer, err := buildAPI(cfg, pool, library, logger)
+	if err != nil {
+		return err
+	}
+
+	if library != nil {
+		runner, runnerErr := newPurgeRunner(cfg, pool, logger)
+		if runnerErr != nil {
+			return runnerErr
+		}
+		go func() {
+			if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error().Err(err).Msg("job runner stopped")
+			}
+		}()
 	}
 
 	router := httpx.NewRouter(httpx.RouterOptions{
@@ -92,7 +113,59 @@ func run() error {
 	return nil
 }
 
-func buildAPI(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*api.Server, error) {
+func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*meetings.Service, error) {
+	if !cfg.StorageConfigured() {
+		logger.Warn().Msg("object storage is disabled: set S3_ACCESS_KEY and S3_SECRET_KEY to enable meetings, transcripts and sharing")
+		return nil, nil
+	}
+
+	client, err := newStorageClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return meetings.NewService(meetings.ServiceOptions{
+		Pool:          pool.Pool(),
+		Storage:       client,
+		Buckets:       storageBuckets(cfg),
+		Jobs:          jobs.NewQueue(pool.Pool()),
+		UploadTTL:     cfg.S3.UploadTTL,
+		DownloadTTL:   cfg.S3.DownloadTTL,
+		MaxAudioBytes: cfg.S3.MaxAudioBytes,
+	})
+}
+
+func newStorageClient(cfg config.Config) (*storage.S3Client, error) {
+	return storage.NewS3Client(storage.Options{
+		Endpoint:     cfg.S3.Endpoint,
+		Region:       cfg.S3.Region,
+		AccessKey:    cfg.S3.AccessKey,
+		SecretKey:    cfg.S3.SecretKey,
+		UsePathStyle: cfg.S3.UsePathStyle,
+	})
+}
+
+func storageBuckets(cfg config.Config) storage.Buckets {
+	return storage.Buckets{
+		Audio:       cfg.S3.AudioBucket,
+		Transcripts: cfg.S3.TranscriptsBucket,
+		Clips:       cfg.S3.ClipsBucket,
+		Exports:     cfg.S3.ExportsBucket,
+	}.WithDefaults()
+}
+
+func newPurgeRunner(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*jobs.Runner, error) {
+	client, err := newStorageClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+	runner := jobs.NewRunner(jobs.NewQueue(pool.Pool()), jobs.WithLogger(logger))
+	if err := runner.Register(meetings.KindPurge, 1, meetings.NewPurgeHandler(client)); err != nil {
+		return nil, err
+	}
+	return runner, nil
+}
+
+func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logger zerolog.Logger) (*api.Server, error) {
 	authStore, err := auth.NewStore(pool.Pool())
 	if err != nil {
 		return nil, err
@@ -156,6 +229,7 @@ func buildAPI(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*api.Ser
 		Tokens:     tokens,
 		Refresh:    refresh,
 		Middleware: middleware,
+		Meetings:   library,
 		Google:     google,
 		Email:      emailSender,
 		AppBaseURL: cfg.AppBaseURL,

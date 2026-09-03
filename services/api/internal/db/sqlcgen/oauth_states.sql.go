@@ -16,7 +16,7 @@ UPDATE oauth_states SET consumed_at = $1
 WHERE state_hash = $2
   AND provider = $3
   AND consumed_at IS NULL
-RETURNING id, provider, state_hash, code_verifier, redirect_to, expires_at, consumed_at, created_at
+RETURNING id, provider, state_hash, code_verifier, redirect_to, expires_at, consumed_at, created_at, nonce_hash
 `
 
 type ConsumeOAuthStateParams struct {
@@ -37,26 +37,29 @@ func (q *Queries) ConsumeOAuthState(ctx context.Context, arg ConsumeOAuthStatePa
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+		&i.NonceHash,
 	)
 	return i, err
 }
 
 const createOAuthState = `-- name: CreateOAuthState :one
-INSERT INTO oauth_states (provider, state_hash, code_verifier, redirect_to, expires_at, created_at)
+INSERT INTO oauth_states (provider, state_hash, nonce_hash, code_verifier, redirect_to, expires_at, created_at)
 VALUES (
     $1,
     $2,
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
-RETURNING id, provider, state_hash, code_verifier, redirect_to, expires_at, consumed_at, created_at
+RETURNING id, provider, state_hash, code_verifier, redirect_to, expires_at, consumed_at, created_at, nonce_hash
 `
 
 type CreateOAuthStateParams struct {
 	Provider     string             `json:"provider"`
 	StateHash    string             `json:"state_hash"`
+	NonceHash    string             `json:"nonce_hash"`
 	CodeVerifier string             `json:"code_verifier"`
 	RedirectTo   string             `json:"redirect_to"`
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
@@ -67,6 +70,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 	row := q.db.QueryRow(ctx, createOAuthState,
 		arg.Provider,
 		arg.StateHash,
+		arg.NonceHash,
 		arg.CodeVerifier,
 		arg.RedirectTo,
 		arg.ExpiresAt,
@@ -82,6 +86,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+		&i.NonceHash,
 	)
 	return i, err
 }

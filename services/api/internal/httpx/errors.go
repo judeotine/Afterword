@@ -16,9 +16,15 @@ const (
 	CodeRateLimited        = "rate_limited"
 )
 
-type ErrorBody struct {
-	Code    string `json:"code"`
+type FieldError struct {
+	Field   string `json:"field"`
 	Message string `json:"message"`
+}
+
+type ErrorBody struct {
+	Code    string       `json:"code"`
+	Message string       `json:"message"`
+	Fields  []FieldError `json:"fields,omitempty"`
 }
 
 type ErrorEnvelope struct {
@@ -31,6 +37,12 @@ func NewErrorEnvelope(code, message string) ErrorEnvelope {
 
 func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	WriteJSON(w, r, status, NewErrorEnvelope(code, message))
+}
+
+func WriteFieldErrors(w http.ResponseWriter, r *http.Request, message string, fields []FieldError) {
+	envelope := NewErrorEnvelope(CodeValidationFailed, message)
+	envelope.Error.Fields = fields
+	WriteJSON(w, r, http.StatusBadRequest, envelope)
 }
 
 func NotFoundHandler() http.HandlerFunc {

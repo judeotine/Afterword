@@ -11,6 +11,7 @@ import (
 
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/meetings"
 )
 
 const (
@@ -20,6 +21,8 @@ const (
 	userParam         = "userID"
 	inviteParam       = "inviteID"
 	inviteTokenParam  = "token"
+	meetingParam      = "meetingID"
+	folderParam       = "folderID"
 )
 
 type ServerOptions struct {
@@ -28,6 +31,7 @@ type ServerOptions struct {
 	Tokens      *auth.TokenIssuer
 	Refresh     *auth.RefreshManager
 	Middleware  *auth.Middleware
+	Meetings    *meetings.Service
 	Google      *auth.GoogleAuthenticator
 	Email       auth.EmailSender
 	AppBaseURL  string
@@ -41,6 +45,7 @@ type Server struct {
 	tokens      *auth.TokenIssuer
 	refresh     *auth.RefreshManager
 	middleware  *auth.Middleware
+	meetings    *meetings.Service
 	google      *auth.GoogleAuthenticator
 	email       auth.EmailSender
 	appBaseURL  string
@@ -69,6 +74,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		tokens:      options.Tokens,
 		refresh:     options.Refresh,
 		middleware:  options.Middleware,
+		meetings:    options.Meetings,
 		google:      options.Google,
 		email:       options.Email,
 		appBaseURL:  strings.TrimRight(strings.TrimSpace(options.AppBaseURL), "/"),
@@ -120,6 +126,27 @@ func (s *Server) Routes(router chi.Router) {
 					r.Delete("/invites/{"+inviteParam+"}", s.handleRevokeInvite)
 					r.Patch("/members/{"+userParam+"}", s.handleUpdateMember)
 				})
+			})
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.middleware.RequireWorkspace)
+
+				r.Post("/meetings", s.handleCreateMeeting)
+				r.Get("/meetings", s.handleListMeetings)
+
+				r.Route("/meetings/{"+meetingParam+"}", func(r chi.Router) {
+					r.Get("/", s.handleGetMeeting)
+					r.Patch("/", s.handleUpdateMeeting)
+					r.Delete("/", s.handleDeleteMeeting)
+					r.Post("/finalize", s.handleFinalizeMeeting)
+					r.Put("/segments", s.handleReplaceSegments)
+					r.Get("/segments", s.handleListSegments)
+				})
+
+				r.Post("/folders", s.handleCreateFolder)
+				r.Get("/folders", s.handleListFolders)
+				r.Patch("/folders/{"+folderParam+"}", s.handleUpdateFolder)
+				r.Delete("/folders/{"+folderParam+"}", s.handleDeleteFolder)
 			})
 		})
 	})

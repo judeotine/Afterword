@@ -12,6 +12,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimAuthOTPAttempt = `-- name: ClaimAuthOTPAttempt :one
+UPDATE auth_otps SET attempts = auth_otps.attempts + 1
+WHERE auth_otps.id = $1
+  AND auth_otps.consumed_at IS NULL
+  AND auth_otps.attempts < $2
+  AND (
+      SELECT COALESCE(sum(by_destination.attempts), 0) FROM auth_otps AS by_destination
+      WHERE by_destination.channel = $3
+        AND by_destination.destination = $4
+        AND by_destination.created_at >= $5
+  ) < $6::bigint
+  AND (
+      $7::text = ''
+      OR (
+          SELECT COALESCE(sum(by_ip.attempts), 0) FROM auth_otps AS by_ip
+          WHERE by_ip.request_ip = $7::text
+            AND by_ip.request_ip <> ''
+            AND by_ip.created_at >= $8
+      ) < $9::bigint
+  )
+RETURNING auth_otps.attempts
+`
+
+type ClaimAuthOTPAttemptParams struct {
+	ID               uuid.UUID          `json:"id"`
+	MaxAttempts      int32              `json:"max_attempts"`
+	Channel          string             `json:"channel"`
+	Destination      string             `json:"destination"`
+	DestinationSince pgtype.Timestamptz `json:"destination_since"`
+	DestinationLimit int64              `json:"destination_limit"`
+	RequestIp        string             `json:"request_ip"`
+	IpSince          pgtype.Timestamptz `json:"ip_since"`
+	IpLimit          int64              `json:"ip_limit"`
+}
+
+func (q *Queries) ClaimAuthOTPAttempt(ctx context.Context, arg ClaimAuthOTPAttemptParams) (int32, error) {
+	row := q.db.QueryRow(ctx, claimAuthOTPAttempt,
+		arg.ID,
+		arg.MaxAttempts,
+		arg.Channel,
+		arg.Destination,
+		arg.DestinationSince,
+		arg.DestinationLimit,
+		arg.RequestIp,
+		arg.IpSince,
+		arg.IpLimit,
+	)
+	var attempts int32
+	err := row.Scan(&attempts)
+	return attempts, err
+}
+
 const consumeAuthOTP = `-- name: ConsumeAuthOTP :execrows
 UPDATE auth_otps SET consumed_at = $1
 WHERE id = $2 AND consumed_at IS NULL
@@ -158,15 +210,79 @@ func (q *Queries) GetLatestAuthOTP(ctx context.Context, arg GetLatestAuthOTPPara
 	return i, err
 }
 
-const recordAuthOTPAttempt = `-- name: RecordAuthOTPAttempt :one
-UPDATE auth_otps SET attempts = attempts + 1
-WHERE id = $1
-RETURNING attempts
+const lockAuthOTPDestination = `-- name: LockAuthOTPDestination :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text))
 `
 
-func (q *Queries) RecordAuthOTPAttempt(ctx context.Context, id uuid.UUID) (int32, error) {
-	row := q.db.QueryRow(ctx, recordAuthOTPAttempt, id)
-	var attempts int32
-	err := row.Scan(&attempts)
-	return attempts, err
+func (q *Queries) LockAuthOTPDestination(ctx context.Context, destination string) error {
+	_, err := q.db.Exec(ctx, lockAuthOTPDestination, destination)
+	return err
+}
+
+const tryCreateAuthOTP = `-- name: TryCreateAuthOTP :one
+INSERT INTO auth_otps (channel, destination, code_hash, expires_at, request_ip, created_at)
+SELECT
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6
+WHERE (
+    SELECT count(*) FROM auth_otps AS by_destination
+    WHERE by_destination.channel = $1
+      AND by_destination.destination = $2
+      AND by_destination.created_at >= $7
+) < $8::bigint
+  AND (
+    $5::text = ''
+    OR (
+        SELECT count(*) FROM auth_otps AS by_ip
+        WHERE by_ip.request_ip = $5::text
+          AND by_ip.request_ip <> ''
+          AND by_ip.created_at >= $9
+    ) < $10::bigint
+  )
+RETURNING id, channel, destination, code_hash, expires_at, attempts, consumed_at, request_ip, created_at
+`
+
+type TryCreateAuthOTPParams struct {
+	Channel          string             `json:"channel"`
+	Destination      string             `json:"destination"`
+	CodeHash         string             `json:"code_hash"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	RequestIp        string             `json:"request_ip"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	DestinationSince pgtype.Timestamptz `json:"destination_since"`
+	DestinationLimit int64              `json:"destination_limit"`
+	IpSince          pgtype.Timestamptz `json:"ip_since"`
+	IpLimit          int64              `json:"ip_limit"`
+}
+
+func (q *Queries) TryCreateAuthOTP(ctx context.Context, arg TryCreateAuthOTPParams) (AuthOtp, error) {
+	row := q.db.QueryRow(ctx, tryCreateAuthOTP,
+		arg.Channel,
+		arg.Destination,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.RequestIp,
+		arg.CreatedAt,
+		arg.DestinationSince,
+		arg.DestinationLimit,
+		arg.IpSince,
+		arg.IpLimit,
+	)
+	var i AuthOtp
+	err := row.Scan(
+		&i.ID,
+		&i.Channel,
+		&i.Destination,
+		&i.CodeHash,
+		&i.ExpiresAt,
+		&i.Attempts,
+		&i.ConsumedAt,
+		&i.RequestIp,
+		&i.CreatedAt,
+	)
+	return i, err
 }

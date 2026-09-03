@@ -1,0 +1,43 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/judeotine/afterword/services/api/internal/httpx"
+	"github.com/judeotine/afterword/services/api/internal/meetings"
+)
+
+const (
+	codeNoObjects       = "no_objects"
+	codeObjectTooLarge  = "object_too_large"
+	codeTooManySegments = "too_many_segments"
+	codeFolderNotEmpty  = "folder_not_empty"
+	codeFolderCycle     = "folder_cycle"
+)
+
+var libraryErrors = []struct {
+	target error
+	result statusError
+}{
+	{meetings.ErrMeetingNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That meeting does not exist."}},
+	{meetings.ErrFolderNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That folder does not exist."}},
+	{meetings.ErrNotPermitted, statusError{http.StatusForbidden, httpx.CodeForbidden, "Your role does not allow that action."}},
+	{meetings.ErrNoObjects, statusError{http.StatusConflict, codeNoObjects, "Upload the audio or the transcript before finalising the meeting."}},
+	{meetings.ErrFolderHasChildren, statusError{http.StatusConflict, codeFolderNotEmpty, "Delete the folders inside this one first."}},
+	{meetings.ErrFolderCycle, statusError{http.StatusConflict, codeFolderCycle, "A folder cannot be moved inside itself."}},
+	{meetings.ErrObjectTooLarge, statusError{http.StatusRequestEntityTooLarge, codeObjectTooLarge, "The uploaded file is larger than the agreed limit."}},
+	{meetings.ErrTooManySegments, statusError{http.StatusRequestEntityTooLarge, codeTooManySegments, "A transcript may hold at most 20000 segments."}},
+	{meetings.ErrDuplicateSequence, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "Transcript segment sequence numbers must be unique."}},
+	{meetings.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That page cursor is not valid."}},
+}
+
+func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
+	for _, candidate := range libraryErrors {
+		if errors.Is(err, candidate.target) {
+			httpx.WriteError(w, r, candidate.result.status, candidate.result.code, candidate.result.message)
+			return
+		}
+	}
+	s.writeServiceError(w, r, err)
+}

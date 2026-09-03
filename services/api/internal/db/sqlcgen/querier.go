@@ -13,6 +13,7 @@ import (
 
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, arg AcceptWorkspaceInviteParams) (WorkspaceInvite, error)
+	ClaimAuthOTPAttempt(ctx context.Context, arg ClaimAuthOTPAttemptParams) (int32, error)
 	ConsumeAuthOTP(ctx context.Context, arg ConsumeAuthOTPParams) (int64, error)
 	ConsumeOAuthState(ctx context.Context, arg ConsumeOAuthStateParams) (OauthState, error)
 	CountAuthOTPsByDestination(ctx context.Context, arg CountAuthOTPsByDestinationParams) (int64, error)
@@ -133,14 +134,15 @@ type Querier interface {
 	ListWorkspaceMembersWithUsers(ctx context.Context, workspaceID uuid.UUID) ([]ListWorkspaceMembersWithUsersRow, error)
 	ListWorkspacesByUser(ctx context.Context, arg ListWorkspacesByUserParams) ([]Workspace, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
+	LockAuthOTPDestination(ctx context.Context, destination string) error
 	LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID) (uuid.UUID, error)
 	MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) (int64, error)
-	RecordAuthOTPAttempt(ctx context.Context, id uuid.UUID) (int32, error)
 	RevokeExpiredWorkspaceInvites(ctx context.Context, arg RevokeExpiredWorkspaceInvitesParams) (int64, error)
 	RevokeRefreshFamily(ctx context.Context, arg RevokeRefreshFamilyParams) (int64, error)
 	RevokeUserRefreshTokens(ctx context.Context, arg RevokeUserRefreshTokensParams) (int64, error)
 	RevokeWorkspaceInvite(ctx context.Context, arg RevokeWorkspaceInviteParams) (int64, error)
 	TouchHealthcheck(ctx context.Context) (Healthcheck, error)
+	TryCreateAuthOTP(ctx context.Context, arg TryCreateAuthOTPParams) (AuthOtp, error)
 	UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (ApiToken, error)
 	UpdateAuditLogEntry(ctx context.Context, arg UpdateAuditLogEntryParams) (AuditLog, error)
 	UpdateBotJob(ctx context.Context, arg UpdateBotJobParams) (BotJob, error)
