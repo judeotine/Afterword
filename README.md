@@ -7,6 +7,8 @@ microphone and system audio, transcribes on-device with Whisper or Parakeet,
 and writes structured summaries with a local model or the LLM provider you
 choose. No bot joins your call and nothing has to leave your machine.
 
+Afterword is proprietary software and this repository is private.
+
 
 ## Status
 
@@ -61,4 +63,8 @@ From `frontend/`: `pnpm lint`, `pnpm test`. From the repo root:
 
 ## License
 
-MIT. See [LICENSE.md](LICENSE.md).
+Afterword is proprietary software and this repository is private. Afterword
+began as a fork of Meetily by Zackriya Solutions, released under the MIT
+License, and keeps the required MIT attribution and copyright notices in
+[LICENSE.md](LICENSE.md) — see
+[NOTICE.md](NOTICE.md) for what has changed since the fork.

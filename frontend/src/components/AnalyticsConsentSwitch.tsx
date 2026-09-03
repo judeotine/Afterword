@@ -7,6 +7,7 @@ import { load } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
 import { Analytics } from '@/lib/analytics';
 import AnalyticsDataModal from './AnalyticsDataModal';
+import { PRIVACY_URL } from '@/constants/links';
 
 const ANALYTICS_DEFAULT_OFF_MIGRATION_KEY = 'analyticsDefaultOffMigrationV1';
 
@@ -147,7 +148,7 @@ export default function AnalyticsConsentSwitch() {
 
   const handlePrivacyPolicyClick = async () => {
     try {
-      await invoke('open_external_url', { url: 'https://github.com/judeotine/Afterword/blob/main/PRIVACY_POLICY.md' });
+      await invoke('open_external_url', { url: PRIVACY_URL });
     } catch (error) {
       console.error('Failed to open privacy policy link:', error);
     }

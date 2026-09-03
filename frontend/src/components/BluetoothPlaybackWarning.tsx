@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Speaker, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PRIVACY_URL } from '@/constants/links';
 
 interface AudioOutputInfo {
   device_name: string;
@@ -81,7 +82,7 @@ export function BluetoothPlaybackWarning({
             <strong>wired headphones</strong>.
             <br />
             <a
-              href="https://github.com/judeotine/Afterword/blob/main/BLUETOOTH_PLAYBACK_NOTICE.md"
+              href={`${PRIVACY_URL}#bluetooth-playback`}
               target="_blank"
               rel="noopener noreferrer"
               className="underline hover:text-yellow-900 font-medium mt-2 inline-block"
