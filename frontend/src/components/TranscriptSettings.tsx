@@ -4,9 +4,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
-import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
+import { useConfig } from '@/contexts/ConfigContext';
 
 
 export interface TranscriptModelProps {
@@ -27,6 +28,11 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(true);
     const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
     const [uiProvider, setUiProvider] = useState<TranscriptModelProps['provider']>(transcriptModelConfig.provider);
+    const { selectedLanguage } = useConfig();
+
+    // Parakeet is English-only, so any other language selection is silently ignored
+    const showParakeetLanguageNotice =
+        uiProvider === 'parakeet' && selectedLanguage !== 'auto' && selectedLanguage !== 'en';
 
     // Sync uiProvider when backend config changes (e.g., after model selection or initial load)
     useEffect(() => {
@@ -159,6 +165,15 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 onModelSelect={handleWhisperModelSelect}
                                 autoSave={true}
                             />
+                        </div>
+                    )}
+
+                    {showParakeetLanguageNotice && (
+                        <div className="mx-1 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                            <span>
+                                Parakeet transcribes English only. Your language setting will be ignored. Switch to Whisper for other languages.
+                            </span>
                         </div>
                     )}
 
