@@ -26,11 +26,11 @@ import (
 
 const (
 	IntegrationURLEnv = "INTEGRATION_DATABASE_URL"
-	FallbackURLEnv    = "DATABASE_URL"
 	ContainerImage    = "pgvector/pgvector:pg16"
 
-	SkipReason = "no " + IntegrationURLEnv + ", no " + FallbackURLEnv +
-		" and no reachable Docker daemon: set one of them or start Docker to run integration tests"
+	SkipReason = "no " + IntegrationURLEnv +
+		" and no reachable Docker daemon: set " + IntegrationURLEnv +
+		" or start Docker to run integration tests"
 )
 
 var (
@@ -52,11 +52,9 @@ func BaseURL(t *testing.T) string {
 }
 
 func resolveBaseURL() {
-	for _, key := range []string{IntegrationURLEnv, FallbackURLEnv} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			baseURL = value
-			return
-		}
+	if value := strings.TrimSpace(os.Getenv(IntegrationURLEnv)); value != "" {
+		baseURL = value
+		return
 	}
 	if !dockerAvailable() {
 		return

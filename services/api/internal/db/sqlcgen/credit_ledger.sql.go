@@ -12,56 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createCreditLedgerEntry = `-- name: CreateCreditLedgerEntry :one
-INSERT INTO credit_ledger (workspace_id, delta_minutes, reason, ref_id)
-VALUES ($1, $2, $3, $4)
-RETURNING id, workspace_id, delta_minutes, reason, ref_id, created_at
-`
-
-type CreateCreditLedgerEntryParams struct {
-	WorkspaceID  uuid.UUID `json:"workspace_id"`
-	DeltaMinutes int32     `json:"delta_minutes"`
-	Reason       string    `json:"reason"`
-	RefID        *string   `json:"ref_id"`
-}
-
-func (q *Queries) CreateCreditLedgerEntry(ctx context.Context, arg CreateCreditLedgerEntryParams) (CreditLedger, error) {
-	row := q.db.QueryRow(ctx, createCreditLedgerEntry,
-		arg.WorkspaceID,
-		arg.DeltaMinutes,
-		arg.Reason,
-		arg.RefID,
-	)
-	var i CreditLedger
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.DeltaMinutes,
-		&i.Reason,
-		&i.RefID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const deleteCreditLedgerEntry = `-- name: DeleteCreditLedgerEntry :execrows
-DELETE FROM credit_ledger
-WHERE id = $1 AND workspace_id = $2
-`
-
-type DeleteCreditLedgerEntryParams struct {
-	ID          uuid.UUID `json:"id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) DeleteCreditLedgerEntry(ctx context.Context, arg DeleteCreditLedgerEntryParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteCreditLedgerEntry, arg.ID, arg.WorkspaceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const ensureCreditLock = `-- name: EnsureCreditLock :exec
 INSERT INTO credit_locks (workspace_id) VALUES ($1)
 ON CONFLICT (workspace_id) DO NOTHING
@@ -170,30 +120,4 @@ func (q *Queries) LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID
 	var workspace_id uuid.UUID
 	err := row.Scan(&workspace_id)
 	return workspace_id, err
-}
-
-const updateCreditLedgerEntry = `-- name: UpdateCreditLedgerEntry :one
-UPDATE credit_ledger SET ref_id = COALESCE($1, ref_id)
-WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, delta_minutes, reason, ref_id, created_at
-`
-
-type UpdateCreditLedgerEntryParams struct {
-	RefID       *string   `json:"ref_id"`
-	ID          uuid.UUID `json:"id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) UpdateCreditLedgerEntry(ctx context.Context, arg UpdateCreditLedgerEntryParams) (CreditLedger, error) {
-	row := q.db.QueryRow(ctx, updateCreditLedgerEntry, arg.RefID, arg.ID, arg.WorkspaceID)
-	var i CreditLedger
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.DeltaMinutes,
-		&i.Reason,
-		&i.RefID,
-		&i.CreatedAt,
-	)
-	return i, err
 }

@@ -12,8 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
+	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/db/sqlcgen"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 )
@@ -216,13 +218,12 @@ func TestCreditLedgerQueriesReportTheBalance(t *testing.T) {
 	ctx, queries := newQueries(t)
 	workspace := newWorkspace(ctx, t, queries, "ledger")
 
-	for _, entry := range []sqlcgen.CreateCreditLedgerEntryParams{
-		{WorkspaceID: workspace.ID, DeltaMinutes: 300, Reason: "grant"},
-		{WorkspaceID: workspace.ID, DeltaMinutes: -45, Reason: "bot_usage", RefID: stringPtr("bot-1")},
-	} {
-		if _, err := queries.CreateCreditLedgerEntry(ctx, entry); err != nil {
-			t.Fatalf("CreateCreditLedgerEntry: %v", err)
-		}
+	ledger := credits.NewLedger(queries.Pool())
+	if _, err := ledger.Grant(ctx, workspace.ID, 300, ""); err != nil {
+		t.Fatalf("Grant: %v", err)
+	}
+	if _, err := ledger.Debit(ctx, workspace.ID, 45, credits.ReasonBotUsage, "bot-1"); err != nil {
+		t.Fatalf("Debit: %v", err)
 	}
 
 	balance, err := queries.GetCreditBalance(ctx, workspace.ID)
@@ -313,17 +314,19 @@ func TestMembershipsAndJobsRoundTrip(t *testing.T) {
 
 type queries struct {
 	*sqlcgen.Queries
-	db sqlcgen.DBTX
+	pool *pgxpool.Pool
 }
 
-func (q queries) DB() sqlcgen.DBTX { return q.db }
+func (q queries) DB() sqlcgen.DBTX { return q.pool }
+
+func (q queries) Pool() *pgxpool.Pool { return q.pool }
 
 func newQueries(t *testing.T) (context.Context, queries) {
 	t.Helper()
 	pool := dbtest.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
-	return ctx, queries{Queries: sqlcgen.New(pool), db: pool}
+	return ctx, queries{Queries: sqlcgen.New(pool), pool: pool}
 }
 
 func newWorkspace(ctx context.Context, t *testing.T, q queries, name string) sqlcgen.Workspace {

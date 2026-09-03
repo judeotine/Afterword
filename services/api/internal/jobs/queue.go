@@ -27,6 +27,7 @@ var (
 	ErrNoJob        = errors.New("jobs: no job available")
 	ErrNotFound     = errors.New("jobs: job not found")
 	ErrNotRunning   = errors.New("jobs: job is not running")
+	ErrLockLost     = errors.New("jobs: job is locked by another worker")
 	ErrKindRequired = errors.New("jobs: kind is required")
 	ErrNoKinds      = errors.New("jobs: at least one kind is required")
 )
@@ -154,12 +155,20 @@ RETURNING ` + jobColumns
 	case err == nil:
 		return job, nil
 	case errors.Is(err, pgx.ErrNoRows) && key != nil:
-		return q.GetByIdempotencyKey(ctx, kind, idempotencyKey)
+		return q.readBackConflict(ctx, kind, idempotencyKey)
 	case errors.Is(err, pgx.ErrNoRows):
 		return nil, fmt.Errorf("enqueue job: %w", ErrNotFound)
 	default:
 		return nil, fmt.Errorf("enqueue job: %w", err)
 	}
+}
+
+func (q *Queue) readBackConflict(ctx context.Context, kind string, idempotencyKey string) (*Job, error) {
+	job, err := q.GetByIdempotencyKey(ctx, kind, idempotencyKey)
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		return job, err
+	}
+	return q.GetByIdempotencyKey(ctx, kind, idempotencyKey)
 }
 
 func (q *Queue) Claim(ctx context.Context, workerID string, kinds []string) (*Job, error) {
@@ -203,27 +212,39 @@ RETURNING ` + jobColumns
 	return job, nil
 }
 
-func (q *Queue) Complete(ctx context.Context, id uuid.UUID) (*Job, error) {
+func (q *Queue) Complete(ctx context.Context, id uuid.UUID, workerID string) (*Job, error) {
+	tx, err := q.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin complete transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if _, _, err := lockHeldJob(ctx, tx, id, workerID); err != nil {
+		return nil, err
+	}
+
 	const complete = `UPDATE jobs SET
 	status = 'succeeded',
 	locked_by = NULL,
 	locked_at = NULL,
 	last_error = NULL,
 	updated_at = $2
-WHERE id = $1 AND status = 'running'
+WHERE id = $1
 RETURNING ` + jobColumns
 
-	job, err := scanJob(q.pool.QueryRow(ctx, complete, id, q.Now()))
+	job, err := scanJob(tx.QueryRow(ctx, complete, id, q.Now()))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, q.explainMissingRunningJob(ctx, id)
-		}
 		return nil, fmt.Errorf("complete job: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit complete transaction: %w", err)
 	}
 	return job, nil
 }
 
-func (q *Queue) Fail(ctx context.Context, id uuid.UUID, cause error) (*Job, error) {
+func (q *Queue) Fail(ctx context.Context, id uuid.UUID, workerID string, cause error) (*Job, error) {
 	tx, err := q.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin fail transaction: %w", err)
@@ -232,21 +253,9 @@ func (q *Queue) Fail(ctx context.Context, id uuid.UUID, cause error) (*Job, erro
 		_ = tx.Rollback(ctx)
 	}()
 
-	var (
-		attempts    int32
-		maxAttempts int32
-		status      Status
-	)
-	err = tx.QueryRow(ctx, `SELECT attempts, max_attempts, status FROM jobs WHERE id = $1 FOR UPDATE`, id).
-		Scan(&attempts, &maxAttempts, &status)
+	attempts, maxAttempts, err := lockHeldJob(ctx, tx, id, workerID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("load job for failure: %w", err)
-	}
-	if status != StatusRunning {
-		return nil, ErrNotRunning
+		return nil, err
 	}
 
 	now := q.Now()
@@ -288,7 +297,11 @@ func (q *Queue) ReleaseStale(ctx context.Context, lockedOlderThan time.Duration)
 	now := q.Now()
 
 	const release = `UPDATE jobs SET
-	status = 'pending',
+	status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
+	last_error = CASE
+		WHEN attempts >= max_attempts THEN COALESCE(last_error, 'jobs: lock expired after the final attempt')
+		ELSE last_error
+	END,
 	locked_by = NULL,
 	locked_at = NULL,
 	updated_at = $2
@@ -324,15 +337,29 @@ func (q *Queue) GetByIdempotencyKey(ctx context.Context, kind string, idempotenc
 	return job, nil
 }
 
-func (q *Queue) explainMissingRunningJob(ctx context.Context, id uuid.UUID) error {
-	var exists bool
-	if err := q.pool.QueryRow(ctx, `SELECT true FROM jobs WHERE id = $1`, id).Scan(&exists); err != nil {
+func lockHeldJob(ctx context.Context, tx pgx.Tx, id uuid.UUID, workerID string) (int32, int32, error) {
+	var (
+		attempts    int32
+		maxAttempts int32
+		status      Status
+		lockedBy    *string
+	)
+	err := tx.QueryRow(ctx,
+		`SELECT attempts, max_attempts, status, locked_by FROM jobs WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&attempts, &maxAttempts, &status, &lockedBy)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
+			return 0, 0, ErrNotFound
 		}
-		return fmt.Errorf("inspect job: %w", err)
+		return 0, 0, fmt.Errorf("load job for lock check: %w", err)
 	}
-	return ErrNotRunning
+	if status != StatusRunning {
+		return 0, 0, ErrNotRunning
+	}
+	if lockedBy == nil || *lockedBy != workerID {
+		return 0, 0, ErrLockLost
+	}
+	return attempts, maxAttempts, nil
 }
 
 func encodePayload(payload any) (json.RawMessage, error) {

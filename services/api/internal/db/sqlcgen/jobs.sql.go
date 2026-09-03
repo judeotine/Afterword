@@ -12,83 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimJob = `-- name: ClaimJob :one
-UPDATE jobs SET
-    status = 'running',
-    locked_by = $1,
-    locked_at = now(),
-    attempts = attempts + 1,
-    updated_at = now()
-WHERE id = (
-    SELECT id FROM jobs
-    WHERE status = 'pending'
-      AND run_at <= now()
-      AND kind = ANY ($2::text[])
-    ORDER BY run_at, id
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-RETURNING id, kind, payload, idempotency_key, run_at, attempts, max_attempts, locked_by, locked_at, status, last_error, created_at, updated_at
-`
-
-type ClaimJobParams struct {
-	WorkerID *string  `json:"worker_id"`
-	Kinds    []string `json:"kinds"`
-}
-
-func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error) {
-	row := q.db.QueryRow(ctx, claimJob, arg.WorkerID, arg.Kinds)
-	var i Job
-	err := row.Scan(
-		&i.ID,
-		&i.Kind,
-		&i.Payload,
-		&i.IdempotencyKey,
-		&i.RunAt,
-		&i.Attempts,
-		&i.MaxAttempts,
-		&i.LockedBy,
-		&i.LockedAt,
-		&i.Status,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const completeJob = `-- name: CompleteJob :one
-UPDATE jobs SET
-    status = 'succeeded',
-    locked_by = NULL,
-    locked_at = NULL,
-    last_error = NULL,
-    updated_at = now()
-WHERE id = $1 AND status = 'running'
-RETURNING id, kind, payload, idempotency_key, run_at, attempts, max_attempts, locked_by, locked_at, status, last_error, created_at, updated_at
-`
-
-func (q *Queries) CompleteJob(ctx context.Context, id uuid.UUID) (Job, error) {
-	row := q.db.QueryRow(ctx, completeJob, id)
-	var i Job
-	err := row.Scan(
-		&i.ID,
-		&i.Kind,
-		&i.Payload,
-		&i.IdempotencyKey,
-		&i.RunAt,
-		&i.Attempts,
-		&i.MaxAttempts,
-		&i.LockedBy,
-		&i.LockedAt,
-		&i.Status,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const createJob = `-- name: CreateJob :one
 INSERT INTO jobs (kind, payload, idempotency_key, run_at, max_attempts)
 VALUES ($1, $2, $3, $4, $5)
@@ -141,45 +64,6 @@ func (q *Queries) DeleteJob(ctx context.Context, id uuid.UUID) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const failJob = `-- name: FailJob :one
-UPDATE jobs SET
-    status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
-    run_at = CASE WHEN attempts >= max_attempts THEN run_at ELSE $1 END,
-    locked_by = NULL,
-    locked_at = NULL,
-    last_error = $2,
-    updated_at = now()
-WHERE id = $3 AND status = 'running'
-RETURNING id, kind, payload, idempotency_key, run_at, attempts, max_attempts, locked_by, locked_at, status, last_error, created_at, updated_at
-`
-
-type FailJobParams struct {
-	RetryAt   pgtype.Timestamptz `json:"retry_at"`
-	LastError *string            `json:"last_error"`
-	ID        uuid.UUID          `json:"id"`
-}
-
-func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) (Job, error) {
-	row := q.db.QueryRow(ctx, failJob, arg.RetryAt, arg.LastError, arg.ID)
-	var i Job
-	err := row.Scan(
-		&i.ID,
-		&i.Kind,
-		&i.Payload,
-		&i.IdempotencyKey,
-		&i.RunAt,
-		&i.Attempts,
-		&i.MaxAttempts,
-		&i.LockedBy,
-		&i.LockedAt,
-		&i.Status,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const getJob = `-- name: GetJob :one
@@ -295,68 +179,20 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 	return items, nil
 }
 
-const releaseStaleJobs = `-- name: ReleaseStaleJobs :many
-UPDATE jobs SET
-    status = 'pending',
-    locked_by = NULL,
-    locked_at = NULL,
-    updated_at = now()
-WHERE status = 'running' AND locked_at < $1
-RETURNING id, kind, payload, idempotency_key, run_at, attempts, max_attempts, locked_by, locked_at, status, last_error, created_at, updated_at
-`
-
-func (q *Queries) ReleaseStaleJobs(ctx context.Context, olderThan pgtype.Timestamptz) ([]Job, error) {
-	rows, err := q.db.Query(ctx, releaseStaleJobs, olderThan)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Job{}
-	for rows.Next() {
-		var i Job
-		if err := rows.Scan(
-			&i.ID,
-			&i.Kind,
-			&i.Payload,
-			&i.IdempotencyKey,
-			&i.RunAt,
-			&i.Attempts,
-			&i.MaxAttempts,
-			&i.LockedBy,
-			&i.LockedAt,
-			&i.Status,
-			&i.LastError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateJob = `-- name: UpdateJob :one
 UPDATE jobs SET
     payload = COALESCE($1, payload),
     run_at = COALESCE($2, run_at),
-    status = COALESCE($3, status),
-    max_attempts = COALESCE($4, max_attempts),
-    last_error = COALESCE($5, last_error),
+    max_attempts = COALESCE($3, max_attempts),
     updated_at = now()
-WHERE id = $6
+WHERE id = $4 AND status <> 'running'
 RETURNING id, kind, payload, idempotency_key, run_at, attempts, max_attempts, locked_by, locked_at, status, last_error, created_at, updated_at
 `
 
 type UpdateJobParams struct {
 	Payload     []byte             `json:"payload"`
 	RunAt       pgtype.Timestamptz `json:"run_at"`
-	Status      *string            `json:"status"`
 	MaxAttempts *int32             `json:"max_attempts"`
-	LastError   *string            `json:"last_error"`
 	ID          uuid.UUID          `json:"id"`
 }
 
@@ -364,9 +200,7 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (Job, erro
 	row := q.db.QueryRow(ctx, updateJob,
 		arg.Payload,
 		arg.RunAt,
-		arg.Status,
 		arg.MaxAttempts,
-		arg.LastError,
 		arg.ID,
 	)
 	var i Job

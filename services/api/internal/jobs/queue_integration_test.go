@@ -166,7 +166,7 @@ func TestCompleteMarksJobSucceededAndReleasesLock(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	done, err := queue.Complete(ctx, claimed.ID)
+	done, err := queue.Complete(ctx, claimed.ID, "worker-1")
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestCompleteMarksJobSucceededAndReleasesLock(t *testing.T) {
 	if done.LockedBy != "" || !done.LockedAt.IsZero() {
 		t.Errorf("lock not released: %q %s", done.LockedBy, done.LockedAt)
 	}
-	if _, err := queue.Complete(ctx, claimed.ID); !errors.Is(err, jobs.ErrNotRunning) {
+	if _, err := queue.Complete(ctx, claimed.ID, "worker-1"); !errors.Is(err, jobs.ErrNotRunning) {
 		t.Fatalf("second Complete = %v, want ErrNotRunning", err)
 	}
 }
@@ -196,7 +196,7 @@ func TestFailReschedulesWithExponentialBackoff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Claim %d: %v", i, err)
 		}
-		failed, err := queue.Fail(ctx, claimed.ID, errors.New("boom"))
+		failed, err := queue.Fail(ctx, claimed.ID, "worker-1", errors.New("boom"))
 		if err != nil {
 			t.Fatalf("Fail %d: %v", i, err)
 		}
@@ -229,7 +229,7 @@ func TestFailDeadLettersAfterMaxAttempts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Claim attempt %d: %v", attempt, err)
 		}
-		last, err = queue.Fail(ctx, claimed.ID, fmt.Errorf("failure %d", attempt))
+		last, err = queue.Fail(ctx, claimed.ID, "worker-1", fmt.Errorf("failure %d", attempt))
 		if err != nil {
 			t.Fatalf("Fail attempt %d: %v", attempt, err)
 		}
@@ -311,4 +311,107 @@ func countJobs(ctx context.Context, t *testing.T, pool *pgxpool.Pool) int {
 		t.Fatalf("count jobs: %v", err)
 	}
 	return count
+}
+
+func TestCompleteAndFailRejectAForeignWorker(t *testing.T) {
+	ctx, _, queue := setup(t)
+
+	if _, err := queue.Enqueue(ctx, "transcribe", nil, time.Time{}, ""); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed, err := queue.Claim(ctx, "worker-1", []string{"transcribe"})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	if _, err := queue.Complete(ctx, claimed.ID, "worker-2"); !errors.Is(err, jobs.ErrLockLost) {
+		t.Fatalf("foreign Complete = %v, want ErrLockLost", err)
+	}
+	if _, err := queue.Fail(ctx, claimed.ID, "worker-2", errors.New("boom")); !errors.Is(err, jobs.ErrLockLost) {
+		t.Fatalf("foreign Fail = %v, want ErrLockLost", err)
+	}
+
+	current, err := queue.Get(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if current.Status != jobs.StatusRunning || current.LockedBy != "worker-1" {
+		t.Fatalf("job = %q locked by %q, want running and worker-1", current.Status, current.LockedBy)
+	}
+
+	if _, err := queue.Complete(ctx, claimed.ID, "worker-1"); err != nil {
+		t.Fatalf("Complete by the lock holder: %v", err)
+	}
+}
+
+func TestReleasedWorkerCannotCompleteTheReclaimedJob(t *testing.T) {
+	ctx, pool, queue := setup(t)
+
+	if _, err := queue.Enqueue(ctx, "transcribe", nil, time.Time{}, ""); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	stalled, err := queue.Claim(ctx, "worker-slow", []string{"transcribe"})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET locked_at = now() - interval '2 hours' WHERE id = $1`, stalled.ID); err != nil {
+		t.Fatalf("age the lock: %v", err)
+	}
+	if _, err := queue.ReleaseStale(ctx, time.Hour); err != nil {
+		t.Fatalf("ReleaseStale: %v", err)
+	}
+	if _, err := queue.Claim(ctx, "worker-fresh", []string{"transcribe"}); err != nil {
+		t.Fatalf("Claim after release: %v", err)
+	}
+
+	if _, err := queue.Complete(ctx, stalled.ID, "worker-slow"); !errors.Is(err, jobs.ErrLockLost) {
+		t.Fatalf("late Complete = %v, want ErrLockLost", err)
+	}
+	if _, err := queue.Complete(ctx, stalled.ID, "worker-fresh"); err != nil {
+		t.Fatalf("Complete by the current holder: %v", err)
+	}
+}
+
+func TestReleaseStaleDeadLettersExhaustedJobs(t *testing.T) {
+	ctx, pool, _ := setup(t)
+	queue := jobs.NewQueue(pool, jobs.WithMaxAttempts(1))
+
+	if _, err := queue.Enqueue(ctx, "transcribe", nil, time.Time{}, "exhausted"); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	claimed, err := queue.Claim(ctx, "worker-gone", []string{"transcribe"})
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if claimed.Attempts != claimed.MaxAttempts {
+		t.Fatalf("attempts = %d, max attempts = %d, want them equal", claimed.Attempts, claimed.MaxAttempts)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET locked_at = now() - interval '2 hours' WHERE id = $1`, claimed.ID); err != nil {
+		t.Fatalf("age the lock: %v", err)
+	}
+
+	released, err := queue.ReleaseStale(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ReleaseStale: %v", err)
+	}
+	if released != 1 {
+		t.Fatalf("released %d jobs, want 1", released)
+	}
+
+	current, err := queue.Get(ctx, claimed.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if current.Status != jobs.StatusDead {
+		t.Errorf("status = %q, want %q", current.Status, jobs.StatusDead)
+	}
+	if current.LockedBy != "" {
+		t.Errorf("locked by = %q, want the lock to be released", current.LockedBy)
+	}
+	if current.LastError == "" {
+		t.Error("a dead-lettered job carries no explanation")
+	}
+	if _, err := queue.Claim(ctx, "worker-new", []string{"transcribe"}); !errors.Is(err, jobs.ErrNoJob) {
+		t.Fatalf("an exhausted job was revived: %v", err)
+	}
 }

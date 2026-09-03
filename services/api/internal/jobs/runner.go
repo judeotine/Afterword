@@ -228,13 +228,13 @@ func (r *Runner) dispatch(ctx context.Context, workerID string, job *Job, handle
 		r.logger.Warn().Err(handlerErr).
 			Str("kind", job.Kind).Str("worker", workerID).Str("job", job.ID.String()).
 			Int("attempt", int(job.Attempts)).Msg("job handler failed")
-		if _, err := r.queue.Fail(finishCtx, job.ID, handlerErr); err != nil {
+		if _, err := r.queue.Fail(finishCtx, job.ID, workerID, handlerErr); err != nil {
 			r.logger.Error().Err(err).Str("job", job.ID.String()).Msg("record job failure")
 		}
 		return
 	}
 
-	if _, err := r.queue.Complete(finishCtx, job.ID); err != nil {
+	if _, err := r.queue.Complete(finishCtx, job.ID, workerID); err != nil {
 		r.logger.Error().Err(err).Str("job", job.ID.String()).Msg("record job completion")
 	}
 }

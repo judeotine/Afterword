@@ -13,8 +13,6 @@ import (
 
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, arg AcceptWorkspaceInviteParams) (WorkspaceInvite, error)
-	ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
-	CompleteJob(ctx context.Context, id uuid.UUID) (Job, error)
 	ConsumeAuthOTP(ctx context.Context, arg ConsumeAuthOTPParams) (int64, error)
 	ConsumeOAuthState(ctx context.Context, arg ConsumeOAuthStateParams) (OauthState, error)
 	CountAuthOTPsByDestination(ctx context.Context, arg CountAuthOTPsByDestinationParams) (int64, error)
@@ -27,7 +25,6 @@ type Querier interface {
 	CreateCalendarConnection(ctx context.Context, arg CreateCalendarConnectionParams) (CalendarConnection, error)
 	CreateClip(ctx context.Context, arg CreateClipParams) (Clip, error)
 	CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error)
-	CreateCreditLedgerEntry(ctx context.Context, arg CreateCreditLedgerEntryParams) (CreditLedger, error)
 	CreateCreditPack(ctx context.Context, arg CreateCreditPackParams) (CreditPack, error)
 	CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error)
 	CreateFolder(ctx context.Context, arg CreateFolderParams) (Folder, error)
@@ -50,7 +47,6 @@ type Querier interface {
 	DeleteCalendarConnection(ctx context.Context, arg DeleteCalendarConnectionParams) (int64, error)
 	DeleteClip(ctx context.Context, arg DeleteClipParams) (int64, error)
 	DeleteComment(ctx context.Context, arg DeleteCommentParams) (int64, error)
-	DeleteCreditLedgerEntry(ctx context.Context, arg DeleteCreditLedgerEntryParams) (int64, error)
 	DeleteCreditPack(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteDevice(ctx context.Context, arg DeleteDeviceParams) (int64, error)
 	DeleteExpiredAuthOTPs(ctx context.Context, before pgtype.Timestamptz) (int64, error)
@@ -68,7 +64,6 @@ type Querier interface {
 	DeleteUser(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	EnsureCreditLock(ctx context.Context, workspaceID uuid.UUID) error
-	FailJob(ctx context.Context, arg FailJobParams) (Job, error)
 	GetAPIToken(ctx context.Context, arg GetAPITokenParams) (ApiToken, error)
 	GetAPITokenByHash(ctx context.Context, hash string) (ApiToken, error)
 	GetAuditLogEntry(ctx context.Context, arg GetAuditLogEntryParams) (AuditLog, error)
@@ -130,7 +125,6 @@ type Querier interface {
 	LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID) (uuid.UUID, error)
 	MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) (int64, error)
 	RecordAuthOTPAttempt(ctx context.Context, id uuid.UUID) (int32, error)
-	ReleaseStaleJobs(ctx context.Context, olderThan pgtype.Timestamptz) ([]Job, error)
 	RevokeExpiredWorkspaceInvites(ctx context.Context, arg RevokeExpiredWorkspaceInvitesParams) (int64, error)
 	RevokeRefreshFamily(ctx context.Context, arg RevokeRefreshFamilyParams) (int64, error)
 	RevokeUserRefreshTokens(ctx context.Context, arg RevokeUserRefreshTokensParams) (int64, error)
@@ -142,7 +136,6 @@ type Querier interface {
 	UpdateCalendarConnection(ctx context.Context, arg UpdateCalendarConnectionParams) (CalendarConnection, error)
 	UpdateClip(ctx context.Context, arg UpdateClipParams) (Clip, error)
 	UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error)
-	UpdateCreditLedgerEntry(ctx context.Context, arg UpdateCreditLedgerEntryParams) (CreditLedger, error)
 	UpdateCreditPack(ctx context.Context, arg UpdateCreditPackParams) (CreditPack, error)
 	UpdateDevice(ctx context.Context, arg UpdateDeviceParams) (Device, error)
 	UpdateFolder(ctx context.Context, arg UpdateFolderParams) (Folder, error)
