@@ -30,6 +30,10 @@ affiliated with or endorsed by Zackriya Solutions.
   and transcription pipeline, plus an `afterword-transcribe` CLI built from
   it. The desktop app's Rust core (`app_lib`) now depends on this crate
   instead of containing that code directly.
+- Dropped an unused `esaxx-rs` dependency and the `[patch.crates-io]` block in
+  `frontend/src-tauri/Cargo.toml`; the `cpal` git patch there was never applied
+  (Cargo ignores patches outside the workspace root), so the app keeps building
+  against the crates.io `cpal` 0.15.3 it has always used.
 - Added `bot/`, a meeting-bot service (not present in upstream Meetily) that
   joins meetings the user did not host locally and transcribes them with the
   same `afterword-transcribe` CLI. See `bot/README.md` for its scope and

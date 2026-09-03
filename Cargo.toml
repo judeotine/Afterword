@@ -17,3 +17,14 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.32.0", features = ["full"] }
+
+# Profiles only take effect at the workspace root; the copy that used to live in
+# llama-helper/Cargo.toml was silently ignored.
+[profile.release]
+lto = true
+
+# llama-helper is an on-demand sidecar, so it is built for size. `lto` cannot be
+# set per package, which is why it sits on the profile root above.
+[profile.release.package.llama-helper]
+opt-level = "s"
+codegen-units = 1

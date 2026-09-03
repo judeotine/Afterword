@@ -39,7 +39,6 @@ dependencies = [
  "dasp",
  "dirs 5.0.1",
  "ebur128",
- "esaxx-rs",
  "ffmpeg-sidecar",
  "futures",
  "futures-channel",
@@ -2063,15 +2062,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "esaxx-rs"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
-dependencies = [
- "cc",
 ]
 
 [[package]]
