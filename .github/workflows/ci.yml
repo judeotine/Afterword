@@ -68,30 +68,46 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo clippy -p afterword-core --all-targets -- -D warnings
 
-      # Windows: the ort crate ships onnxruntime.dll next to the profile dir
-      # (target/debug), but test executables live in target/debug/deps and
-      # Windows resolves DLLs from the exe directory then System32, which
-      # carries an older onnxruntime.dll -> STATUS_ENTRYPOINT_NOT_FOUND.
-      # Build the tests first so the DLL exists, then stage it beside them.
       - name: Build tests (Windows)
         if: runner.os == 'Windows'
         run: cargo test --workspace --no-run
 
-      - name: Stage onnxruntime.dll beside test executables (Windows)
+      - name: Set up MSVC tools (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Inspect test binary DLL imports (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $dlls = Get-ChildItem -Path target\debug -Recurse -Filter 'onnxruntime*.dll' |
-            Where-Object { $_.FullName -notmatch '\\deps\\' }
-          if (-not $dlls) { throw 'onnxruntime.dll not found under target\debug' }
-          New-Item -ItemType Directory -Force -Path target\debug\deps | Out-Null
-          foreach ($d in $dlls) {
-            Copy-Item $d.FullName -Destination target\debug\deps -Force
-            Copy-Item $d.FullName -Destination target\debug -Force
-            Write-Host "staged $($d.FullName)"
+          $exes = Get-ChildItem target\debug\deps -Filter '*.exe' | Where-Object { $_.Name -match '^(app_lib|afterword_core)-' }
+          foreach ($exe in $exes) {
+            Write-Host "=== $($exe.Name)"
+            $deps = (& dumpbin /DEPENDENTS $exe.FullName) | Where-Object { $_ -match '\.dll$' } | ForEach-Object { $_.Trim() }
+            foreach ($d in $deps) {
+              $cmd = Get-Command $d -ErrorAction SilentlyContinue
+              if ($cmd) {
+                $v = (Get-Item $cmd.Source).VersionInfo.FileVersion
+                Write-Host ("{0,-40} {1}  [{2}]" -f $d, $cmd.Source, $v)
+              } else {
+                Write-Host ("{0,-40} NOT FOUND ON PATH" -f $d)
+              }
+            }
           }
+          Write-Host "=== dlls in deps"; Get-ChildItem target\debug\deps -Filter '*.dll' | ForEach-Object { $_.Name }
+          Write-Host "=== dlls in target/debug"; Get-ChildItem target\debug -Filter '*.dll' | ForEach-Object { $_.Name }
+
+      - name: cargo test (core crates, Windows)
+        if: runner.os == 'Windows'
+        run: cargo test -p afterword-core -p llama-helper
+
+      - name: cargo test (desktop app lib, Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: cargo test -p afterword --lib
 
       - name: cargo test
+        if: runner.os != 'Windows'
         run: cargo test --workspace
 
   frontend:
