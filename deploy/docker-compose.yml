@@ -1,0 +1,234 @@
+name: afterword
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required, set it in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required, set it in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+    stop_grace_period: 30s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    shm_size: 256m
+    mem_limit: 1g
+    cpus: 1.5
+    stop_grace_period: 1m
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_SERVER_URL: ${S3_ENDPOINT:?S3_ENDPOINT is required}
+      MINIO_BROWSER_REDIRECT_URL: http://127.0.0.1:9001
+    ports:
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - mc
+        - ready
+        - local
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 1.0
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      BUCKETS: ${S3_BUCKETS:-audio transcripts clips exports}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        mc alias set afterword http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        for bucket in $${BUCKETS}; do
+          mc mb --ignore-existing "afterword/$${bucket}"
+          mc anonymous set none "afterword/$${bucket}"
+        done
+        mc ls afterword
+    mem_limit: 128m
+    cpus: 0.25
+
+  api:
+    image: ghcr.io/judeotine/afterword-api:${TAG:?TAG is required, set it in deploy/.env}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 8080
+      MIGRATIONS_DIR: /migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 30s
+
+  web:
+    image: ghcr.io/judeotine/afterword-web:${TAG:-latest}
+    profiles:
+      - web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      NEXT_PUBLIC_API_BASE_URL: ${API_BASE_URL}
+      NEXT_PUBLIC_APP_BASE_URL: ${APP_BASE_URL}
+    depends_on:
+      api:
+        condition: service_started
+    mem_limit: 512m
+    cpus: 1.0
+
+  transcribe-worker:
+    image: ghcr.io/judeotine/afterword-transcribe-worker:${TAG:-latest}
+    profiles:
+      - workers
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TRANSCRIBE_ENGINE: ${TRANSCRIBE_ENGINE:-whisper}
+      TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-base}
+      MODELS_DIR: /models
+      WORK_DIR: /work
+    volumes:
+      - transcribe-models:/models
+      - transcribe-work:/work
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    mem_limit: 1500m
+    cpus: 1.5
+    stop_grace_period: 2m
+
+  bot-worker:
+    image: ghcr.io/judeotine/afterword-bot:${TAG:-latest}
+    profiles:
+      - workers
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: ${API_BASE_URL}
+      PRIVACY_URL: ${PRIVACY_URL:?PRIVACY_URL is required, the consent notice announces it to every participant}
+      BOT_NAME: ${BOT_NAME:-Afterword Notetaker}
+      HEADLESS: "true"
+      RECORDINGS_DIR: /app/recordings
+      MODELS_DIR: /app/models
+      TRANSCRIBE_ENGINE: ${TRANSCRIBE_ENGINE:-whisper}
+      TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-base}
+      MAX_MEETING_MINUTES: ${MAX_MEETING_MINUTES:-180}
+      ALONE_TIMEOUT_SECONDS: ${ALONE_TIMEOUT_SECONDS:-120}
+    volumes:
+      - bot-models:/app/models
+      - bot-recordings:/app/recordings
+    depends_on:
+      api:
+        condition: service_started
+    shm_size: 1gb
+    mem_limit: 1200m
+    cpus: 1.5
+    stop_grace_period: 2m
+    deploy:
+      replicas: ${BOT_WORKER_REPLICAS:-1}
+
+  backup:
+    image: alpine:3.21
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-3}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_BUCKET: ${BACKUP_BUCKET:?BACKUP_BUCKET is required}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-afterword}
+      BUCKETS: ${S3_BUCKETS:-audio transcripts clips exports}
+      RCLONE_CONFIG_MINIO_TYPE: s3
+      RCLONE_CONFIG_MINIO_PROVIDER: Minio
+      RCLONE_CONFIG_MINIO_ENDPOINT: http://minio:9000
+      RCLONE_CONFIG_MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      RCLONE_CONFIG_MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      RCLONE_CONFIG_MINIO_FORCE_PATH_STYLE: "true"
+      RCLONE_CONFIG_OFFSITE_TYPE: s3
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${BACKUP_PROVIDER:-Other}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${BACKUP_ENDPOINT:?BACKUP_ENDPOINT is required}
+      RCLONE_CONFIG_OFFSITE_REGION: ${BACKUP_REGION:-auto}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${BACKUP_ACCESS_KEY:?BACKUP_ACCESS_KEY is required}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${BACKUP_SECRET_KEY:?BACKUP_SECRET_KEY is required}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - apk add --no-cache postgresql16-client rclone tzdata >/dev/null && exec /usr/local/bin/backup.sh --loop
+    volumes:
+      - ./backup.sh:/usr/local/bin/backup.sh:ro
+      - backup-staging:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  minio-data:
+  transcribe-models:
+  transcribe-work:
+  bot-models:
+  bot-recordings:
+  backup-staging:

@@ -1,0 +1,217 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'cloud-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to build and deploy
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      transcribe_worker: ${{ steps.dockerfiles.outputs.transcribe_worker }}
+      web: ${{ steps.dockerfiles.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME#cloud-v}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "could not resolve an image tag" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Detect optional Dockerfiles
+        id: dockerfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "transcribe_worker=${{ hashFiles('services/transcribe-worker/Dockerfile') != '' }}"
+            echo "web=${{ hashFiles('services/web/Dockerfile') != '' }}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-api:
+    needs: plan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api
+        uses: docker/build-push-action@v6
+        with:
+          context: services/api
+          file: services/api/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.plan.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-api:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-api:${{ github.sha }}
+
+  build-transcribe-worker:
+    needs: plan
+    if: needs.plan.outputs.transcribe_worker == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push transcribe-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/transcribe-worker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-transcribe-worker:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-transcribe-worker:${{ github.sha }}
+
+  build-web:
+    needs: plan
+    if: needs.plan.outputs.web == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-web:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-web:${{ github.sha }}
+
+  deploy:
+    needs: [plan, build-api, build-transcribe-worker, build-web]
+    if: >-
+      always() &&
+      needs.build-api.result == 'success' &&
+      needs.build-transcribe-worker.result != 'failure' &&
+      needs.build-web.result != 'failure'
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - name: Deploy over ssh
+        uses: appleboy/ssh-action@v1
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          REPO_BRANCH: ${{ vars.DEPLOY_BRANCH || 'main' }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: TAG,REPO_BRANCH
+          command_timeout: 30m
+          script: |
+            set -eu
+
+            APP_DIR=/opt/afterword
+            cd "$APP_DIR"
+            git fetch --prune origin
+            git checkout "$REPO_BRANCH"
+            git merge --ff-only "origin/$REPO_BRANCH"
+            cd "$APP_DIR/deploy"
+
+            PREVIOUS_TAG=$(cat .last_tag 2>/dev/null || echo "")
+
+            write_tag() {
+              tmp=$(mktemp)
+              grep -v '^TAG=' .env > "$tmp" || true
+              printf 'TAG=%s\n' "$1" >> "$tmp"
+              cat "$tmp" > .env
+              rm -f "$tmp"
+              chmod 600 .env
+            }
+
+            wait_for_health() {
+              domain=$(sed -n 's/^DOMAIN=//p' .env | tail -n1)
+              url="https://api.$domain/healthz"
+              attempt=0
+              while [ "$attempt" -lt 60 ]; do
+                if curl -fsS --max-time 10 "$url" > /dev/null; then
+                  echo "healthy: $url"
+                  return 0
+                fi
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+              echo "unhealthy after 5 minutes: $url" >&2
+              docker compose logs --tail 50 api caddy || true
+              return 1
+            }
+
+            deploy_tag() {
+              echo "deploying tag $1"
+              write_tag "$1"
+              docker compose pull
+              docker compose up -d
+              docker compose run --rm api /migrate up
+              wait_for_health
+            }
+
+            if deploy_tag "$TAG"; then
+              printf '%s\n' "$TAG" > .last_tag
+              echo "deploy of $TAG succeeded"
+            else
+              echo "deploy of $TAG failed" >&2
+              if [ -n "$PREVIOUS_TAG" ]; then
+                echo "rolling back to $PREVIOUS_TAG" >&2
+                deploy_tag "$PREVIOUS_TAG"
+                echo "rolled back to $PREVIOUS_TAG" >&2
+              else
+                echo "no previous tag recorded in deploy/.last_tag, not rolling back" >&2
+              fi
+              exit 1
+            fi

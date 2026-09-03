@@ -1,0 +1,61 @@
+{
+	email {$ACME_EMAIL}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(access_log) {
+	log {
+		output stdout
+		format json
+	}
+}
+
+(hardened_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		Cross-Origin-Opener-Policy same-origin
+		-Server
+	}
+}
+
+(forwarded_headers) {
+	header_up X-Real-IP {http.request.remote.host}
+}
+
+api.{$DOMAIN} {
+	import access_log
+	import hardened_headers
+
+	reverse_proxy api:8080 {
+		import forwarded_headers
+	}
+}
+
+s3.{$DOMAIN} {
+	import access_log
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	reverse_proxy minio:9000 {
+		import forwarded_headers
+		flush_interval -1
+	}
+}
+
+app.{$DOMAIN} {
+	import access_log
+	import hardened_headers
+
+	reverse_proxy web:3000 {
+		import forwarded_headers
+	}
+}
