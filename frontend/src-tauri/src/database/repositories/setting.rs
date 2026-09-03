@@ -22,28 +22,56 @@ fn api_key_column(provider: &str) -> std::result::Result<Option<&'static str>, s
     }
 }
 
-/// Clear the legacy plaintext column once the key lives in the keychain.
+/// Legacy SQLite column that used to hold the API key for a transcript provider.
+/// `Ok(None)` means the provider needs no key at all.
+fn transcript_api_key_column(provider: &str) -> std::result::Result<Option<&'static str>, sqlx::Error> {
+    match provider {
+        "localWhisper" => Ok(Some("whisperApiKey")),
+        "deepgram" => Ok(Some("deepgramApiKey")),
+        "elevenLabs" => Ok(Some("elevenLabsApiKey")),
+        "groq" => Ok(Some("groqApiKey")),
+        "openai" => Ok(Some("openaiApiKey")),
+        "parakeet" => Ok(None), // Runs locally, no API key
+        _ => Err(sqlx::Error::Protocol(
+            format!("Invalid provider: {}", provider).into(),
+        )),
+    }
+}
+
+/// Keychain account name for a transcript provider's key. Namespaced because
+/// several provider ids (groq, openai) are shared with the summary settings.
+fn transcript_secret_account(provider: &str) -> String {
+    format!("transcript:{}", provider)
+}
+
+/// Clear a legacy plaintext column once the key lives in the keychain.
 async fn clear_legacy_column(
     pool: &SqlitePool,
+    table: &str,
     column: &str,
 ) -> std::result::Result<(), sqlx::Error> {
-    let query = format!("UPDATE settings SET \"{}\" = NULL WHERE id = '1'", column);
+    let query = format!("UPDATE {} SET \"{}\" = NULL WHERE id = '1'", table, column);
     sqlx::query(&query).execute(pool).await?;
     Ok(())
 }
 
-/// Read the legacy plaintext column, tolerating both a missing row and a NULL value.
+/// Read a legacy plaintext column, tolerating a missing row, a NULL value and a
+/// blank string (all of which mean "no key stored").
 async fn read_legacy_column(
     pool: &SqlitePool,
+    table: &str,
     column: &str,
 ) -> std::result::Result<Option<String>, sqlx::Error> {
-    let query = format!("SELECT \"{}\" FROM settings WHERE id = '1' LIMIT 1", column);
+    let query = format!(
+        "SELECT \"{}\" FROM {} WHERE id = '1' LIMIT 1",
+        column, table
+    );
     let value: Option<Option<String>> = sqlx::query_scalar(&query).fetch_optional(pool).await?;
-    Ok(value.flatten())
+    Ok(value.flatten().filter(|k| !k.trim().is_empty()))
 }
 
-/// Write the legacy plaintext column (fallback when no keychain is available).
-async fn write_legacy_column(
+/// Write the legacy settings column (fallback when no keychain is available).
+async fn write_legacy_settings_column(
     pool: &SqlitePool,
     column: &str,
     api_key: &str,
@@ -56,6 +84,25 @@ async fn write_legacy_column(
                 "{}" = $1
             "#,
         column, column
+    );
+    sqlx::query(&query).bind(api_key).execute(pool).await?;
+    Ok(())
+}
+
+/// Write the legacy transcript_settings column (fallback when no keychain is available).
+async fn write_legacy_transcript_column(
+    pool: &SqlitePool,
+    column: &str,
+    api_key: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    let query = format!(
+        r#"
+            INSERT INTO transcript_settings (id, provider, model, "{}")
+            VALUES ('1', 'parakeet', '{}', $1)
+            ON CONFLICT(id) DO UPDATE SET
+                "{}" = $1
+            "#,
+        column, crate::config::DEFAULT_PARAKEET_MODEL, column
     );
     sqlx::query(&query).bind(api_key).execute(pool).await?;
     Ok(())
@@ -156,7 +203,7 @@ impl SettingsRepository {
         match store.set(provider, api_key) {
             Ok(()) => {
                 // Key is in the keychain now; drop the plaintext copy.
-                clear_legacy_column(pool, api_key_column).await?;
+                clear_legacy_column(pool, "settings", api_key_column).await?;
                 Ok(())
             }
             Err(e) => {
@@ -165,7 +212,7 @@ impl SettingsRepository {
                     provider,
                     e
                 );
-                write_legacy_column(pool, api_key_column, api_key).await
+                write_legacy_settings_column(pool, api_key_column, api_key).await
             }
         }
     }
@@ -204,13 +251,13 @@ impl SettingsRepository {
             ),
         }
 
-        let legacy_key = read_legacy_column(pool, api_key_column).await?;
+        let legacy_key = read_legacy_column(pool, "settings", api_key_column).await?;
 
         if let Some(key) = legacy_key.as_deref() {
             // Best-effort migration of a plaintext key into the keychain.
             match store.set(provider, key) {
                 Ok(()) => {
-                    clear_legacy_column(pool, api_key_column).await?;
+                    clear_legacy_column(pool, "settings", api_key_column).await?;
                     log::info!("Migrated API key for provider '{}' into the keychain", provider);
                 }
                 Err(e) => log::warn!(
@@ -262,58 +309,89 @@ impl SettingsRepository {
         provider: &str,
         api_key: &str,
     ) -> std::result::Result<(), sqlx::Error> {
-        let api_key_column = match provider {
-            "localWhisper" => "whisperApiKey",
-            "parakeet" => return Ok(()), // Parakeet doesn't need an API key, return early
-            "deepgram" => "deepgramApiKey",
-            "elevenLabs" => "elevenLabsApiKey",
-            "groq" => "groqApiKey",
-            "openai" => "openaiApiKey",
-            _ => {
-                return Err(sqlx::Error::Protocol(
-                    format!("Invalid provider: {}", provider).into(),
-                ))
-            }
+        Self::save_transcript_api_key_with_store(pool, default_store(), provider, api_key).await
+    }
+
+    /// Save a transcript provider's API key into the OS keychain, falling back
+    /// to the legacy SQLite column when no keychain is available.
+    pub async fn save_transcript_api_key_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        provider: &str,
+        api_key: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let Some(api_key_column) = transcript_api_key_column(provider)? else {
+            return Ok(()); // Provider needs no API key
         };
 
-        let query = format!(
-            r#"
-            INSERT INTO transcript_settings (id, provider, model, "{}")
-            VALUES ('1', 'parakeet', '{}', $1)
-            ON CONFLICT(id) DO UPDATE SET
-                "{}" = $1
-            "#,
-            api_key_column, crate::config::DEFAULT_PARAKEET_MODEL, api_key_column
-        );
-        sqlx::query(&query).bind(api_key).execute(pool).await?;
-
-        Ok(())
+        match store.set(&transcript_secret_account(provider), api_key) {
+            Ok(()) => {
+                // Key is in the keychain now; drop the plaintext copy.
+                clear_legacy_column(pool, "transcript_settings", api_key_column).await?;
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!(
+                    "Keychain unavailable for transcript provider '{}' ({}); storing API key in the database instead",
+                    provider,
+                    e
+                );
+                write_legacy_transcript_column(pool, api_key_column, api_key).await
+            }
+        }
     }
 
     pub async fn get_transcript_api_key(
         pool: &SqlitePool,
         provider: &str,
     ) -> std::result::Result<Option<String>, sqlx::Error> {
-        let api_key_column = match provider {
-            "localWhisper" => "whisperApiKey",
-            "parakeet" => return Ok(None), // Parakeet doesn't need an API key
-            "deepgram" => "deepgramApiKey",
-            "elevenLabs" => "elevenLabsApiKey",
-            "groq" => "groqApiKey",
-            "openai" => "openaiApiKey",
-            _ => {
-                return Err(sqlx::Error::Protocol(
-                    format!("Invalid provider: {}", provider).into(),
-                ))
-            }
+        Self::get_transcript_api_key_with_store(pool, default_store(), provider).await
+    }
+
+    /// Read a transcript provider's API key: keychain first, then the legacy
+    /// SQLite column (migrated into the keychain best-effort when found).
+    pub async fn get_transcript_api_key_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        provider: &str,
+    ) -> std::result::Result<Option<String>, sqlx::Error> {
+        let Some(api_key_column) = transcript_api_key_column(provider)? else {
+            return Ok(None); // Provider needs no API key
         };
 
-        let query = format!(
-            "SELECT {} FROM transcript_settings WHERE id = '1' LIMIT 1",
-            api_key_column
-        );
-        let api_key = sqlx::query_scalar(&query).fetch_optional(pool).await?;
-        Ok(api_key)
+        let account = transcript_secret_account(provider);
+
+        match store.get(&account) {
+            Ok(Some(key)) => return Ok(Some(key)),
+            Ok(None) => {}
+            Err(e) => log::warn!(
+                "Keychain unavailable for transcript provider '{}' ({}); reading API key from the database",
+                provider,
+                e
+            ),
+        }
+
+        let legacy_key = read_legacy_column(pool, "transcript_settings", api_key_column).await?;
+
+        if let Some(key) = legacy_key.as_deref() {
+            // Best-effort migration of a plaintext key into the keychain.
+            match store.set(&account, key) {
+                Ok(()) => {
+                    clear_legacy_column(pool, "transcript_settings", api_key_column).await?;
+                    log::info!(
+                        "Migrated API key for transcript provider '{}' into the keychain",
+                        provider
+                    );
+                }
+                Err(e) => log::warn!(
+                    "Could not migrate API key for transcript provider '{}' into the keychain: {}",
+                    provider,
+                    e
+                ),
+            }
+        }
+
+        Ok(legacy_key)
     }
 
     pub async fn delete_api_key(
@@ -349,7 +427,7 @@ impl SettingsRepository {
             return Ok(()); // Provider needs no API key
         };
 
-        clear_legacy_column(pool, api_key_column).await
+        clear_legacy_column(pool, "settings", api_key_column).await
     }
 
     // ===== CUSTOM OPENAI CONFIG METHODS =====
@@ -534,7 +612,9 @@ mod tests {
     }
 
     async fn legacy_value(pool: &SqlitePool, column: &str) -> Option<String> {
-        read_legacy_column(pool, column).await.expect("read column")
+        read_legacy_column(pool, "settings", column)
+            .await
+            .expect("read column")
     }
 
     #[tokio::test]
@@ -544,7 +624,7 @@ mod tests {
         let store = MockSecretStore::new();
 
         // Pre-existing plaintext key, as written by an older build.
-        write_legacy_column(pool, "openaiApiKey", "sk-old")
+        write_legacy_settings_column(pool, "openaiApiKey", "sk-old")
             .await
             .unwrap();
 
@@ -589,7 +669,7 @@ mod tests {
         let pool = db.pool();
         let store = MockSecretStore::new();
 
-        write_legacy_column(pool, "groqApiKey", "gsk-legacy")
+        write_legacy_settings_column(pool, "groqApiKey", "gsk-legacy")
             .await
             .unwrap();
 
@@ -619,7 +699,7 @@ mod tests {
         let pool = db.pool();
         let store = MockSecretStore::new();
 
-        write_legacy_column(pool, "openaiApiKey", "sk-old")
+        write_legacy_settings_column(pool, "openaiApiKey", "sk-old")
             .await
             .unwrap();
         store.set("openai", "sk-new").unwrap();
@@ -630,6 +710,124 @@ mod tests {
 
         assert_eq!(store.peek("openai"), None);
         assert_eq!(legacy_value(pool, "openaiApiKey").await, None);
+    }
+
+    async fn transcript_legacy_value(pool: &SqlitePool, column: &str) -> Option<String> {
+        read_legacy_column(pool, "transcript_settings", column)
+            .await
+            .expect("read column")
+    }
+
+    #[tokio::test]
+    async fn get_api_key_treats_a_blank_legacy_column_as_absent() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        write_legacy_settings_column(pool, "openaiApiKey", "   ")
+            .await
+            .unwrap();
+
+        let key = SettingsRepository::get_api_key_with_store(pool, &store, "openai")
+            .await
+            .unwrap();
+        assert_eq!(key, None, "a blank column value is not a key");
+        assert_eq!(store.peek("openai"), None, "nothing to migrate");
+    }
+
+    #[tokio::test]
+    async fn save_transcript_api_key_prefers_the_keychain_and_clears_the_column() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        write_legacy_transcript_column(pool, "deepgramApiKey", "dg-old")
+            .await
+            .unwrap();
+
+        SettingsRepository::save_transcript_api_key_with_store(pool, &store, "deepgram", "dg-new")
+            .await
+            .unwrap();
+
+        // Namespaced so it cannot collide with the summary provider of the same name.
+        assert_eq!(store.peek("transcript:deepgram").as_deref(), Some("dg-new"));
+        assert_eq!(transcript_legacy_value(pool, "deepgramApiKey").await, None);
+
+        let read_back =
+            SettingsRepository::get_transcript_api_key_with_store(pool, &store, "deepgram")
+                .await
+                .unwrap();
+        assert_eq!(read_back.as_deref(), Some("dg-new"));
+    }
+
+    #[tokio::test]
+    async fn save_transcript_api_key_falls_back_to_sqlite_without_a_keychain() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::unavailable();
+
+        SettingsRepository::save_transcript_api_key_with_store(
+            pool,
+            &store,
+            "elevenLabs",
+            "el-fallback",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            transcript_legacy_value(pool, "elevenLabsApiKey")
+                .await
+                .as_deref(),
+            Some("el-fallback")
+        );
+
+        let read_back =
+            SettingsRepository::get_transcript_api_key_with_store(pool, &store, "elevenLabs")
+                .await
+                .unwrap();
+        assert_eq!(read_back.as_deref(), Some("el-fallback"));
+    }
+
+    #[tokio::test]
+    async fn get_transcript_api_key_migrates_a_legacy_column_into_the_keychain() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        write_legacy_transcript_column(pool, "groqApiKey", "gsk-transcript-legacy")
+            .await
+            .unwrap();
+
+        let key = SettingsRepository::get_transcript_api_key_with_store(pool, &store, "groq")
+            .await
+            .unwrap();
+
+        assert_eq!(key.as_deref(), Some("gsk-transcript-legacy"));
+        assert_eq!(
+            store.peek("transcript:groq").as_deref(),
+            Some("gsk-transcript-legacy")
+        );
+        assert_eq!(transcript_legacy_value(pool, "groqApiKey").await, None);
+        // The summary-side groq key is a separate account and untouched.
+        assert_eq!(store.peek("groq"), None);
+    }
+
+    #[tokio::test]
+    async fn transcript_providers_without_keys_are_no_ops() {
+        let (_dir, db) = temp_pool().await;
+        let store = MockSecretStore::new();
+
+        SettingsRepository::save_transcript_api_key_with_store(db.pool(), &store, "parakeet", "x")
+            .await
+            .unwrap();
+        assert_eq!(store.peek("transcript:parakeet"), None);
+
+        let key =
+            SettingsRepository::get_transcript_api_key_with_store(db.pool(), &store, "parakeet")
+                .await
+                .unwrap();
+        assert_eq!(key, None);
     }
 
     #[tokio::test]
