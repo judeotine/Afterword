@@ -21,8 +21,8 @@ pub struct TranscriptSegment {
     pub text: String,
     pub audio_start_time: f64, // Seconds from recording start
     pub audio_end_time: f64,   // Seconds from recording start
-    pub duration: f64,          // Segment duration in seconds
-    pub display_time: String,   // Formatted time for display like "[02:15]"
+    pub duration: f64,         // Segment duration in seconds
+    pub display_time: String,  // Formatted time for display like "[02:15]"
     pub confidence: f32,
     pub sequence_id: u64,
 }
@@ -124,8 +124,8 @@ pub fn split_segment_at_silence(
         return vec![segment.clone()];
     }
 
-    let ms_per_sample = (segment.end_timestamp_ms - segment.start_timestamp_ms)
-        / segment.samples.len() as f64;
+    let ms_per_sample =
+        (segment.end_timestamp_ms - segment.start_timestamp_ms) / segment.samples.len() as f64;
     let mut result = Vec::new();
     let mut pos = 0usize;
 
