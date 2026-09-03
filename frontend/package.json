@@ -25,7 +25,9 @@
         "tauri:build:coreml": "tauri build -- --features coreml",
         "tauri:build:openblas": "tauri build -- --features openblas",
         "tauri:build:hipblas": "tauri build -- --features hipblas",
-        "lint": "next lint"
+        "lint": "cross-env ESLINT_USE_FLAT_CONFIG=true eslint src",
+        "test": "node --test tests/lib/*.test.mjs",
+        "test:bun": "bun test tests/lib"
     },
     "dependencies": {
         "@blocknote/core": "0.36.0",
@@ -95,6 +97,7 @@
         }
     },
     "devDependencies": {
+        "@eslint/eslintrc": "^3",
         "@tailwindcss/typography": "^0.5.15",
         "@tauri-apps/cli": "^2.1.0",
         "@types/node": "^20",
@@ -102,6 +105,9 @@
         "@types/react-dom": "^18.3.5",
         "autoprefixer": "^10.0.1",
         "concurrently": "^8.2.2",
+        "cross-env": "^7.0.3",
+        "eslint": "^8.57",
+        "eslint-config-next": "14.2.35",
         "postcss": "^8",
         "tailwindcss": "^3.4.1",
         "typescript": "^5.7.2",
