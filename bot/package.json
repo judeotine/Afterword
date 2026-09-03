@@ -1,0 +1,37 @@
+{
+  "name": "afterword-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Afterword meeting bot: joins a meeting, announces consent, records and transcribes it.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "lint": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "execa": "9.5.2",
+    "fastify": "5.2.1",
+    "pino": "9.6.0",
+    "playwright": "1.62.1",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.7",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

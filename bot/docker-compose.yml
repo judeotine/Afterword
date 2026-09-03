@@ -1,0 +1,24 @@
+services:
+  bot:
+    build:
+      # The Rust CLI is built from the workspace, so the context is the repo root.
+      context: ..
+      dockerfile: bot/Dockerfile
+    image: afterword-bot:local
+    ports:
+      - "8787:8787"
+    environment:
+      BOT_NAME: Afterword Notetaker
+      HEADLESS: "true"
+      RECORDINGS_DIR: /app/recordings
+      MODELS_DIR: /app/models
+      TRANSCRIBE_ENGINE: whisper
+      TRANSCRIBE_MODEL: base
+      MAX_MEETING_MINUTES: "180"
+      ALONE_TIMEOUT_SECONDS: "120"
+    volumes:
+      - ./recordings:/app/recordings
+      - ./models:/app/models
+    # Chromium needs more than the default 64 MB of shared memory.
+    shm_size: "1gb"
+    restart: unless-stopped

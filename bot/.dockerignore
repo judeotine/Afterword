@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/target
+bot/recordings
+bot/models
+bot/.git
+.git
+**/*.log

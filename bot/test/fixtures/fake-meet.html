@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fake Meet</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      [hidden] { display: none !important; }
+      #chat-log { border: 1px solid #ccc; min-height: 40px; padding: 8px; }
+    </style>
+  </head>
+  <body>
+    <!--
+      Minimal stand-in for the Google Meet pre-join and in-call screens. It only
+      carries the aria-labels and texts src/platforms/meet.ts looks for, so the
+      adapter can be smoke-tested without a real meeting.
+    -->
+    <div id="banner">
+      <p>Your browser needs permission to use the camera.</p>
+      <button id="got-it" type="button">Got it</button>
+    </div>
+
+    <div id="prejoin">
+      <h1>Ready to join?</h1>
+      <button id="mic" type="button" aria-label="Turn off microphone (⌘ + d)" data-on="true">Mic</button>
+      <button id="camera" type="button" aria-label="Turn off camera (⌘ + e)" data-on="true">Camera</button>
+      <label for="name">Your name</label>
+      <input id="name" type="text" aria-label="Your name" placeholder="Your name" />
+      <button id="ask-to-join" type="button">Ask to join</button>
+    </div>
+
+    <div id="call" hidden>
+      <h1 id="joined-as">In the call</h1>
+      <button type="button" aria-label="Show everyone. 3 participants">People</button>
+      <div data-participant-id="bot">bot tile</div>
+      <div data-participant-id="ada">ada tile</div>
+      <div data-participant-id="grace">grace tile</div>
+      <button id="chat-toggle" type="button" aria-label="Chat with everyone">Chat</button>
+      <div id="chat-panel" hidden>
+        <div id="chat-log"></div>
+        <textarea id="chat-input" aria-label="Send a message to everyone"></textarea>
+      </div>
+      <button id="leave" type="button" aria-label="Leave call">Leave</button>
+    </div>
+
+    <div id="ended" hidden>
+      <h1>You left the meeting</h1>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      $('got-it').addEventListener('click', () => {
+        $('banner').hidden = true;
+      });
+
+      for (const id of ['mic', 'camera']) {
+        $(id).addEventListener('click', (event) => {
+          event.currentTarget.dataset.on = 'false';
+          event.currentTarget.setAttribute(
+            'aria-label',
+            id === 'mic' ? 'Turn on microphone (⌘ + d)' : 'Turn on camera (⌘ + e)',
+          );
+        });
+      }
+
+      $('ask-to-join').addEventListener('click', () => {
+        const name = $('name').value || 'Guest';
+        $('prejoin').hidden = true;
+        // A real Meet lobby takes a moment before the call UI appears.
+        setTimeout(() => {
+          $('joined-as').textContent = 'In the call as ' + name;
+          $('call').hidden = false;
+        }, 300);
+      });
+
+      $('chat-toggle').addEventListener('click', () => {
+        $('chat-panel').hidden = false;
+        $('chat-input').focus();
+      });
+
+      $('chat-input').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          const line = document.createElement('p');
+          line.className = 'chat-message';
+          line.textContent = event.currentTarget.value;
+          $('chat-log').append(line);
+          event.currentTarget.value = '';
+        }
+      });
+
+      $('leave').addEventListener('click', () => {
+        $('call').hidden = true;
+        $('ended').hidden = false;
+      });
+    </script>
+  </body>
+</html>
