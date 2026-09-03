@@ -6,23 +6,30 @@
  * reported to the scheduler as newline-delimited JSON on stdout, so *nothing*
  * else may be written there — pino logs go to stderr.
  *
- * Consent rule: announceConsent() runs before recorder.start(), always.
+ * Two rules are enforced by the ordering below and covered by test/worker.test.ts:
+ *   1. announceConsent() runs before recorder.start(), always.
+ *   2. once the job is cancelled, no further stage is entered — the bot leaves,
+ *      the recorder stops, and transcription is skipped.
+ *
+ * Everything external (browser, recorder, transcriber) arrives through
+ * WorkerDeps so the lifecycle can be tested without Chromium or PulseAudio.
  */
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { pino } from 'pino';
-import { chromium, type Browser, type Page } from 'playwright';
+import { fileURLToPath } from 'node:url';
+import { pino, type Logger } from 'pino';
+import { chromium, type Page } from 'playwright';
 import { PulseAudio } from './audio/pulse.js';
-import { config } from './config.js';
+import { config, type BotConfig } from './config.js';
 import { buildConsentMessage } from './consent.js';
 import { UnsupportedPlatformError } from './errors.js';
 import { detectPlatform, SUPPORTED_PLATFORMS, type MeetingPlatform } from './platforms/types.js';
 import { runTranscribe } from './transcribe.js';
 import type { JobArtifacts, JobRecord, JobStatus, WorkerEvent } from './scheduler.js';
 
-const log = pino({ name: 'afterword-bot-worker' }, pino.destination(2));
+const defaultLogger: Logger = pino({ name: 'afterword-bot-worker' }, pino.destination(2));
 
-const POLL_INTERVAL_MS = 5_000;
+const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
 /** Chromium flags that make a headless browser usable as a meeting participant. */
 export const CHROMIUM_ARGS = [
@@ -32,147 +39,251 @@ export const CHROMIUM_ARGS = [
   '--disable-blink-features=AutomationControlled',
 ];
 
-function emit(event: WorkerEvent): void {
-  process.stdout.write(`${JSON.stringify({ ...event, at: new Date().toISOString() })}\n`);
+/** The recorder contract runJob depends on; PulseAudio implements it. */
+export interface Recorder {
+  setup(): Promise<unknown>;
+  start(outFile: string): Promise<void>;
+  stop(): Promise<unknown>;
+  teardown(): Promise<void>;
 }
 
-function emitStatus(status: JobStatus, extra: Partial<WorkerEvent> = {}): void {
-  emit({ type: 'status', status, ...extra });
+export interface PageSession {
+  page: Page;
+  close(): Promise<void>;
 }
 
-function sleep(ms: number): Promise<void> {
+export interface WorkerDeps {
+  /** Writes one protocol line. */
+  emit(event: WorkerEvent): void;
+  /** Aborted when the job is cancelled (SIGTERM). */
+  signal: AbortSignal;
+  openPage(): Promise<PageSession>;
+  recorder: Recorder;
+  transcribe(input: {
+    wav: string;
+    outDir: string;
+    signal: AbortSignal;
+  }): Promise<{ transcriptPath: string }>;
+  ensureDir(dir: string): Promise<void>;
+  /** Defaults to detectPlatform(job.meetingUrl). */
+  platform?: MeetingPlatform | null;
+  settings?: BotConfig;
+  pollIntervalMs?: number;
+  /** Defaults to the stderr pino logger; tests silence it. */
+  logger?: Logger;
+}
+
+/** Thrown at a stage boundary once the job has been cancelled. */
+class CancelledError extends Error {
+  constructor(stage: string) {
+    super(`Cancelled before ${stage}`);
+    this.name = 'CancelledError';
+  }
+}
+
+function emitTo(deps: WorkerDeps, event: WorkerEvent): void {
+  deps.emit(event);
+}
+
+function emitStatus(deps: WorkerDeps, status: JobStatus, extra: Partial<WorkerEvent> = {}): void {
+  emitTo(deps, { type: 'status', status, ...extra });
+}
+
+/** Sleep that wakes immediately when the job is cancelled. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal.addEventListener('abort', finish, { once: true });
   });
-}
-
-interface StopSignal {
-  cancelled: boolean;
 }
 
 async function pollUntilOver(
   platform: MeetingPlatform,
   page: Page,
-  stop: StopSignal,
+  deps: WorkerDeps,
+  settings: BotConfig,
 ): Promise<string> {
   const startedAt = Date.now();
-  const maxMs = config.MAX_MEETING_MINUTES * 60_000;
-  const aloneMs = config.ALONE_TIMEOUT_SECONDS * 1_000;
+  const maxMs = settings.MAX_MEETING_MINUTES * 60_000;
+  const aloneMs = settings.ALONE_TIMEOUT_SECONDS * 1_000;
+  const interval = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   let aloneSince: number | null = null;
 
   for (;;) {
-    if (stop.cancelled) {
+    if (deps.signal.aborted) {
       return 'cancelled';
     }
     if (Date.now() - startedAt > maxMs) {
-      return `max meeting length of ${config.MAX_MEETING_MINUTES} minutes reached`;
+      return `max meeting length of ${settings.MAX_MEETING_MINUTES} minutes reached`;
     }
     if (await platform.isMeetingOver(page).catch(() => false)) {
       return 'the meeting ended';
+    }
+    if (deps.signal.aborted) {
+      return 'cancelled';
     }
 
     const participants = await platform.participantCount(page).catch(() => null);
     if (participants !== null && participants <= 1) {
       aloneSince ??= Date.now();
       if (Date.now() - aloneSince > aloneMs) {
-        return `alone in the meeting for ${config.ALONE_TIMEOUT_SECONDS}s`;
+        return `alone in the meeting for ${settings.ALONE_TIMEOUT_SECONDS}s`;
       }
     } else {
       aloneSince = null;
     }
 
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(interval, deps.signal);
   }
 }
 
-export async function runJob(job: JobRecord): Promise<void> {
-  const platform = detectPlatform(job.meetingUrl);
+/**
+ * Run one meeting to completion. Never throws for an expected outcome: the
+ * result is reported through status events (done / cancelled / failed).
+ */
+export async function runJob(job: JobRecord, deps: WorkerDeps): Promise<void> {
+  const settings = deps.settings ?? config;
+  const log = deps.logger ?? defaultLogger;
+  const platform = deps.platform ?? detectPlatform(job.meetingUrl);
   if (!platform) {
-    throw new UnsupportedPlatformError(job.meetingUrl, SUPPORTED_PLATFORMS);
+    emitStatus(deps, 'failed', {
+      error: new UnsupportedPlatformError(job.meetingUrl, SUPPORTED_PLATFORMS).message,
+    });
+    return;
   }
 
-  const botName = job.botName ?? config.BOT_NAME;
+  const botName = job.botName ?? settings.BOT_NAME;
   const consentMessage =
     job.consentMessage ??
     buildConsentMessage({
       botName,
       onBehalfOf: job.onBehalfOf,
-      privacyUrl: config.PRIVACY_URL,
+      privacyUrl: settings.PRIVACY_URL,
     });
 
-  const outDir = path.resolve(config.RECORDINGS_DIR, job.id);
+  const outDir = path.resolve(settings.RECORDINGS_DIR, job.id);
   const wavPath = path.join(outDir, 'meeting.wav');
-  await mkdir(outDir, { recursive: true });
 
-  const pulse = new PulseAudio(config.PULSE_SINK_NAME);
-  const stop: StopSignal = { cancelled: false };
-  let browser: Browser | null = null;
-  let page: Page | null = null;
-  let recorderStarted = false;
-
-  const onSigterm = (): void => {
-    stop.cancelled = true;
-    log.info('SIGTERM received; leaving the meeting');
+  const checkpoint = (stage: string): void => {
+    if (deps.signal.aborted) {
+      throw new CancelledError(stage);
+    }
   };
-  process.on('SIGTERM', onSigterm);
-  process.on('SIGINT', onSigterm);
 
-  try {
-    await pulse.setup();
-
-    browser = await chromium.launch({
-      headless: config.HEADLESS,
-      args: CHROMIUM_ARGS,
-      env: { ...process.env, PULSE_SINK: config.PULSE_SINK_NAME },
-    });
-    const context = await browser.newContext();
-    page = await context.newPage();
-
-    emitStatus('joining');
-    await platform.join(page, { botName, meetingUrl: job.meetingUrl });
-
-    // Consent before capture: never move these two lines apart.
-    await platform.announceConsent(page, consentMessage);
-    await pulse.start(wavPath);
-    recorderStarted = true;
-    emitStatus('recording');
-
-    const reason = await pollUntilOver(platform, page, stop);
-    log.info({ reason }, 'leaving the meeting');
-
-    await platform.leave(page).catch(() => undefined);
-    await pulse.stop();
-    recorderStarted = false;
-
-    if (stop.cancelled) {
-      emitStatus('cancelled');
+  let session: PageSession | null = null;
+  let joined = false;
+  let left = false;
+  const leaveOnce = async (): Promise<void> => {
+    if (!joined || left || !session) {
       return;
     }
+    left = true;
+    await platform.leave(session.page).catch((error: unknown) => {
+      log.warn({ err: String(error) }, 'leaving the meeting failed');
+    });
+  };
 
-    emitStatus('transcribing');
-    const { transcriptPath } = await runTranscribe({ wav: wavPath, outDir });
+  try {
+    await deps.ensureDir(outDir);
+    await deps.recorder.setup();
+
+    session = await deps.openPage();
+
+    emitStatus(deps, 'joining');
+    await platform.join(session.page, {
+      botName,
+      meetingUrl: job.meetingUrl,
+      signal: deps.signal,
+    });
+    joined = true;
+
+    checkpoint('announcing consent');
+    await platform.announceConsent(session.page, consentMessage);
+
+    // Consent before capture: this checkpoint and the two lines around it are
+    // the product rule. Do not start the recorder above them.
+    checkpoint('starting the recorder');
+    await deps.recorder.start(wavPath);
+    emitStatus(deps, 'recording');
+
+    const reason = await pollUntilOver(platform, session.page, deps, settings);
+    log.info({ reason }, 'leaving the meeting');
+
+    await leaveOnce();
+    await deps.recorder.stop();
+
+    checkpoint('transcribing');
+    emitStatus(deps, 'transcribing');
+    const { transcriptPath } = await deps.transcribe({
+      wav: wavPath,
+      outDir,
+      signal: deps.signal,
+    });
 
     const artifacts: JobArtifacts = { wav: wavPath, transcript: transcriptPath };
-    emitStatus('done', { artifacts });
+    emitStatus(deps, 'done', { artifacts });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    log.error({ err: message }, 'job failed');
-    if (recorderStarted) {
-      await pulse.stop().catch(() => undefined);
+    if (deps.signal.aborted) {
+      log.info({ reason: message }, 'job cancelled');
+      emitStatus(deps, 'cancelled');
+    } else {
+      log.error({ err: message }, 'job failed');
+      emitStatus(deps, 'failed', { error: message });
     }
-    emitStatus(stop.cancelled ? 'cancelled' : 'failed', stop.cancelled ? {} : { error: message });
-    throw error;
   } finally {
-    process.off('SIGTERM', onSigterm);
-    process.off('SIGINT', onSigterm);
-    await pulse.teardown().catch(() => undefined);
-    if (browser) {
-      await browser.close().catch(() => undefined);
+    await leaveOnce();
+    await deps.recorder.stop().catch(() => undefined);
+    await deps.recorder.teardown().catch(() => undefined);
+    if (session) {
+      await session.close().catch(() => undefined);
     }
   }
 }
 
-function parseJobArgv(argv: readonly string[]): JobRecord {
+/** Real dependencies: Chromium, the PulseAudio sink and the Rust CLI. */
+export function defaultDeps(signal: AbortSignal, settings: BotConfig = config): WorkerDeps {
+  const pulse = new PulseAudio(settings.PULSE_SINK_NAME);
+
+  return {
+    signal,
+    settings,
+    recorder: pulse,
+    emit: (event) => {
+      process.stdout.write(`${JSON.stringify({ ...event, at: new Date().toISOString() })}\n`);
+    },
+    ensureDir: async (dir) => {
+      await mkdir(dir, { recursive: true });
+    },
+    openPage: async () => {
+      const browser = await chromium.launch({
+        headless: settings.HEADLESS,
+        args: CHROMIUM_ARGS,
+        env: { ...process.env, PULSE_SINK: settings.PULSE_SINK_NAME },
+      });
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      return {
+        page,
+        close: async () => {
+          await browser.close();
+        },
+      };
+    },
+    transcribe: ({ wav, outDir, signal: cancelSignal }) =>
+      runTranscribe({ wav, outDir, signal: cancelSignal }, settings),
+  };
+}
+
+export function parseJobArgv(argv: readonly string[]): JobRecord {
   const raw = argv[2];
   if (!raw) {
     throw new Error('worker requires the job record as JSON on argv[2]');
@@ -181,21 +292,39 @@ function parseJobArgv(argv: readonly string[]): JobRecord {
 }
 
 async function main(): Promise<void> {
+  const controller = new AbortController();
+  const onSignal = (): void => {
+    defaultLogger.info('termination signal received; leaving the meeting');
+    controller.abort();
+  };
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
+
   let job: JobRecord;
   try {
     job = parseJobArgv(process.argv);
   } catch (error) {
-    emitStatus('failed', { error: error instanceof Error ? error.message : String(error) });
+    process.stdout.write(
+      `${JSON.stringify({
+        type: 'status',
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      })}\n`,
+    );
     process.exitCode = 1;
     return;
   }
 
-  try {
-    await runJob(job);
-  } catch {
-    // runJob already emitted the failure event.
-    process.exitCode = 1;
-  }
+  await runJob(job, defaultDeps(controller.signal));
+
+  process.off('SIGTERM', onSignal);
+  process.off('SIGINT', onSignal);
 }
 
-await main();
+const invokedDirectly =
+  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (invokedDirectly) {
+  await main();
+}

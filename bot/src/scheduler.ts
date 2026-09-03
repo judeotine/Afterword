@@ -319,8 +319,50 @@ export function buildWorkerCommand(job: JobRecord, options?: { compiled?: boolea
     : { command: 'tsx', args: [path.join(dir, 'worker.ts'), payload] };
 }
 
+/** How long a cancelled worker gets to leave the meeting before it is killed. */
+export const DEFAULT_KILL_GRACE_MS = 30_000;
+
+/** The slice of ChildProcess escalatingKill needs, so it can be unit-tested. */
+export interface KillableChild {
+  kill(signal: NodeJS.Signals): boolean;
+  once(event: 'exit', listener: () => void): unknown;
+}
+
+/**
+ * Ask a worker to shut down, then insist.
+ *
+ * SIGTERM lets the worker leave the meeting and flush the wav; if it is stuck
+ * (a hung Chromium, a wedged parecord) it would otherwise sit in the call
+ * forever, so escalate to SIGKILL once the grace period is up.
+ */
+export function escalatingKill(child: KillableChild, graceMs = DEFAULT_KILL_GRACE_MS): void {
+  child.kill('SIGTERM');
+
+  const timer = setTimeout(() => {
+    child.kill('SIGKILL');
+  }, graceMs);
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
+
+  child.once('exit', () => {
+    clearTimeout(timer);
+  });
+}
+
+export interface ChildProcessRunnerOptions {
+  /** Grace period between SIGTERM and SIGKILL on cancel. */
+  killGraceMs?: number;
+}
+
 /** Runs each job as a child process and forwards its stdout protocol. */
 export class ChildProcessRunner implements JobRunner {
+  private readonly killGraceMs: number;
+
+  constructor({ killGraceMs = DEFAULT_KILL_GRACE_MS }: ChildProcessRunnerOptions = {}) {
+    this.killGraceMs = killGraceMs;
+  }
+
   start(job: JobRecord, hooks: JobRunHooks): JobRunHandle {
     const { command, args } = buildWorkerCommand(job);
     const child = spawn(command, args, {
@@ -348,7 +390,7 @@ export class ChildProcessRunner implements JobRunner {
 
     return {
       cancel: () => {
-        child.kill('SIGTERM');
+        escalatingKill(child, this.killGraceMs);
       },
     };
   }

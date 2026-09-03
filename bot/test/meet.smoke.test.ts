@@ -49,6 +49,24 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
+describe('MeetPlatform against a slow Meet page', () => {
+  it('waits for join controls that only render after the page has loaded', async () => {
+    const slowPage = await browser.newPage();
+    try {
+      await meet.join(slowPage, {
+        botName,
+        meetingUrl: `${baseUrl}?prejoinDelay=600`,
+        admissionTimeoutMs: 20_000,
+      });
+
+      await expect(slowPage.locator('#joined-as').textContent()).resolves.toContain(botName);
+      await expect(slowPage.locator('#mic').getAttribute('data-on')).resolves.toBe('false');
+    } finally {
+      await slowPage.close();
+    }
+  });
+});
+
 describe('MeetPlatform against the fake Meet page', () => {
   it('joins: dismisses the banner, mutes, fills the name and waits for admission', async () => {
     await meet.join(page, { botName, meetingUrl: baseUrl, admissionTimeoutMs: 20_000 });

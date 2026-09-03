@@ -1,0 +1,14 @@
+# Build context is the REPOSITORY ROOT, so these paths are root-relative.
+# BuildKit reads <dockerfile>.dockerignore (this file) in preference to the
+# context's .dockerignore, which is why this is not bot/.dockerignore.
+.git
+.github
+target/
+**/node_modules
+frontend/out
+frontend/.next
+bot/dist
+bot/recordings
+bot/models
+**/*.log
+.DS_Store

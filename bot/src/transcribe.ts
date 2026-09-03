@@ -69,11 +69,13 @@ export function describeTranscribeFailure(code: number): string {
 export interface RunTranscribeInput {
   wav: string;
   outDir: string;
+  /** Aborted when the job is cancelled; kills the CLI instead of waiting it out. */
+  signal?: AbortSignal;
 }
 
 /** Run the CLI over a recorded wav and return where the transcript landed. */
 export async function runTranscribe(
-  { wav, outDir }: RunTranscribeInput,
+  { wav, outDir, signal }: RunTranscribeInput,
   settings: BotConfig = config,
 ): Promise<TranscribeResult> {
   const args = buildTranscribeArgs({
@@ -84,7 +86,10 @@ export async function runTranscribe(
     modelsDir: settings.MODELS_DIR,
   });
 
-  const result = await execa(settings.TRANSCRIBE_BIN, args, { reject: false });
+  const result = await execa(settings.TRANSCRIBE_BIN, args, {
+    reject: false,
+    ...(signal ? { cancelSignal: signal } : {}),
+  });
   const code = typeof result.exitCode === 'number' ? result.exitCode : 1;
   if (code !== TRANSCRIBE_EXIT.OK) {
     const stderr = typeof result.stderr === 'string' ? result.stderr.trim() : '';

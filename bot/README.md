@@ -111,6 +111,7 @@ src/
   index.ts            Fastify API: POST /jobs, GET /jobs/:id, DELETE /jobs/:id, GET /healthz
   scheduler.ts        In-memory job store, timers, worker protocol parsing (pure + testable)
   worker.ts           One meeting per process: join → consent → record → transcribe
+                      (dependencies injected, so the ordering rules are unit-tested)
   config.ts           zod-validated environment
   consent.ts          The consent notice
   transcribe.ts       afterword-transcribe invocation
@@ -131,6 +132,8 @@ pnpm test    # vitest: pure logic + the Meet adapter smoke test
 The smoke test serves `test/fixtures/fake-meet.html` — a page carrying the same
 aria-labels and texts the Meet adapter looks for — and drives
 `join`/`announceConsent`/`participantCount`/`leave` against it with Chromium.
+The `?prejoinDelay=600` variant renders the join controls late, proving the
+adapter waits for the SPA instead of probing once and giving up.
 
 ## Limitations
 

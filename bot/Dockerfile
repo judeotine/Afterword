@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pulseaudio \
         pulseaudio-utils \
         xvfb \
+        x11-utils \
         ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -66,7 +67,16 @@ ENV HEADLESS=true \
     PULSE_SINK_NAME=afterword_sink \
     DISPLAY=:99
 
-RUN mkdir -p /app/recordings /app/models
+# PulseAudio will not run as root, so the service runs as the image's non-root
+# pwuser and must own everything it writes.
+RUN mkdir -p /app/recordings /app/models /tmp/runtime-pwuser \
+    && chown -R pwuser:pwuser /app /tmp/runtime-pwuser \
+    && chmod 700 /tmp/runtime-pwuser
+
+ENV XDG_RUNTIME_DIR=/tmp/runtime-pwuser \
+    HOME=/home/pwuser
+
+USER pwuser
 
 EXPOSE 8787
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

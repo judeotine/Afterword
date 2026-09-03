@@ -13,6 +13,8 @@ export interface JoinOptions {
   meetingUrl?: string | undefined;
   /** How long to wait in the lobby before giving up (default 10 minutes). */
   admissionTimeoutMs?: number | undefined;
+  /** Aborted when the job is cancelled, so a long lobby wait can be cut short. */
+  signal?: AbortSignal | undefined;
 }
 
 /**

@@ -17,6 +17,8 @@ services:
       MAX_MEETING_MINUTES: "180"
       ALONE_TIMEOUT_SECONDS: "120"
     volumes:
+      # The container runs as pwuser (uid 1000); these directories must be
+      # writable by that uid on the host.
       - ./recordings:/app/recordings
       - ./models:/app/models
     # Chromium needs more than the default 64 MB of shared memory.

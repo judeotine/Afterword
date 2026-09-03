@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_KILL_GRACE_MS,
   Scheduler,
   applyEvent,
   canTransition,
+  escalatingKill,
   parseEventLines,
   type JobRecord,
   type JobRunHandle,
@@ -55,6 +57,66 @@ describe('parseEventLines', () => {
     const { events, rest } = parseEventLines('\nnot json\n{"type":"log","message":"hi"}\n');
     expect(events).toEqual([{ type: 'log', message: 'hi' }]);
     expect(rest).toBe('');
+  });
+});
+
+describe('escalatingKill', () => {
+  interface FakeChild {
+    kill(signal: NodeJS.Signals): boolean;
+    once(event: 'exit', listener: () => void): unknown;
+  }
+
+  function fakeChild(): { child: FakeChild; signals: string[]; exit: () => void } {
+    const signals: string[] = [];
+    let onExit: (() => void) | null = null;
+    return {
+      signals,
+      exit: () => onExit?.(),
+      child: {
+        kill(signal) {
+          signals.push(signal);
+          return true;
+        },
+        once(_event, listener) {
+          onExit = listener;
+          return this;
+        },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks the worker to leave with SIGTERM first', () => {
+    const { child, signals } = fakeChild();
+    escalatingKill(child, DEFAULT_KILL_GRACE_MS);
+    expect(signals).toEqual(['SIGTERM']);
+  });
+
+  it('escalates to SIGKILL when the worker ignores SIGTERM', () => {
+    const { child, signals } = fakeChild();
+    escalatingKill(child, 30_000);
+
+    vi.advanceTimersByTime(29_999);
+    expect(signals).toEqual(['SIGTERM']);
+
+    vi.advanceTimersByTime(2);
+    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  it('does not SIGKILL a worker that left gracefully in time', () => {
+    const { child, signals, exit } = fakeChild();
+    escalatingKill(child, 30_000);
+
+    exit();
+    vi.advanceTimersByTime(60_000);
+    expect(signals).toEqual(['SIGTERM']);
   });
 });
 

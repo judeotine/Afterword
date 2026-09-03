@@ -57,6 +57,12 @@ export const MEET_SELECTORS = {
 } as const;
 
 const SHORT_TIMEOUT_MS = 5_000;
+/** Probe budget for optional controls (banners, mute buttons) that may not exist. */
+const PROBE_TIMEOUT_MS = 1_000;
+/** Budget for controls the Meet SPA renders some time after domcontentloaded. */
+const PREJOIN_TIMEOUT_MS = 30_000;
+/** How often the admission wait re-checks the page and the cancellation signal. */
+const ADMISSION_POLL_MS = 500;
 const DEFAULT_ADMISSION_TIMEOUT_MS = 10 * 60_000;
 /**
  * Reported when neither the badge nor the tiles can be read. It must never be
@@ -65,40 +71,56 @@ const DEFAULT_ADMISSION_TIMEOUT_MS = 10 * 60_000;
  */
 export const UNKNOWN_PARTICIPANT_COUNT = 2;
 
-async function firstVisible(page: Page, selectors: readonly string[]): Promise<Locator | null> {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
+/**
+ * Wait for the first of `selectors` to become visible.
+ *
+ * `locator.isVisible()` is a point-in-time check — its `timeout` option is
+ * deprecated and ignored — so it would return false on a Meet page that has
+ * only just fired domcontentloaded. `waitFor({ state: 'visible' })` actually
+ * waits, and `.filter({ visible: true })` keeps the wait honest when a hidden
+ * element matches the selector earlier in DOM order.
+ */
+async function firstVisible(
+  page: Page,
+  selectors: readonly string[],
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<Locator | null> {
+  const locator = page
+    .locator(selectors.join(', '))
+    .filter({ visible: true })
+    .first();
+  try {
+    await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+    return locator;
+  } catch {
+    return null;
+  }
+}
+
+/** Same, for buttons matched by accessible name (aria-label or text). */
+async function firstVisibleButton(
+  page: Page,
+  names: readonly string[],
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<Locator | null> {
+  for (const name of names) {
+    const locator = page
+      .getByRole('button', { name, exact: false })
+      .or(page.locator(`button:has-text("${name}"), div[role="button"]:has-text("${name}")`))
+      .filter({ visible: true })
+      .first();
     try {
-      if (await locator.isVisible({ timeout: 1_000 })) {
-        return locator;
-      }
+      await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+      return locator;
     } catch {
-      // Selector missing or detached: try the next candidate.
+      // Not this one: try the next candidate.
     }
   }
   return null;
 }
 
-async function firstVisibleButton(page: Page, names: readonly string[]): Promise<Locator | null> {
-  for (const name of names) {
-    const byRole = page.getByRole('button', { name, exact: false }).first();
-    try {
-      if (await byRole.isVisible({ timeout: 1_000 })) {
-        return byRole;
-      }
-    } catch {
-      // fall through to a text match
-    }
-    const byText = page.locator(`button:has-text("${name}")`).first();
-    try {
-      if (await byText.isVisible({ timeout: 500 })) {
-        return byText;
-      }
-    } catch {
-      // try the next candidate
-    }
-  }
-  return null;
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseCount(text: string | null): number | null {
@@ -120,6 +142,19 @@ export class MeetPlatform implements MeetingPlatform {
       await page.goto(opts.meetingUrl, { waitUntil: 'domcontentloaded' });
     }
 
+    // Wait for the pre-join screen itself before probing the optional controls,
+    // otherwise every short probe below races the SPA's first render.
+    const joinButton = await firstVisibleButton(
+      page,
+      MEET_SELECTORS.joinButtons,
+      PREJOIN_TIMEOUT_MS,
+    );
+    if (!joinButton) {
+      throw new Error(
+        `Could not find a join button on the Meet page (tried: ${MEET_SELECTORS.joinButtons.join(', ')})`,
+      );
+    }
+
     await this.dismissPrompts(page);
     await this.turnOffDevices(page);
 
@@ -128,15 +163,9 @@ export class MeetPlatform implements MeetingPlatform {
       await nameBox.fill(opts.botName);
     }
 
-    const joinButton = await firstVisibleButton(page, MEET_SELECTORS.joinButtons);
-    if (!joinButton) {
-      throw new Error(
-        `Could not find a join button on the Meet page (tried: ${MEET_SELECTORS.joinButtons.join(', ')})`,
-      );
-    }
     await joinButton.click();
 
-    const admitted = await this.waitForAdmission(page, admissionTimeoutMs);
+    const admitted = await this.waitForAdmission(page, admissionTimeoutMs, opts.signal);
     if (!admitted) {
       throw new AdmissionTimeoutError(admissionTimeoutMs);
     }
@@ -146,12 +175,12 @@ export class MeetPlatform implements MeetingPlatform {
   async announceConsent(page: Page, text: string): Promise<void> {
     let input = await firstVisible(page, MEET_SELECTORS.chatInput);
     if (!input) {
-      const toggle = await firstVisible(page, MEET_SELECTORS.chatToggle);
+      const toggle = await firstVisible(page, MEET_SELECTORS.chatToggle, SHORT_TIMEOUT_MS);
       if (!toggle) {
         throw new Error('Could not open the Meet chat panel to announce consent');
       }
       await toggle.click();
-      input = await firstVisible(page, MEET_SELECTORS.chatInput);
+      input = await firstVisible(page, MEET_SELECTORS.chatInput, SHORT_TIMEOUT_MS);
     }
     if (!input) {
       throw new Error('Could not find the Meet chat message box to announce consent');
@@ -201,14 +230,14 @@ export class MeetPlatform implements MeetingPlatform {
       return true;
     }
 
-    for (const text of MEET_SELECTORS.endedTexts) {
-      const locator = page.getByText(text, { exact: false }).first();
-      const visible = await locator.isVisible({ timeout: 500 }).catch(() => false);
-      if (visible) {
-        return true;
-      }
-    }
-    return false;
+    const ended = page
+      .getByText(new RegExp(MEET_SELECTORS.endedTexts.map(escapeForRegExp).join('|'), 'i'))
+      .filter({ visible: true })
+      .first();
+    return await ended
+      .waitFor({ state: 'visible', timeout: 250 })
+      .then(() => true)
+      .catch(() => false);
   }
 
   /** Click "Leave call"; never throws, the browser is closed either way. */
@@ -240,17 +269,28 @@ export class MeetPlatform implements MeetingPlatform {
     }
   }
 
-  private async waitForAdmission(page: Page, timeoutMs: number): Promise<boolean> {
+  /**
+   * Poll for the in-call UI. The loop is short so a cancellation (SIGTERM while
+   * the bot sits in the lobby) is noticed in well under a second rather than
+   * after the full admission timeout.
+   */
+  private async waitForAdmission(
+    page: Page,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const leaveButton = await firstVisible(page, MEET_SELECTORS.leaveButton);
+      if (signal?.aborted) {
+        throw new Error('Cancelled while waiting to be admitted to the meeting');
+      }
+      const leaveButton = await firstVisible(page, MEET_SELECTORS.leaveButton, ADMISSION_POLL_MS);
       if (leaveButton) {
         return true;
       }
       if (await this.isMeetingOver(page)) {
         return false;
       }
-      await page.waitForTimeout(Math.min(2_000, Math.max(0, deadline - Date.now())));
     }
     return false;
   }

@@ -50,6 +50,18 @@
     <script>
       const $ = (id) => document.getElementById(id);
 
+      // Variant used by the smoke test: ?prejoinDelay=600 renders the pre-join
+      // controls late, the way the real Meet SPA does after domcontentloaded.
+      const prejoinDelay = Number(new URLSearchParams(location.search).get('prejoinDelay') || 0);
+      if (prejoinDelay > 0) {
+        $('banner').hidden = true;
+        $('prejoin').hidden = true;
+        setTimeout(() => {
+          $('banner').hidden = false;
+          $('prejoin').hidden = false;
+        }, prejoinDelay);
+      }
+
       $('got-it').addEventListener('click', () => {
         $('banner').hidden = true;
       });
