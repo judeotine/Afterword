@@ -1,8 +1,13 @@
 /**
  * Transcription via the `afterword-transcribe` Rust CLI — the same pipeline the
- * desktop app uses, so bot transcripts have the desktop's TranscriptSegment
- * shape (id, text, audio_start_time, audio_end_time, duration, display_time,
- * confidence, sequence_id).
+ * desktop app uses. The CLI writes `transcripts.json` as `{ version,
+ * last_updated, total_segments, segments: [...] }`, where each segment
+ * mirrors `ApiTranscriptSegment` (crates/afterword-core/src/transcript.rs;
+ * see {@link TranscriptSegment} below) plus a positional `sequence_id`. It
+ * also writes `metadata.json` (`{ id, title, source: "bot", duration_seconds,
+ * engine, model, language, created_at, segments_count }`) and prints one
+ * summary line to stdout: `{"transcript","metadata","segments",
+ * "duration_seconds"}` (parsed by {@link parseTranscribeSummary}).
  */
 import path from 'node:path';
 import { execa } from 'execa';
@@ -16,8 +21,28 @@ export interface TranscribeArgsInput {
   modelsDir: string;
 }
 
+/**
+ * One entry in `transcripts.json`'s `segments` array, matching
+ * `ApiTranscriptSegment` (crates/afterword-core/src/transcript.rs) field for
+ * field. The three timing fields are optional on the Rust struct;
+ * `afterword-transcribe` always populates them from VAD timestamps, so in
+ * practice they are always present in bot output.
+ */
+export interface TranscriptSegment {
+  id: string;
+  text: string;
+  timestamp: string;
+  audio_start_time?: number;
+  audio_end_time?: number;
+  duration?: number;
+}
+
 export interface TranscribeResult {
   transcriptPath: string;
+  /** From the CLI's stdout summary line. */
+  segments: number;
+  /** From the CLI's stdout summary line. */
+  durationSeconds: number;
 }
 
 /** Documented exit codes of the CLI. */
@@ -66,6 +91,49 @@ export function describeTranscribeFailure(code: number): string {
   }
 }
 
+/** The fields `runTranscribe` needs out of the CLI's stdout summary line. */
+export interface TranscribeSummary {
+  segments: number;
+  durationSeconds: number;
+}
+
+/**
+ * Parse the CLI's one-line JSON summary
+ * (`{"transcript","metadata","segments","duration_seconds"}`) out of its
+ * stdout. Only the last non-empty line is considered, so trailing blank
+ * lines are tolerated; anything that isn't valid JSON with the expected
+ * fields is a hard error, since it means the CLI's output contract changed.
+ */
+export function parseTranscribeSummary(stdout: string): TranscribeSummary {
+  const lines = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const lastLine = lines[lines.length - 1];
+  if (!lastLine) {
+    throw new Error('afterword-transcribe produced no summary line on stdout');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(lastLine);
+  } catch {
+    throw new Error(`afterword-transcribe produced a malformed summary line: ${lastLine}`);
+  }
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    typeof (parsed as Record<string, unknown>).segments !== 'number' ||
+    typeof (parsed as Record<string, unknown>).duration_seconds !== 'number'
+  ) {
+    throw new Error(`afterword-transcribe summary line is missing expected fields: ${lastLine}`);
+  }
+
+  const summary = parsed as { segments: number; duration_seconds: number };
+  return { segments: summary.segments, durationSeconds: summary.duration_seconds };
+}
+
 export interface RunTranscribeInput {
   wav: string;
   outDir: string;
@@ -98,5 +166,11 @@ export async function runTranscribe(
     );
   }
 
-  return { transcriptPath: transcriptPathFor(outDir) };
+  const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+  const summary = parseTranscribeSummary(stdout);
+  return {
+    transcriptPath: transcriptPathFor(outDir),
+    segments: summary.segments,
+    durationSeconds: summary.durationSeconds,
+  };
 }

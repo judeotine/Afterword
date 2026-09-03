@@ -4,9 +4,11 @@ A small service that sends a notetaker into meetings the user cannot record on
 their own machine. It joins the call in a headless Chromium, **announces that
 the meeting is being recorded**, captures the call audio through a PulseAudio
 null sink, and transcribes the result with `afterword-transcribe` — the same
-Rust pipeline the desktop app uses, so the transcript JSON has the identical
-`TranscriptSegment` shape (`id`, `text`, `audio_start_time`, `audio_end_time`,
-`duration`, `display_time`, `confidence`, `sequence_id`).
+Rust pipeline the desktop app uses. Each entry in `transcripts.json` mirrors
+the CLI's `ApiTranscriptSegment` (`id`, `text`, `timestamp`,
+`audio_start_time`, `audio_end_time`, `duration` — see
+`src/transcribe.ts`'s `TranscriptSegment` type), not the desktop's richer
+`TranscriptSegment` struct.
 
 Google Meet is the only platform implemented today. Zoom and Teams URLs are
 recognised and answered with a clear "not yet supported" error.
@@ -72,6 +74,11 @@ docker compose up --build
 
 `docker-compose.yml` publishes port 8787 and mounts `./recordings` and
 `./models`.
+
+`bot/Dockerfile.dockerignore` is BuildKit's per-Dockerfile ignore file — it
+takes precedence over a plain `.dockerignore` at the build context root and
+is used here instead because the build context is the repository root, not
+`bot/`.
 
 ## Building afterword-transcribe locally
 

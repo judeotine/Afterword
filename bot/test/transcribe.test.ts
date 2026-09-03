@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTranscribeArgs,
   describeTranscribeFailure,
+  parseTranscribeSummary,
   transcriptPathFor,
 } from '../src/transcribe.js';
 
@@ -53,5 +54,33 @@ describe('describeTranscribeFailure', () => {
     expect(describeTranscribeFailure(2)).toMatch(/decode/i);
     expect(describeTranscribeFailure(3)).toMatch(/model/i);
     expect(describeTranscribeFailure(1)).toMatch(/exit code 1/i);
+  });
+});
+
+describe('parseTranscribeSummary', () => {
+  it('parses the CLI summary line', () => {
+    const stdout =
+      '{"transcript":"/out/transcripts.json","metadata":"/out/metadata.json","segments":12,"duration_seconds":345.6}';
+    expect(parseTranscribeSummary(stdout)).toEqual({ segments: 12, durationSeconds: 345.6 });
+  });
+
+  it('tolerates trailing blank lines after the summary', () => {
+    const stdout =
+      '{"transcript":"/out/transcripts.json","metadata":"/out/metadata.json","segments":3,"duration_seconds":10}\n\n  \n';
+    expect(parseTranscribeSummary(stdout)).toEqual({ segments: 3, durationSeconds: 10 });
+  });
+
+  it('throws on a malformed summary line', () => {
+    expect(() => parseTranscribeSummary('not json')).toThrow(/malformed/i);
+  });
+
+  it('throws when the summary line is missing expected fields', () => {
+    expect(() => parseTranscribeSummary('{"transcript":"/out/transcripts.json"}')).toThrow(
+      /summary/i,
+    );
+  });
+
+  it('throws on empty stdout', () => {
+    expect(() => parseTranscribeSummary('')).toThrow(/summary/i);
   });
 });
