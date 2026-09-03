@@ -264,7 +264,15 @@ async fn delete_meeting_with_transaction(
         .execute(&mut *transaction)
         .await?;
 
-    // 4. Finally, delete the meeting
+    // 4. Delete from meeting_notes.
+    // ON DELETE CASCADE covers this now that foreign keys are enforced, but rows
+    // written before FK enforcement can be orphaned, so delete them explicitly.
+    sqlx::query("DELETE FROM meeting_notes WHERE meeting_id = ?")
+        .bind(meeting_id)
+        .execute(&mut *transaction)
+        .await?;
+
+    // 5. Finally, delete the meeting
     let result = sqlx::query("DELETE FROM meetings WHERE id = ?")
         .bind(meeting_id)
         .execute(&mut *transaction)

@@ -1,6 +1,8 @@
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{migrate::MigrateDatabase, Result, Sqlite, SqlitePool, Transaction};
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 use tauri::Manager;
 
 #[derive(Clone)]
@@ -30,7 +32,16 @@ impl DatabaseManager {
             }
         }
 
-        let pool = SqlitePool::connect(tauri_db_path).await?;
+        // Enforce foreign keys on every pooled connection so ON DELETE CASCADE
+        // actually fires (SQLite defaults to foreign_keys=OFF per connection).
+        let connect_options = SqliteConnectOptions::from_str(tauri_db_path)?
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal);
+
+        let pool = SqlitePoolOptions::new()
+            .connect_with(connect_options)
+            .await?;
 
         sqlx::migrate!("./migrations").run(&pool).await?;
 
@@ -204,5 +215,116 @@ impl DatabaseManager {
         log::info!("Database connection pool closed");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::repositories::meeting::MeetingsRepository;
+
+    /// Create a throwaway database (with migrations applied) in a temp directory.
+    async fn temp_db() -> (tempfile::TempDir, DatabaseManager) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir
+            .path()
+            .join("meeting_minutes.sqlite")
+            .to_string_lossy()
+            .to_string();
+        let legacy_path = dir
+            .path()
+            .join("does_not_exist.db")
+            .to_string_lossy()
+            .to_string();
+
+        let manager = DatabaseManager::new(&db_path, &legacy_path)
+            .await
+            .expect("open database");
+        (dir, manager)
+    }
+
+    async fn insert_meeting_with_notes(pool: &SqlitePool, meeting_id: &str) {
+        sqlx::query(
+            "INSERT INTO meetings (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(meeting_id)
+        .bind("Test meeting")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .expect("insert meeting");
+
+        sqlx::query(
+            "INSERT INTO meeting_notes (meeting_id, notes_markdown, notes_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(meeting_id)
+        .bind("# notes")
+        .bind("{}")
+        .bind("2026-01-01T00:00:00Z")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .expect("insert meeting notes");
+    }
+
+    async fn count_notes(pool: &SqlitePool, meeting_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM meeting_notes WHERE meeting_id = ?")
+            .bind(meeting_id)
+            .fetch_one(pool)
+            .await
+            .expect("count meeting notes")
+    }
+
+    #[tokio::test]
+    async fn foreign_keys_pragma_is_enabled_on_pooled_connections() {
+        let (_dir, manager) = temp_db().await;
+
+        for _ in 0..3 {
+            let enabled: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+                .fetch_one(manager.pool())
+                .await
+                .expect("read PRAGMA foreign_keys");
+            assert_eq!(enabled, 1, "foreign_keys pragma should be ON");
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_meeting_removes_its_meeting_notes() {
+        let (_dir, manager) = temp_db().await;
+        let pool = manager.pool();
+
+        insert_meeting_with_notes(pool, "meeting-1").await;
+        assert_eq!(count_notes(pool, "meeting-1").await, 1);
+
+        let deleted = MeetingsRepository::delete_meeting(pool, "meeting-1")
+            .await
+            .expect("delete meeting");
+        assert!(deleted, "meeting should have been deleted");
+
+        assert_eq!(
+            count_notes(pool, "meeting-1").await,
+            0,
+            "meeting_notes rows should be gone with the meeting"
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_meeting_delete_cascades_to_meeting_notes() {
+        // Proves the FK cascade itself works, independent of the explicit
+        // DELETE in delete_meeting_with_transaction.
+        let (_dir, manager) = temp_db().await;
+        let pool = manager.pool();
+
+        insert_meeting_with_notes(pool, "meeting-2").await;
+
+        sqlx::query("DELETE FROM meetings WHERE id = ?")
+            .bind("meeting-2")
+            .execute(pool)
+            .await
+            .expect("raw delete meeting");
+
+        assert_eq!(count_notes(pool, "meeting-2").await, 0);
     }
 }
