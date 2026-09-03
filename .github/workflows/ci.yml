@@ -198,8 +198,8 @@ jobs:
           go-version: "1.25"
           cache-dependency-path: services/api/go.sum
 
-      - name: Generate sqlc code
-        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
+      - name: Check the committed sqlc output is current
+        run: make sqlc-diff
 
       - name: Build
         run: go build ./...

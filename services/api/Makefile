@@ -2,6 +2,8 @@ MODULE := github.com/judeotine/afterword/services/api
 BINARY := bin/api
 MIGRATIONS_DIR := migrations
 DOCKER_IMAGE ?= afterword/api
+SQLC_VERSION ?= v1.31.1
+SQLC ?= go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -36,10 +38,10 @@ tidy:
 	go mod tidy
 
 sqlc:
-	sqlc generate
+	$(SQLC) generate
 
 sqlc-diff:
-	sqlc diff
+	$(SQLC) diff
 
 migrate-up: require-database-url
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" up
