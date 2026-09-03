@@ -72,8 +72,9 @@ docker build -f bot/Dockerfile -t afterword-bot .
 docker compose up --build
 ```
 
-`docker-compose.yml` publishes port 8787 and mounts `./recordings` and
-`./models`.
+`docker-compose.yml` publishes port 8787 on loopback only (`127.0.0.1:8787:8787`),
+because the job API is unauthenticated — see the "No authentication" note
+below — and mounts `./recordings` and `./models`.
 
 `bot/Dockerfile.dockerignore` is BuildKit's per-Dockerfile ignore file — it
 takes precedence over a plain `.dockerignore` at the build context root and

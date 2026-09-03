@@ -6,7 +6,11 @@ services:
       dockerfile: bot/Dockerfile
     image: afterword-bot:local
     ports:
-      - "8787:8787"
+      # Loopback only: the job API is unauthenticated (see the "No
+      # authentication" note in bot/README.md), so it must not be published on
+      # every interface. Put a reverse proxy in front of it, or reach it from
+      # the host, before changing this.
+      - "127.0.0.1:8787:8787"
     environment:
       BOT_NAME: Afterword Notetaker
       HEADLESS: "true"
