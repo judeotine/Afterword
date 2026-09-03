@@ -1,9 +1,16 @@
 name: afterword
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   caddy:
     image: caddy:2.10-alpine
     restart: unless-stopped
+    logging: *logging
     ports:
       - "80:80"
       - "443:443"
@@ -19,7 +26,7 @@ services:
       api:
         condition: service_started
       minio:
-        condition: service_healthy
+        condition: service_started
     mem_limit: 256m
     cpus: 0.5
     stop_grace_period: 30s
@@ -27,6 +34,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -50,6 +58,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
+    logging: *logging
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
@@ -76,6 +85,7 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     restart: "no"
+    logging: *logging
     depends_on:
       minio:
         condition: service_healthy
@@ -100,11 +110,21 @@ services:
   api:
     image: ghcr.io/judeotine/afterword-api:${TAG:?TAG is required, set it in deploy/.env}
     restart: unless-stopped
+    logging: *logging
     env_file:
-      - .env
+      - api.env
     environment:
       PORT: 8080
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       MIGRATIONS_DIR: /migrations
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}
+      API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_USE_SSL: ${S3_USE_SSL:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -121,6 +141,7 @@ services:
     profiles:
       - web
     restart: unless-stopped
+    logging: *logging
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -137,9 +158,15 @@ services:
     profiles:
       - workers
     restart: unless-stopped
-    env_file:
-      - .env
+    logging: *logging
     environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: ${DATABASE_URL}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_USE_SSL: ${S3_USE_SSL:-true}
       TRANSCRIBE_ENGINE: ${TRANSCRIBE_ENGINE:-whisper}
       TRANSCRIBE_MODEL: ${TRANSCRIBE_MODEL:-base}
       MODELS_DIR: /models
@@ -152,7 +179,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    mem_limit: 1500m
+    mem_limit: 1200m
     cpus: 1.5
     stop_grace_period: 2m
 
@@ -161,6 +188,7 @@ services:
     profiles:
       - workers
     restart: unless-stopped
+    logging: *logging
     environment:
       API_BASE_URL: ${API_BASE_URL}
       PRIVACY_URL: ${PRIVACY_URL:?PRIVACY_URL is required, the consent notice announces it to every participant}
@@ -178,22 +206,24 @@ services:
     depends_on:
       api:
         condition: service_started
-    shm_size: 1gb
-    mem_limit: 1200m
+    shm_size: 512m
+    mem_limit: 1000m
     cpus: 1.5
     stop_grace_period: 2m
     deploy:
       replicas: ${BOT_WORKER_REPLICAS:-1}
 
   backup:
-    image: alpine:3.21
+    image: ghcr.io/judeotine/afterword-backup:${TAG}
     restart: unless-stopped
+    logging: *logging
     environment:
       DATABASE_URL: ${DATABASE_URL}
       BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-3}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
       BACKUP_BUCKET: ${BACKUP_BUCKET:?BACKUP_BUCKET is required}
       BACKUP_PREFIX: ${BACKUP_PREFIX:-afterword}
+      BACKUP_MAX_DELETE: ${BACKUP_MAX_DELETE:-100}
       BUCKETS: ${S3_BUCKETS:-audio transcripts clips exports}
       RCLONE_CONFIG_MINIO_TYPE: s3
       RCLONE_CONFIG_MINIO_PROVIDER: Minio
@@ -207,12 +237,7 @@ services:
       RCLONE_CONFIG_OFFSITE_REGION: ${BACKUP_REGION:-auto}
       RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${BACKUP_ACCESS_KEY:?BACKUP_ACCESS_KEY is required}
       RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${BACKUP_SECRET_KEY:?BACKUP_SECRET_KEY is required}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - apk add --no-cache postgresql16-client rclone tzdata >/dev/null && exec /usr/local/bin/backup.sh --loop
     volumes:
-      - ./backup.sh:/usr/local/bin/backup.sh:ro
       - backup-staging:/backups
     depends_on:
       postgres:

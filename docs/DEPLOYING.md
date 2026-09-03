@@ -43,48 +43,57 @@ The MinIO console is deliberately **not** published. It binds to
 
 ```bash
 ssh root@your-box
-install -d -m 0700 /home/afterword/.ssh          # after the first run creates the user
 # put the repository deploy key at /home/afterword/.ssh/id_ed25519, mode 600
+# (the first bootstrap run creates the user and the .ssh directory for you)
 
-curl -fsSL https://raw.githubusercontent.com/... /deploy/bootstrap.sh -o bootstrap.sh
-# or clone by hand once and run deploy/bootstrap.sh from the checkout
-bash bootstrap.sh
+bash /path/to/deploy/bootstrap.sh
 ```
 
 `deploy/bootstrap.sh` is idempotent; run it as often as you like. It:
 
 1. installs `ca-certificates curl git gnupg fail2ban ufw unattended-upgrades`;
-2. installs Docker Engine and the Compose plugin from Docker's own apt
+2. writes `/etc/docker/daemon.json` with `json-file` logging capped at 10 MB ×
+   3 files, backing up any existing file first and restarting Docker only if
+   the contents actually changed;
+3. installs Docker Engine and the Compose plugin from Docker's own apt
    repository, and enables the service;
-3. creates the `afterword` user, adds it to the `docker` group, and creates
+4. creates the `afterword` user, adds it to the `docker` group, and creates
    `~/.ssh` with mode 700;
-4. sets `ufw` to deny inbound except 22/tcp, 80/tcp, 443/tcp and 443/udp
+5. sets `ufw` to deny inbound except 22/tcp, 80/tcp, 443/tcp and 443/udp
    (443/udp is HTTP/3), then enables it;
-5. writes an `sshd` jail for fail2ban and enables the service;
-6. turns on unattended security upgrades;
-7. requires the deploy key, then clones or fast-forwards the repository into
+6. writes an `sshd` jail for fail2ban and enables the service;
+7. turns on unattended security upgrades;
+8. requires the deploy key, then clones or fast-forwards the repository into
    `/opt/afterword`;
-8. **stops on the first run** after copying `deploy/.env.example` to
-   `deploy/.env` (mode 600, owned by `afterword`) and tells you to fill it in;
-9. on every later run: `docker compose pull`, `docker compose up -d`,
-   `docker compose run --rm api /migrate up`, then polls
-   `https://api.$DOMAIN/healthz` for up to five minutes.
+9. **stops on the first run** after copying `deploy/.env.example` to
+   `deploy/.env` and `deploy/api.env.example` to `deploy/api.env` (both mode
+   600, owned by `afterword`) and telling you what to fill in;
+10. on every later run: `docker compose pull`, `docker compose up -d`,
+    `docker compose run --rm api /migrate up`, then polls
+    `https://api.$DOMAIN/healthz` for up to five minutes.
 
 Migrations run **after** the stack is up and **before** the health poll on
-purpose: `/healthz` reads a row that only exists once migrations have run, so
-an unmigrated API correctly reports itself degraded.
+purpose: `/healthz` reports `migrations: "pending"` and 503 until they have
+run, so an unmigrated API correctly refuses to call itself healthy.
 
 Overridable with environment variables: `APP_USER`, `APP_DIR`, `REPO_URL`,
 `REPO_BRANCH`, `DEPLOY_KEY`, `HEALTH_ATTEMPTS`, `HEALTH_INTERVAL`.
 
 ---
 
-## 3. Filling in `deploy/.env`
+## 3. Configuration: two files, two audiences
 
-`deploy/.env` is the only secret store on the box. Mode 600, owned by
-`afterword`, never committed (`deploy/.gitignore` covers it). Docker Compose
-reads it for interpolation, and the `api` and `transcribe-worker` services also
-load it wholesale as `env_file`.
+| File | Read by | Holds |
+|---|---|---|
+| `deploy/.env` | Docker Compose itself, for `${...}` interpolation | Infrastructure: domain, image tag, database and MinIO credentials, bucket names, bot and backup settings |
+| `deploy/api.env` | The `api` container only, as `env_file` | The API's own secrets and tuning: `JWT_SECRET`, SMTP credentials, Google OAuth secret, timeouts |
+
+The split exists so that one file is not handed wholesale to every container.
+`api.env` never reaches Postgres, MinIO, the bot or the backup job; `.env`
+values that the API genuinely needs (`DATABASE_URL`, the base URLs, the S3
+endpoint and keys) are passed to it explicitly in the compose file, so nothing
+is duplicated between the two files. Both are mode 600, owned by `afterword`,
+and never committed — `deploy/.gitignore` un-ignores only the example files.
 
 Generate the secrets:
 
@@ -94,32 +103,39 @@ openssl rand -base64 32 | tr -d '\n=/+'        # POSTGRES_PASSWORD
 openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 ```
 
+### `deploy/.env`
+
 | Variable | Notes |
 |---|---|
 | `DOMAIN` | Bare domain, e.g. `afterword.app`. Caddy builds `api.`, `app.` and `s3.` from it. |
 | `ACME_EMAIL` | Let's Encrypt expiry notices go here. |
 | `TAG` | Image tag to run. The deploy workflow rewrites this line on every deploy. |
+| `COMPOSE_PROFILES` | Which optional services `docker compose up -d` manages. Empty today; set it to `workers` when Phase C/E land, `web,workers` after Phase F. Without it, `up -d` silently leaves profiled services untouched and a deploy would never update them. |
 | `POSTGRES_USER`/`_PASSWORD`/`_DB` | Must match `DATABASE_URL`; keep them in sync by hand. |
 | `DATABASE_URL` | `postgres://USER:PASSWORD@postgres:5432/DB?sslmode=disable`. The hostname is the compose service; traffic never leaves the host, so `sslmode=disable` is correct here. |
-| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. |
-| `JWT_SECRET` | Rotating it signs every existing session out. |
+| `LOG_LEVEL` | `info` in production. |
 | `APP_BASE_URL`, `API_BASE_URL` | `https://app.$DOMAIN` and `https://api.$DOMAIN`. `APP_BASE_URL` is also the only allowed CORS origin. |
-| `TRUSTED_PROXY_CIDRS` | `172.16.0.0/12` covers the default Docker bridge networks, so the API trusts Caddy's `X-Forwarded-For`. Without it every log line and rate limit sees Caddy's container IP. |
-| `GOOGLE_CLIENT_ID`/`_SECRET` | Both or neither; the API refuses to start with only one. `GOOGLE_REDIRECT_URL` must equal `https://api.$DOMAIN/v1/auth/google/callback` and be registered in the Google console. |
-| `EMAIL_SENDER` | `smtp` in production. `log` writes login codes to the container log and is development only. `SMTP_HOST` and `SMTP_FROM` become required when it is `smtp`. |
-| `SMS_SENDER` | `noop` until an SMS provider is wired up. |
-| `MINIO_ROOT_USER`/`_PASSWORD` | MinIO's admin credentials. `S3_ACCESS_KEY`/`S3_SECRET_KEY` must match them until a scoped MinIO service account exists. |
+| `MINIO_ROOT_USER`/`_PASSWORD` | MinIO's admin credentials. The API and the transcribe worker receive them as `S3_ACCESS_KEY`/`S3_SECRET_KEY`, so there is only one place to change them. |
 | `S3_ENDPOINT` | **`https://s3.$DOMAIN`, not `http://minio:9000`.** See below. |
-| `S3_USE_SSL` | `true`, matching the endpoint above. |
-| `S3_BUCKETS` | Space-separated list used by `minio-init` and by the backup job. Keep it in step with the `S3_BUCKET_*` names. |
+| `S3_REGION`, `S3_USE_SSL` | `us-east-1` and `true`, matching the endpoint above. |
+| `S3_BUCKETS` | Space-separated list used by `minio-init` and by the backup job. |
 | `PRIVACY_URL` | **Required by the bot image.** The consent announcement reads this URL to every participant, so it must describe *this* deployment. Compose refuses to render without it. |
 | `BOT_WORKER_REPLICAS` | Bots per box. One on a 4 GB box; see section 7. |
-| `BACKUP_*` | Offsite target. `BACKUP_PROVIDER` is an rclone S3 provider name (`Cloudflare` for R2, `Other` for B2's S3 API). |
+| `BACKUP_*` | Offsite target. `BACKUP_PROVIDER` is an rclone S3 provider name (`Cloudflare` for R2, `Other` for B2's S3 API). `BACKUP_MAX_DELETE` caps how many objects one mirror may delete off site. |
 
-The four `S3_BUCKET_*` variables anticipate the storage layer's per-bucket
-names. If that layer lands with different variable names, rename them here and
-keep `S3_BUCKETS` — which `minio-init` and `backup.sh` read directly — listing
-the same four buckets.
+### `deploy/api.env`
+
+| Variable | Notes |
+|---|---|
+| `JWT_SECRET` | Minimum 32 characters. Rotating it signs every existing session out. |
+| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. |
+| `TRUSTED_PROXY_CIDRS` | `172.16.0.0/12` covers the default Docker bridge networks, so the API trusts Caddy's `X-Forwarded-For`. Without it every log line and rate limit sees Caddy's container IP. |
+| `REQUEST_TIMEOUT`, `SHUTDOWN_TIMEOUT` | `30s` and `15s`. |
+| `GOOGLE_CLIENT_ID`/`_SECRET` | Both or neither; the API refuses to start with only one. `GOOGLE_REDIRECT_URL` must equal `https://api.$DOMAIN/v1/auth/google/callback` and be registered in the Google console. |
+| `EMAIL_SENDER` | `smtp` in production. `log` writes login codes to the container log and is development only. `SMTP_HOST` and `SMTP_FROM` become required when it is `smtp`. |
+| `SMTP_FROM` | Quote it — `"Afterword <no-reply@example.com>"` — because the value contains spaces and angle brackets. Compose strips the quotes when it loads the file. |
+| `SMS_SENDER` | `noop` until an SMS provider is wired up. |
+| `S3_BUCKET_*` | Per-bucket names for the storage layer. Keep them in step with `S3_BUCKETS` in `.env`, which `minio-init` and `backup.sh` read directly. If the storage layer lands with different variable names, rename these and leave `S3_BUCKETS` alone. |
 
 ### Why `S3_ENDPOINT` is the public URL
 
@@ -136,6 +152,11 @@ extra hop through Caddy. If a future change adds a separate
 
 ## 4. What runs, and what it is limited to
 
+Every service is capped: memory, CPU, and container logs (`json-file`, 10 MB ×
+3 files, from a shared YAML anchor). `/etc/docker/daemon.json` sets the same
+caps as the daemon-wide default, so anything started outside compose is capped
+too.
+
 | Service | Image | Memory | CPU | Notes |
 |---|---|---|---|---|
 | `caddy` | `caddy:2.10-alpine` | 256m | 0.5 | The only service publishing ports: 80/tcp, 443/tcp, 443/udp. Automatic Let's Encrypt, HSTS, `nosniff`, referrer policy, JSON access logs to stdout. |
@@ -144,36 +165,78 @@ extra hop through Caddy. If a future change adds a separate
 | `minio-init` | pinned `mc` release | 128m | 0.25 | Creates the buckets, sets them non-public, exits. Everything that needs storage waits for it to complete successfully. |
 | `api` | `ghcr.io/judeotine/afterword-api:${TAG}` | 512m | 1.0 | Waits for Postgres and MinIO to be healthy. Ships two binaries: `/api` (default command) and `/migrate`. |
 | `web` | `…/afterword-web:${TAG}` | 512m | 1.0 | Profile `web`. Off until Phase F; `app.$DOMAIN` returns 502 until then. |
-| `transcribe-worker` | `…/afterword-transcribe-worker:${TAG}` | 1500m | 1.5 | Profile `workers`. Off until Phase C. |
-| `bot-worker` | `…/afterword-bot:${TAG}` | 1200m | 1.5 | Profile `workers`. `shm_size: 1gb` for Chromium. Scale with `--scale`. |
-| `backup` | `alpine:3.21` | 256m | 0.5 | Installs `postgresql16-client` and `rclone` at start, then loops, running `deploy/backup.sh` at `BACKUP_HOUR_UTC` every night. |
+| `transcribe-worker` | `…/afterword-transcribe-worker:${TAG}` | 1200m | 1.5 | Profile `workers`. Off until Phase C. |
+| `bot-worker` | `…/afterword-bot:${TAG}` | 1000m | 1.5 | Profile `workers`. `shm_size: 512m` for Chromium. Scale with `--scale`. |
+| `backup` | `…/afterword-backup:${TAG}` | 256m | 0.5 | Purpose-built image (Alpine 3.21 with `postgresql16-client`, `rclone`, `tzdata` and `backup.sh` baked in). Loops, running the backup at `BACKUP_HOUR_UTC` every night. |
 
-Bring up a profile explicitly:
+`caddy` depends on `api` and `minio` with `service_started`, not
+`service_healthy`: an unhealthy MinIO must not be able to take the edge — and
+with it every certificate renewal and the API — offline.
+
+Bring up a profile explicitly, or set `COMPOSE_PROFILES` in `.env` so every
+`up -d` includes them:
 
 ```bash
 docker compose --profile workers up -d
 docker compose --profile web --profile workers up -d
 ```
 
-`docker compose config` without a profile flag shows only the always-on
-services; that is expected, not a missing service.
+`docker compose config` with no profile flag and an empty `COMPOSE_PROFILES`
+shows only the always-on services; that is expected, not a missing service.
 
 ### Migrations
 
 The API image contains a second binary at `/migrate` built from
 `services/api/cmd/migrate`. It reads `DATABASE_URL` and `MIGRATIONS_DIR`
-(default `/migrations`, where the image puts the checked-in migrations) and
-takes three commands:
+(default `/migrations`, where the image puts the checked-in migrations):
 
 ```bash
 docker compose run --rm api /migrate up
 docker compose run --rm api /migrate down 1
+docker compose run --rm api /migrate down all
 docker compose run --rm api /migrate version
+docker compose run --rm api /migrate force 9
 ```
+
+`force` sets `schema_migrations` to a version without running anything. It is
+the escape hatch for a dirty schema and nothing else — see section 6.
+
+The same binary backs `make migrate-up`, `migrate-down`, `migrate-down-all`,
+`migrate-version` and `migrate-force FORCE_VERSION=N` in `services/api`, so
+development and production run one migrator, not two.
 
 The image declares `CMD ["/api"]` rather than an `ENTRYPOINT` precisely so that
 `docker compose run --rm api /migrate up` replaces the command. Plain
 `docker run` behaviour is unchanged: with no arguments it starts the API.
+
+### What `/healthz` actually proves
+
+`GET /healthz` returns `{"status", "db", "migrations"}` and is the single
+signal every automated check uses.
+
+| `db` | `migrations` | Code | Meaning |
+|---|---|---|---|
+| `up` | `ok` | 200 | Database answers and the schema matches the migrations in this image. |
+| `up` | `ahead` | 200 | The schema is newer than this image — normal during a rollback, which is why it is not a failure. |
+| `up` | `pending` | 503 | Migrations have not been run, or the schema is behind this image. |
+| `up` | `dirty` | 503 | A migration failed part way through. Needs a human; see section 6. |
+| `up` | `unknown` | 503 | `schema_migrations` could not be read. |
+| `down` | `unknown` | 503 | The database is unreachable. |
+| `unknown` | `unknown` | 503 | The process started without a database pool at all. |
+
+The expected schema version is stamped into the binary at image build time
+(`-X …/internal/httpx.ExpectedSchemaVersion`, computed from the migration files
+in the build context). When that stamp is absent — a local `go build`, or a
+test — the comparison is skipped and only "applied and clean" is enforced.
+
+### Why the `api` service has no container healthcheck
+
+The API runs on `gcr.io/distroless/static-debian12`, which has no shell, no
+`curl` and no `wget`, so a `HEALTHCHECK` cannot be expressed. `/healthz` is
+checked from outside instead: `bootstrap.sh` and the deploy workflow poll
+`https://api.$DOMAIN/healthz` and fail the deploy if it never answers, and the
+uptime monitor in section 9 watches it continuously. Nothing in the compose
+file uses `depends_on: api: service_healthy`.
 
 ### Proxy headers
 
@@ -187,15 +250,6 @@ forwarded headers entirely and every client looks like Caddy.
 signature covers it, and rewriting it would make every upload fail with a
 signature mismatch. `flush_interval -1` disables response buffering so large
 downloads stream rather than being held in Caddy's memory.
-
-### Why the `api` service has no container healthcheck
-
-The API runs on `gcr.io/distroless/static-debian12`, which has no shell, no
-`curl` and no `wget`, so a `HEALTHCHECK` cannot be expressed. `GET /healthz` is
-checked from outside instead: `bootstrap.sh` and the deploy workflow poll
-`https://api.$DOMAIN/healthz` and fail the deploy if it never answers, and the
-uptime monitor in section 9 watches it continuously. Nothing in the compose
-file uses `depends_on: api: service_healthy`.
 
 ---
 
@@ -234,31 +288,55 @@ git push origin cloud-v0.3.0
 `.github/workflows/deploy.yml` then:
 
 1. resolves the image tag (`cloud-v0.3.0` → `0.3.0`, or the `workflow_dispatch`
-   input verbatim);
-2. builds and pushes `afterword-api` to GHCR, plus `afterword-transcribe-worker`
-   and `afterword-web` **if** their Dockerfiles exist (detected after checkout,
-   because a job-level `hashFiles` runs before any checkout and always returns
-   empty);
-3. SSHes to the box with `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, fast-forwards
-   the repository, rewrites the `TAG=` line in `deploy/.env`, pulls, brings the
-   stack up, runs `/migrate up`, and polls `/healthz` for five minutes;
-4. on failure, re-deploys the tag recorded in `deploy/.last_tag` and still
-   fails the run.
+   input verbatim) and the git ref to check out on the box;
+2. builds and pushes `afterword-api` and `afterword-backup` to GHCR, plus
+   `afterword-transcribe-worker` and `afterword-web` **if** their Dockerfiles
+   exist (detected after checkout, because a job-level `hashFiles` runs before
+   any checkout and always returns empty);
+3. SSHes to the box with `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, fetches tags and
+   checks out **the exact ref being deployed** (`git checkout --detach`), not
+   whatever `main` happens to be;
+4. rewrites the `TAG=` line in `deploy/.env` atomically (write to a temp file in
+   the same directory, `chmod 600`, `mv`), pulls, brings the stack up, runs
+   `/migrate up`, and polls `/healthz` for five minutes. Every step is checked:
+   a failed pull, a failed `up`, or a failed migration aborts immediately
+   instead of letting the health poll pass against the container that is still
+   running;
+5. on failure it first asks `/migrate version`. If the schema is **dirty** it
+   refuses to roll back and prints the manual procedure. Otherwise it
+   re-deploys the tag in `deploy/.last_tag`. Either way the run fails;
+6. `deploy/.last_tag` is written **only after** the new tag has passed the
+   health check, so it always names a version that actually served traffic.
 
-Required repository secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`. Optional
-repository variable: `DEPLOY_BRANCH` (defaults to `main`). The job uses the
-`production` environment, so you can add a required reviewer there.
+Required repository secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`. The job
+uses the `production` environment, so you can add a required reviewer there.
 
 **Rollback rolls back images, not schema.** The previous tag is redeployed and
-`/migrate up` is a no-op against the newer schema. Keep migrations
-backward-compatible for one release: add columns before writing them, drop them
-a release later. If a migration itself must be undone, do it deliberately with
-`/migrate down 1` and a fresh deploy.
+`/migrate up` is a no-op against the newer schema, which the old image reports
+as `migrations: "ahead"` and still serves. Keep migrations backward-compatible
+for one release: add columns before writing them, drop them a release later.
+
+**When the schema is dirty.** golang-migrate marks `schema_migrations.dirty`
+when a migration fails half way. Nothing automatic will touch the database in
+that state. On the box, in `/opt/afterword/deploy`:
+
+```bash
+docker compose run --rm api /migrate version
+docker compose exec postgres psql -U afterword -d afterword
+# inspect what the failed migration did and finish or undo it by hand
+docker compose run --rm api /migrate force <last-good-version>
+docker compose run --rm api /migrate up
+curl -fsS https://api.$DOMAIN/healthz
+```
+
+Take a backup (`docker compose exec backup /usr/local/bin/backup.sh --once`)
+before you start, and prefer restoring last night's dump over hand-editing if
+the failed migration wrote data.
 
 ### By hand
 
 ```bash
-cd /opt/afterword && git pull --ff-only
+cd /opt/afterword && git fetch --tags origin && git checkout --detach cloud-v0.3.0
 cd deploy
 sed -i 's/^TAG=.*/TAG=0.3.0/' .env
 docker compose pull && docker compose up -d
@@ -268,30 +346,52 @@ curl -fsS https://api.$DOMAIN/healthz
 
 ---
 
-## 7. Scaling
+## 7. What actually fits on 4 GB
 
-On one 4 GB box the practical ceiling is: API, web, Postgres, MinIO, one
-transcribe worker on Whisper `base`, and **one** bot at a time. Chromium plus
-PulseAudio is the expensive part.
+Be honest about the budget. The declared limits are:
 
-More bots on the same box (only if you have RAM to spare):
+| Always on | | Optional | |
+|---|---|---|---|
+| `postgres` | 1024m | `transcribe-worker` | 1200m |
+| `api` | 512m | `bot-worker` | 1000m |
+| `caddy` | 256m | `web` | 512m |
+| `minio` | 256m | | |
+| `backup` | 256m | | |
+| **subtotal** | **~2.3 GB** | | |
+
+A 4 GB box has roughly 3.6 GB usable after the kernel and the Docker daemon.
+The always-on set leaves about 1.3 GB, which is **one** optional service at a
+time — the transcribe worker *or* one bot, not both, and not with the web app
+alongside them. Running everything in the table needs 8 GB or a second box.
+Treat these limits as a budget, not a target: a bot that hits its 1000m cap is
+OOM-killed and the meeting is lost, so give bots their own box before you go
+looking for headroom here.
+
+Practical shapes:
+
+- **4 GB, no bots.** Default profile plus `transcribe-worker`. Desktop capture
+  and cloud transcription work; the bot does not.
+- **4 GB, one bot.** Default profile plus `bot-worker`, `COMPOSE_PROFILES=workers`
+  and `BOT_WORKER_REPLICAS=1`, with transcription left to the desktop app.
+- **8 GB.** Everything, one bot and one transcribe worker, with room to spare.
+- **Two boxes** (recommended past one concurrent meeting): primary runs the
+  always-on set plus the transcribe worker; a second box runs bots only.
+
+Bots on a second box:
+
+1. Provision another Ubuntu box and run `bootstrap.sh` on it.
+2. In its `deploy/.env`, keep `API_BASE_URL=https://api.$DOMAIN` and the same
+   `PRIVACY_URL` and `BOT_NAME`, and set `COMPOSE_PROFILES=workers`.
+3. Start only the workers there: `docker compose up -d bot-worker`.
+4. Leave `caddy`, `postgres`, `minio`, `api` and `backup` stopped on that box.
+   The bot worker reaches the API over `https://api.$DOMAIN`, so nothing needs
+   a private network.
+
+More bots on one box, only if the RAM is genuinely there:
 
 ```bash
 docker compose --profile workers up -d --scale bot-worker=2
 ```
-
-Bots on a second box, which is the recommended shape past one concurrent
-meeting:
-
-1. Provision another Ubuntu box and run `bootstrap.sh` on it.
-2. In its `deploy/.env`, keep `API_BASE_URL=https://api.$DOMAIN` and the same
-   `PRIVACY_URL` and `BOT_NAME`, and set the storage and database values to the
-   primary box's public endpoints.
-3. Start only the workers there:
-   `docker compose --profile workers up -d bot-worker`.
-4. Leave `caddy`, `postgres`, `minio` and `api` stopped on that box. The bot
-   worker reaches the API over `https://api.$DOMAIN`, so nothing needs a
-   private network.
 
 Postgres and MinIO stay on the primary box. When they become the bottleneck,
 move MinIO's data to R2 or B2 — the code only speaks S3, so that is an
@@ -301,18 +401,40 @@ move MinIO's data to R2 or B2 — the code only speaks S3, so that is an
 
 ## 8. Backups and the restore drill
 
-The `backup` service runs `deploy/backup.sh --loop`, which sleeps until
+The `backup` container runs `backup.sh --loop`, which sleeps until
 `BACKUP_HOUR_UTC` (default 03:00 UTC) and then, every night:
 
 1. `pg_dump --format=custom --compress=9` into the `backup-staging` volume;
 2. verifies the dump with `pg_restore --list` before trusting it;
 3. `rclone copyto` the dump to
-   `offsite:$BACKUP_BUCKET/$BACKUP_PREFIX/postgres/postgres-<stamp>.dump`;
-4. `rclone sync` each bucket in `S3_BUCKETS` to
-   `offsite:$BACKUP_BUCKET/$BACKUP_PREFIX/objects/<bucket>`;
-5. deletes local dumps and offsite dumps older than `BACKUP_RETENTION_DAYS`
-   (30). Object mirrors are a sync, not a history: a deleted object is gone
-   offsite at the next run.
+   `offsite:$BACKUP_BUCKET/$BACKUP_PREFIX/postgres/postgres-<stamp>.dump` and
+   confirms it is listable off site;
+4. **deletes the local dump.** The staging volume is a work area, not an
+   archive; retention lives off site, where a disk failure cannot reach it;
+5. mirrors each bucket in `S3_BUCKETS` to
+   `offsite:…/objects/<bucket>`, with three guards (see below);
+6. prunes off-site dumps and soft-deleted objects older than
+   `BACKUP_RETENTION_DAYS` (30).
+
+Every step is checked. If any one fails, the run stops there, logs
+`backup failed`, and — in `--loop` mode — waits for the next window rather than
+reporting success. A truncated dump is never uploaded and never announced as
+complete.
+
+### The mirror guards
+
+`rclone sync` makes the destination match the source, so a bug that empties
+MinIO would, unguarded, empty the only off-site copy on the next run. Three
+things prevent that:
+
+- **Empty-source refusal.** If a bucket lists zero objects but the off-site
+  copy is not empty, the run fails loudly instead of syncing. If both are
+  empty — a fresh deployment — it logs and moves on.
+- **`--max-delete $BACKUP_MAX_DELETE`** (default 100) aborts a sync that would
+  delete more than that many objects.
+- **`--backup-dir …/deleted/<stamp>/<bucket>`** turns every deletion into a
+  dated soft-delete, kept for `BACKUP_RETENTION_DAYS`. A wrong sync is
+  recoverable for 30 days.
 
 Run one on demand:
 
@@ -333,15 +455,19 @@ docker compose run --rm api /migrate version
 
 `restore.sh` refuses to do anything without `--yes`. It stops `caddy`, `api`,
 `web`, the workers and `backup`; starts Postgres alone and waits for
-`pg_isready`; pulls the named dump from offsite if it is not already staged;
+`pg_isready`; pulls the named dump from off site if it is not already staged;
 runs `pg_restore --clean --if-exists --exit-on-error`; optionally syncs the
-object buckets back into MinIO with `--objects`; and leaves the stack stopped so
-you can inspect before starting it. It does not start the stack for you.
+object buckets back into MinIO with `--objects`; and leaves the stack stopped
+so you can inspect before starting it.
 
-Note what a restore does **not** undo: it replaces database contents, but if the
-dump predates a migration the running image expects, run `/migrate up`
-afterwards. Record the drill result (date, dump used, time to restore) so the
-number is known before an incident.
+It reuses the `backup` image, so the `pg_restore` doing the work is the same
+major version as the `pg_dump` that made the file, and no package is installed
+at restore time.
+
+Note what a restore does **not** undo: it replaces database contents, but if
+the dump predates a migration the running image expects, `/healthz` will say
+`migrations: "pending"` — run `/migrate up` afterwards. Record the drill result
+(date, dump used, time to restore) so the number is known before an incident.
 
 ---
 
@@ -349,36 +475,33 @@ number is known before an incident.
 
 - **Uptime check.** Point any free monitor (UptimeRobot, Better Stack, a cron
   on another box) at `https://api.$DOMAIN/healthz` every minute, expecting HTTP
-  200 and `"status":"ok"`. A 503 with `"db":"down"` means Postgres is
-  unreachable or unmigrated — the process is alive, so a TCP check would miss
-  it.
+  200. The body says which half is wrong: `"db":"down"` is an unreachable
+  database, `"migrations":"pending"` is an un-migrated one, `"dirty"` needs the
+  procedure in section 6. A TCP check would miss all three.
 - **Metrics.** `GET /metrics` on the api container serves Prometheus text
   (`http_requests_total`, `http_request_duration_seconds`,
   `http_requests_in_flight`, `afterword_api_build_info`, plus Go runtime
   metrics). It is not exposed through Caddy. Scrape it from a container on the
   same network, or add a `/metrics` route behind basic auth in the Caddyfile if
   you need it externally.
-- **Logs.** Everything logs JSON to stdout; `docker compose logs` and the
-  journal hold them. Cap them so they cannot fill the disk by setting Docker's
-  default in `/etc/docker/daemon.json`:
-
-  ```json
-  {"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
-  ```
-
-  then `systemctl restart docker`.
+- **Logs.** Everything logs JSON to stdout. Both the compose file and
+  `/etc/docker/daemon.json` cap them at 10 MB × 3 files per container, so logs
+  cannot fill the disk on their own. `docker compose logs -f <service>` reads
+  them.
 - **TLS.** Caddy renews automatically. `docker compose logs caddy | grep -i
   certificate` after any DNS change.
 - **Backups.** `docker compose logs backup --since 24h` should show a
-  "backup complete" line every morning. No line is an incident.
+  `backup complete` line every morning. A `backup failed` line, or no line at
+  all, is an incident.
 
 ---
 
 ## 10. When the disk fills
 
-40 GB goes to Postgres, MinIO objects, Docker images, and container logs, in
-that order of surprise. Symptoms: Postgres refuses writes, uploads 500, the API
-looks healthy but nothing persists.
+40 GB goes to Postgres, MinIO objects, and Docker images, in that order of
+surprise. Container logs are capped, so they are no longer a likely cause.
+Symptoms: Postgres refuses writes, uploads 500, the API looks healthy but
+nothing persists.
 
 Triage:
 
@@ -393,16 +516,14 @@ Recover, cheapest first:
 1. `docker image prune -af` — old tags accumulate on every deploy. Usually the
    biggest single win.
 2. `docker builder prune -af` — only if anything was ever built on the box.
-3. Truncate container logs (or set the `daemon.json` cap above, which prevents
-   the problem):
-   `truncate -s 0 /var/lib/docker/containers/*/*-json.log`.
-4. Clear the staging dumps: they live in the `backup-staging` volume and are
-   already offsite —
+3. Check the staging volume: `backup.sh` deletes each dump after uploading it,
+   so a pile of `postgres-*.dump` files in the `backup-staging` volume means
+   uploads have been failing. Fix the off-site credentials first, then
    `docker compose exec backup sh -c 'rm -f /backups/postgres-*.dump'`.
-5. Apply retention: the point of per-workspace retention (default 365 days) is
+4. Apply retention: the point of per-workspace retention (default 365 days) is
    to bound `audio`, which dominates MinIO. Shorten it for the noisiest
    workspaces, then let the retention sweep delete the objects.
-6. Only then resize the volume or the box. Growing the disk with the provider
+5. Only then resize the volume or the box. Growing the disk with the provider
    and rebooting is a five-minute job and cheaper than a bad prune.
 
 Prevention: alert at 75% used. Audio is stored as 24 kbps Opus, so roughly
@@ -417,15 +538,15 @@ never applied or images are never pruned.
   max-age. Do not enable HSTS preload submission until the domain is settled.
 - Only Caddy publishes ports. Everything else talks over the compose network.
   MinIO's console is loopback-only.
-- Secrets live only in `deploy/.env` (mode 600) and in GitHub Actions secrets.
-  Nothing secret is committed; `deploy/.gitignore` un-ignores only the two
-  example files.
+- Secrets live only in `deploy/.env` and `deploy/api.env` (both mode 600) and
+  in GitHub Actions secrets. `api.env` goes to the API container and nowhere
+  else. Nothing secret is committed.
 - `ufw` denies inbound except 22, 80 and 443. Harden SSH further by disabling
   password authentication in `/etc/ssh/sshd_config`.
 - fail2ban bans an IP for an hour after five failed SSH attempts.
 - Unattended security upgrades are on; reboot the box during a quiet window
   when `/var/run/reboot-required` appears.
 - Rotate `JWT_SECRET`, the Postgres password, the MinIO credentials and the
-  deploy key on a schedule; each rotation is an `.env` edit plus
+  deploy key on a schedule; each rotation is an edit plus
   `docker compose up -d`, except the Postgres password, which also needs
   `ALTER ROLE` inside the database.

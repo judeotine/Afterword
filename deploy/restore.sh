@@ -66,7 +66,6 @@ check_preconditions() {
 list_script() {
     cat <<'EOS'
 set -eu
-apk add --no-cache rclone >/dev/null
 rclone lsf "offsite:$BACKUP_BUCKET/${BACKUP_PREFIX:-afterword}/postgres/"
 EOS
 }
@@ -74,7 +73,6 @@ EOS
 database_script() {
     cat <<'EOS'
 set -eu
-apk add --no-cache postgresql16-client rclone >/dev/null
 if [ ! -f "/backups/$DUMP_NAME" ]; then
     rclone copyto "offsite:$BACKUP_BUCKET/${BACKUP_PREFIX:-afterword}/postgres/$DUMP_NAME" "/backups/$DUMP_NAME"
 fi
@@ -85,7 +83,6 @@ EOS
 objects_script() {
     cat <<'EOS'
 set -eu
-apk add --no-cache rclone >/dev/null
 for bucket in $BUCKETS; do
     rclone sync "offsite:$BACKUP_BUCKET/${BACKUP_PREFIX:-afterword}/objects/$bucket" "minio:$bucket"
 done

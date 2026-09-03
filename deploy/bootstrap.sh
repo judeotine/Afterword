@@ -8,6 +8,9 @@ DEPLOY_DIR="$APP_DIR/deploy"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.yml"
 ENV_FILE="$DEPLOY_DIR/.env"
 ENV_EXAMPLE="$DEPLOY_DIR/.env.example"
+API_ENV_FILE="$DEPLOY_DIR/api.env"
+API_ENV_EXAMPLE="$DEPLOY_DIR/api.env.example"
+DOCKER_DAEMON_CHANGED=false
 REPO_URL=${REPO_URL:-git@github.com:judeotine/Afterword.git}
 REPO_BRANCH=${REPO_BRANCH:-main}
 DEPLOY_KEY=${DEPLOY_KEY:-$APP_HOME/.ssh/id_ed25519}
@@ -59,6 +62,31 @@ install_base_packages() {
         unattended-upgrades
 }
 
+configure_docker_daemon() {
+    log "configuring docker log caps"
+    install -d -m 0755 /etc/docker
+    staged=$(mktemp)
+    cat >"$staged" <<'CONF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+CONF
+    if [ -f /etc/docker/daemon.json ] && cmp -s "$staged" /etc/docker/daemon.json; then
+        rm -f "$staged"
+        return 0
+    fi
+    if [ -f /etc/docker/daemon.json ]; then
+        cp /etc/docker/daemon.json "/etc/docker/daemon.json.$(date -u +%Y%m%dT%H%M%SZ).bak"
+    fi
+    install -m 0644 "$staged" /etc/docker/daemon.json
+    rm -f "$staged"
+    DOCKER_DAEMON_CHANGED=true
+}
+
 install_docker() {
     if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         log "docker and the compose plugin are already installed"
@@ -80,6 +108,9 @@ install_docker() {
             docker-compose-plugin
     fi
     systemctl enable --now docker
+    if [ "$DOCKER_DAEMON_CHANGED" = true ]; then
+        systemctl restart docker
+    fi
 }
 
 create_app_user() {
@@ -150,15 +181,26 @@ sync_repository() {
 }
 
 prepare_environment() {
-    if [ -f "$ENV_FILE" ]; then
-        chown "$APP_USER:$APP_USER" "$ENV_FILE"
-        chmod 600 "$ENV_FILE"
-        return 0
+    created=""
+    for pair in "$ENV_FILE:$ENV_EXAMPLE" "$API_ENV_FILE:$API_ENV_EXAMPLE"; do
+        target=${pair%%:*}
+        example=${pair#*:}
+        if [ -f "$target" ]; then
+            chown "$APP_USER:$APP_USER" "$target"
+            chmod 600 "$target"
+            continue
+        fi
+        install -m 600 -o "$APP_USER" -g "$APP_USER" "$example" "$target"
+        log "wrote $target from $(basename "$example")"
+        created="$created $target"
+    done
+    if [ -n "$created" ]; then
+        log "fill in:$created"
+        log "deploy/.env needs DOMAIN, ACME_EMAIL, TAG, the database and MinIO passwords, PRIVACY_URL and the BACKUP_ values"
+        log "deploy/api.env needs JWT_SECRET and the SMTP credentials"
+        log "then run this script again"
+        exit 0
     fi
-    install -m 600 -o "$APP_USER" -g "$APP_USER" "$ENV_EXAMPLE" "$ENV_FILE"
-    log "wrote $ENV_FILE from the example"
-    log "fill in DOMAIN, ACME_EMAIL, TAG, every password, PRIVACY_URL and the BACKUP_ values, then run this script again"
-    exit 0
 }
 
 start_stack() {
@@ -193,6 +235,7 @@ wait_for_health() {
 main() {
     require_root
     install_base_packages
+    configure_docker_daemon
     install_docker
     create_app_user
     configure_firewall

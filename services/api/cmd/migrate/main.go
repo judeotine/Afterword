@@ -16,7 +16,7 @@ const (
 	databaseURLEnv       = "DATABASE_URL"
 	migrationsDirEnv     = "MIGRATIONS_DIR"
 	defaultMigrationsDir = "/migrations"
-	usage                = "usage: migrate up | migrate down [steps] | migrate version"
+	usage                = "usage: migrate up | migrate down [steps|all] | migrate force <version> | migrate version"
 )
 
 func main() {
@@ -52,6 +52,8 @@ func run(args []string) error {
 		return up(migrator, args[1:])
 	case "down":
 		return down(migrator, args[1:])
+	case "force":
+		return force(migrator, args[1:])
 	case "version":
 		return printVersion(migrator)
 	default:
@@ -75,6 +77,9 @@ func up(migrator *migrate.Migrate, rest []string) error {
 }
 
 func down(migrator *migrate.Migrate, rest []string) error {
+	if len(rest) == 1 && rest[0] == "all" {
+		return downAll(migrator)
+	}
 	steps, err := downSteps(rest)
 	if err != nil {
 		return err
@@ -90,6 +95,18 @@ func down(migrator *migrate.Migrate, rest []string) error {
 	return nil
 }
 
+func downAll(migrator *migrate.Migrate) error {
+	if err := migrator.Down(); err != nil {
+		if errors.Is(err, migrate.ErrNoChange) {
+			report(migrator, "nothing to roll back")
+			return nil
+		}
+		return fmt.Errorf("migrate down all: %w", err)
+	}
+	report(migrator, "rolled back every migration")
+	return nil
+}
+
 func downSteps(rest []string) (int, error) {
 	if len(rest) == 0 {
 		return 1, nil
@@ -102,6 +119,21 @@ func downSteps(rest []string) (int, error) {
 		return 0, errors.New("down steps must be a positive whole number")
 	}
 	return steps, nil
+}
+
+func force(migrator *migrate.Migrate, rest []string) error {
+	if len(rest) != 1 {
+		return errors.New(usage)
+	}
+	version, err := strconv.Atoi(rest[0])
+	if err != nil || version < 0 {
+		return errors.New("force version must be a whole number, zero or greater")
+	}
+	if err := migrator.Force(version); err != nil {
+		return fmt.Errorf("force version %d: %w", version, err)
+	}
+	report(migrator, fmt.Sprintf("forced to version %d", version))
+	return nil
 }
 
 func printVersion(migrator *migrate.Migrate) error {
