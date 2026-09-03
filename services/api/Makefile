@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 	-X $(MODULE)/internal/version.Commit=$(COMMIT) \
 	-X $(MODULE)/internal/version.BuildDate=$(BUILD_DATE)
 
-.PHONY: all build run test test-integration lint fmt tidy sqlc migrate-up migrate-down docker clean
+.PHONY: all build run test test-integration lint fmt tidy sqlc sqlc-diff migrate-up migrate-down migrate-down-all docker clean
 
 all: lint test build
 
@@ -38,11 +38,17 @@ tidy:
 sqlc:
 	sqlc generate
 
+sqlc-diff:
+	sqlc diff
+
 migrate-up: require-database-url
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" up
 
 migrate-down: require-database-url
 	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" down 1
+
+migrate-down-all: require-database-url
+	migrate -path $(MIGRATIONS_DIR) -database "$(DATABASE_URL)" down -all
 
 docker:
 	docker build \

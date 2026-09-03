@@ -50,6 +50,11 @@ linters:
     generated: lax
     paths:
       - internal/db/sqlcgen
+    rules:
+      - path: internal/dbtest/
+        linters:
+          - revive
+        text: blank-imports
 
 formatters:
   enable:

@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS share_links;
+
+DROP TABLE IF EXISTS clips;
+
+DROP TABLE IF EXISTS comments;
+
+DROP TABLE IF EXISTS summaries;
+
+DROP TABLE IF EXISTS transcript_segments;
+
+DROP TABLE IF EXISTS meetings;
+
+DROP TABLE IF EXISTS folders;
