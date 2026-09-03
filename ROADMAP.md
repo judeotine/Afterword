@@ -49,6 +49,64 @@ Still open from Phase 0, for the founder:
 
 **Depends on:** Phase 0.
 
+### Status (2026-09-03)
+
+Done, on `phase1/production`:
+
+- Removed dead code inherited from upstream (`audio/audio_v2/`, `core-old.rs`,
+  `recording_saver_old.rs`, `audio/stt.rs`, `lib_old_complex.rs`, the unused
+  parallel-processor command set, the sample `app/notes/[id]` route).
+- CI (`cargo fmt`/`clippy`/`test`, `pnpm lint`/`test`/`build`, bot
+  lint/build/test) and release GitHub Actions workflows
+  (`.github/workflows/ci.yml`, `release.yml`, `bot.yml`).
+- Flatpak manifest and metadata under `packaging/flatpak/`.
+- `PRAGMA foreign_keys=ON` (plus WAL) on the SQLite connection, so
+  `ON DELETE CASCADE` actually fires; orphaned `meeting_notes` rows are
+  cleaned up on delete.
+- Provider API keys (summary and transcript) moved out of plaintext SQLite
+  into the OS keychain (Keychain / Credential Manager / Secret Service), with
+  a SQLite fallback and legacy-column migration.
+- `tauri-plugin-log` registered on all platforms (stdout + rotating log-dir
+  file); the unused `tauri-plugin-fs` dependency and its broad `fs:*`
+  capabilities were removed instead of registered.
+- Notifications are opt-in (no more auto-granted consent at startup), and
+  `get_system_dnd_status` reads real macOS Focus state and reports
+  `{supported, active}` instead of always returning false on platforms that
+  cannot answer.
+- Parakeet shows an inline warning in transcript settings when selected with
+  a non-English language, instead of silently ignoring the setting.
+- `pnpm lint` and `pnpm test` work in `frontend/`.
+- New `crates/afterword-core`: the Tauri-free part of the transcription
+  pipeline (audio decode/VAD, Whisper and Parakeet engines), re-exported by
+  the desktop app's `app_lib` so there is one implementation, not two.
+- New `afterword-transcribe` CLI (`crates/afterword-core/src/bin/afterword-transcribe.rs`)
+  that writes `transcripts.json` in the same `TranscriptSegment` shape the
+  desktop app writes, for use by the meeting bot and local batch runs.
+- Linux system-audio capture via the PulseAudio/PipeWire monitor source
+  (`frontend/src-tauri/src/audio/capture/pulse_monitor.rs`), replacing the
+  "not yet implemented" stub. This is compile-verified in CI's Linux job
+  only; it has not been run against real PulseAudio or PipeWire hardware.
+
+Still open, unchanged from before or explicitly deferred:
+
+- **Windows system-audio loopback is unverified.** The WASAPI path has not
+  been confirmed to work end to end on a real Windows machine.
+- **Linux capture has no manual hardware test.** `docs/TESTING_LINUX_AUDIO.md`
+  is a checklist for someone to run through on real PulseAudio and PipeWire
+  systems; nobody has executed it yet.
+- **Flathub submission is not done.** The manifest exists but has not been
+  submitted, and the sha256 in it is a placeholder, not a real checksum of a
+  built artifact.
+- **Signing secrets are not configured.** Apple notarization and Windows code
+  signing both still need real secrets in CI; the workflows currently warn
+  and continue when they are missing.
+- **No new artwork.** Icons, logos, and screenshots are still Meetily's.
+- **Policy docs are still unwritten.** `PRIVACY_POLICY.md`, `CONTRIBUTING.md`,
+  and `BLUETOOTH_PLAYBACK_NOTICE.md` are linked from the app but not authored.
+- **FFmpeg and the Parakeet model are still fetched from third-party
+  locations**, not re-hosted under Afterword's control, and still have no
+  checksum verification.
+
 **Goal:** A release a stranger can install on macOS, Windows, or Linux from a
 GitHub Release page and use for a real meeting without reading build docs.
 
@@ -260,9 +318,25 @@ machine).
 **Goal:** Afterword can attend a Zoom, Google Meet, or Teams meeting on the
 user's behalf, with every participant told they are being recorded.
 
+### Started (2026-09-03)
+
+A bot scaffold exists in this repository under `bot/` (not the separate
+repository originally sketched below): a Google Meet adapter, a consent
+announcement that runs before the recorder starts, a PulseAudio null-sink
+recorder, an HTTP job API (`POST /jobs`, `GET /jobs/:id`,
+`DELETE /jobs/:id`, `GET /healthz`), integration with the
+`afterword-transcribe` CLI for transcription, and a Dockerfile plus
+`docker-compose.yml`. See `bot/README.md`.
+
+Not done: calendar integration (Google Calendar / Microsoft 365 OAuth), Zoom
+and Teams support (URLs are recognised and rejected with a clear error),
+persistence (jobs live in memory only), uploading results to a backend (there
+is no backend yet), and legal review of the consent flow. The bot must not be
+deployed externally until that review happens.
+
 ### Scope
 
-**Bot service (separate repository)**
+**Bot service**
 
 - A self-hosted service that launches a headless browser session per meeting
   (the Recall.ai / Vexa model), joins with a visible display name such as

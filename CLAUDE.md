@@ -4,18 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Afterword** is a privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on local infrastructure. The supported application is the Tauri desktop app with a Rust core.
+**Afterword** is a privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on local infrastructure. The supported application is the Tauri desktop app with a Rust core. A separate meeting-bot service under `bot/` reuses the same transcription pipeline for meetings the user did not host locally.
 
 1. **Frontend**: Tauri-based desktop application (Rust + Next.js + TypeScript)
-2. **Rust Backend**: Tauri commands, audio capture, transcription, storage, and summarization orchestration
-3. **Legacy Backend Archive**: the old Python/FastAPI, Docker, and standalone whisper-server backend under `backend/` is archived and unsupported
+2. **Rust Core**: `crates/afterword-core` (Tauri-free audio, VAD, and transcription pipeline) plus `frontend/src-tauri` (Tauri commands, storage, summarization orchestration, and the rest of the desktop-specific code), which depends on `afterword-core` and re-exports its config/pipeline types
+3. **Meeting bot** (`bot/`): TypeScript + Playwright service that joins a call in a headless browser, announces recording consent, captures audio via a PulseAudio null sink, and transcribes it with the `afterword-transcribe` CLI built from `afterword-core`. Not part of the desktop app; see `bot/README.md`
+4. **Legacy Backend Archive**: the old Python/FastAPI, Docker, and standalone whisper-server backend under `backend/` is archived and unsupported
 
 ### Key Technology Stack
 - **Desktop App**: Tauri 2.x (Rust) + Next.js 14 + React 18
-- **Audio Processing**: Rust (cpal, whisper-rs, professional audio mixing)
-- **Transcription**: Whisper.cpp / whisper-rs and Parakeet paths in the Tauri app
+- **Shared Rust core**: `crates/afterword-core`, a Tauri-free workspace crate (also builds the `afterword-transcribe` CLI)
+- **Audio Processing**: Rust (cpal, whisper-rs); mixing uses proportional soft-scaling to prevent clipping, not RMS-based ducking (see `ProfessionalAudioMixer` in `pipeline.rs`)
+- **Transcription**: Whisper.cpp / whisper-rs and Parakeet paths, shared by the desktop app and the bot via `afterword-core`
 - **App API Surface**: Tauri commands and events, not a separate FastAPI service
 - **LLM Integration**: Ollama (local), Claude, Groq, OpenRouter
+- **Packaging**: Flatpak manifest under `packaging/flatpak/`; CI and release automation under `.github/workflows/` (`ci.yml`, `release.yml`, `bot.yml`)
 
 ## Essential Development Commands
 
@@ -44,7 +47,35 @@ pnpm run tauri:dev:metal    # macOS Metal GPU
 pnpm run tauri:dev:cuda     # NVIDIA CUDA
 pnpm run tauri:dev:vulkan   # AMD/Intel Vulkan
 pnpm run tauri:dev:cpu      # CPU-only (no GPU)
+
+# Lint and test
+pnpm lint                   # ESLint over src/
+pnpm test                   # Node test runner over tests/lib
 ```
+
+### Rust Workspace and CLI
+
+**Location**: repo root (`~/.cargo/bin` must be on `PATH`; cargo is not on the default macOS dev-machine PATH otherwise)
+
+```bash
+cargo test --workspace                                             # frontend/src-tauri, crates/afterword-core, llama-helper
+cargo check                                                         # quick compile check
+cargo run -p afterword-core --bin afterword-transcribe -- --help    # CLI usage (used by bot/)
+```
+
+### Meeting Bot (`bot/`)
+
+**Location**: `/bot`
+
+```bash
+pnpm install
+pnpm exec playwright install chromium   # no --with-deps on macOS
+pnpm dev                                # http://localhost:8787
+pnpm lint                               # tsc --noEmit
+pnpm test                               # vitest run
+```
+
+See `bot/README.md` for the job API and the consent policy (the bot announces recording before it starts capturing, and must not be deployed externally until the disclosure flow has legal review).
 
 ### Legacy Backend Archive
 
@@ -94,7 +125,7 @@ Raw Audio (Mic + System)
     RecordingSaver.save()      WhisperEngine.transcribe()
 ```
 
-**Key Insight**: The pipeline performs **professional audio mixing** (RMS-based ducking, clipping prevention) for recording, while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to Whisper for transcription.
+**Key Insight**: The pipeline performs mixing for recording (proportional soft-scaling to prevent clipping, not RMS-based ducking) while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to Whisper for transcription.
 
 ### Audio Device Modularization (Recently Completed)
 
@@ -177,7 +208,7 @@ await listen<TranscriptUpdate>('transcript-update', (event) => {
 - **Production (macOS)**: `~/Library/Application Support/Afterword/models/`
 - **Production (Windows)**: `%APPDATA%\Afterword\models\`
 
-**Model Loading** (frontend/src-tauri/src/whisper_engine/whisper_engine.rs):
+**Model Loading** (crates/afterword-core/src/whisper_engine/whisper_engine.rs, re-exported as `crate::whisper_engine` in the desktop app):
 ```rust
 pub async fn load_model(&self, model_name: &str) -> Result<()> {
     // Automatically detects GPU capabilities (Metal/CUDA/Vulkan)
@@ -197,7 +228,7 @@ pub async fn load_model(&self, model_name: &str) -> Result<()> {
 **Ring Buffer Mixing** (pipeline.rs):
 - Mic and system audio arrive asynchronously at different rates
 - Ring buffer accumulates samples until both streams have aligned windows (50ms)
-- Professional mixing applies RMS-based ducking to prevent system audio from drowning out microphone
+- Mixing applies proportional soft-scaling (not RMS-based ducking) to keep the sum within ±1.0 without hard-clipping distortion
 - Uses `VecDeque` for efficient windowed processing
 
 ### 2. Thread Safety and Async Boundaries
@@ -274,7 +305,7 @@ macro_rules! perf_debug {
 
 Key components:
 - `AudioMixerRingBuffer`: Manages mic + system audio synchronization
-- `ProfessionalAudioMixer`: RMS-based ducking and mixing
+- `ProfessionalAudioMixer`: mixes mic + system with proportional soft-scaling for clip prevention (not RMS-based ducking)
 - `AudioPipelineManager`: Orchestrates VAD, mixing, and distribution
 
 **Testing Audio Changes**:
@@ -352,7 +383,7 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
   - Development: `base` or `small` (fast iteration)
   - Production: `medium` or `large-v3` (best quality)
 - **GPU Acceleration**: 5-10x faster than CPU
-- **Parallel Processing**: Available in `whisper_engine/parallel_processor.rs` for batch workloads
+- **Parallel Processing**: The old `whisper_engine/parallel_processor.rs` and its unused Tauri commands were removed as dead code; there is no batch-parallel processing path today
 
 ### Frontend Performance
 - React state updates batched via Sidebar context
@@ -406,4 +437,6 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 - [frontend/src/components/Sidebar/SidebarProvider.tsx](frontend/src/components/Sidebar/SidebarProvider.tsx) - Global state management
 
 **Whisper Integration**:
-- [frontend/src-tauri/src/whisper_engine/whisper_engine.rs](frontend/src-tauri/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
+- [crates/afterword-core/src/whisper_engine/whisper_engine.rs](crates/afterword-core/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription (re-exported as `crate::whisper_engine` by `frontend/src-tauri/src/whisper_engine/mod.rs`)
+- [crates/afterword-core/src/bin/afterword-transcribe.rs](crates/afterword-core/src/bin/afterword-transcribe.rs) - Headless transcription CLI used by `bot/`
+- [bot/src/worker.ts](bot/src/worker.ts) - Meeting bot: join, consent announcement, recording, transcription

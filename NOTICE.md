@@ -26,6 +26,14 @@ affiliated with or endorsed by Zackriya Solutions.
   importer still recognises data from a previous upstream Meetily install.
 - The archived Python/FastAPI backend under `backend/` is kept unmodified for
   historical reference only. It is not part of the supported product.
+- Added `crates/afterword-core`, a Tauri-free crate holding the shared audio
+  and transcription pipeline, plus an `afterword-transcribe` CLI built from
+  it. The desktop app's Rust core (`app_lib`) now depends on this crate
+  instead of containing that code directly.
+- Added `bot/`, a meeting-bot service (not present in upstream Meetily) that
+  joins meetings the user did not host locally and transcribes them with the
+  same `afterword-transcribe` CLI. See `bot/README.md` for its scope and
+  consent policy.
 
 ## Still carrying upstream artwork and hosted assets
 
