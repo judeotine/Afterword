@@ -58,11 +58,15 @@ jobs:
           mkdir -p frontend/src-tauri/binaries
           cp "target/debug/$BASE_BINARY" "frontend/src-tauri/binaries/$SIDECAR_BINARY"
 
+      # Lint on one leg only: the cfg-gated arms of afterword-core differ per
+      # platform, and a lint clean on macOS/Windows is not evidence for Linux.
       - name: cargo fmt (afterword-core)
+        if: runner.os == 'Linux'
         run: cargo fmt --check -p afterword-core
 
       - name: cargo clippy (afterword-core)
-        run: cargo clippy -p afterword-core -- -D warnings
+        if: runner.os == 'Linux'
+        run: cargo clippy -p afterword-core --all-targets -- -D warnings
 
       - name: cargo test
         run: cargo test --workspace

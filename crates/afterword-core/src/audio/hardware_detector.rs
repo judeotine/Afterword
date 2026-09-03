@@ -178,7 +178,7 @@ impl HardwareProfile {
 
         #[cfg(target_os = "windows")]
         {
-            return Self::has_windows_vulkan_runtime();
+            Self::has_windows_vulkan_runtime()
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -212,13 +212,13 @@ impl HardwareProfile {
         // Windows-specific override: Always use beam size 2 for stability
         #[cfg(target_os = "windows")]
         {
-            return AdaptiveWhisperConfig {
+            AdaptiveWhisperConfig {
                 beam_size: 2,
                 temperature: 0.2,
                 use_gpu: self.has_gpu_acceleration,
                 max_threads: Some(self.cpu_cores.min(8) as usize),
                 chunk_size_preference: ChunkSizePreference::Balanced,
-            };
+            }
         }
 
         // Platform-adaptive configuration for non-Windows systems
