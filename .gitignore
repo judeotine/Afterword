@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust
+/target/
+**/target/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Env / secrets
+.env
+.env.local
+*.key
+*.pem
+.tauri/
+
+# Editor
+.idea/
+.vscode/
+*.swp
