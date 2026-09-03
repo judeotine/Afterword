@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: ''
+          - os: ubuntu-22.04
+            target: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libpulse-dev cmake libssl-dev pkg-config
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build llama-helper (macOS, metal)
+        if: runner.os == 'macOS'
+        run: cargo build -p llama-helper --release --features metal
+
+      - name: Build llama-helper
+        if: runner.os != 'macOS'
+        run: cargo build -p llama-helper --release
+
+      - name: Copy llama-helper sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_TRIPLE="${{ matrix.target }}"
+          if [ -z "$TARGET_TRIPLE" ]; then
+            TARGET_TRIPLE=$(rustc -vV | grep "host:" | awk '{print $2}')
+          fi
+          BASE_BINARY="llama-helper"
+          SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            BASE_BINARY="llama-helper.exe"
+            SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE.exe"
+          fi
+          mkdir -p frontend/src-tauri/binaries
+          cp "target/release/$BASE_BINARY" "frontend/src-tauri/binaries/$SIDECAR_BINARY"
+
+      - name: Warn about missing Apple signing secrets
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::Apple signing secrets (APPLE_CERTIFICATE and related) are not set; this macOS build will be ad-hoc signed and will not pass Gatekeeper/notarization."
+          fi
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+
+      - name: Warn about missing Windows signing secret
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [ -z "$DIGICERT_KEYPAIR_ALIAS" ]; then
+            echo "::warning::DIGICERT_KEYPAIR_ALIAS is not set; scripts/sign-windows.ps1 will no-op and this Windows build will be unsigned."
+          fi
+        env:
+          DIGICERT_KEYPAIR_ALIAS: ${{ secrets.DIGICERT_KEYPAIR_ALIAS }}
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DIGICERT_KEYPAIR_ALIAS: ${{ secrets.DIGICERT_KEYPAIR_ALIAS }}
+        with:
+          projectPath: frontend
+          tauriScript: pnpm tauri
+          args: ${{ runner.os == 'macOS' && format('--target {0}', matrix.target) || '' }}
+          tagName: v__VERSION__
+          releaseName: 'Afterword v__VERSION__'
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
