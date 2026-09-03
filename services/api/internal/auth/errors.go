@@ -22,5 +22,6 @@ var (
 	ErrRefreshReused      = errors.New("auth: refresh token was already used")
 	ErrStateNotFound      = errors.New("auth: oauth state is not valid")
 	ErrStateExpired       = errors.New("auth: oauth state has expired")
+	ErrStateNonceMismatch = errors.New("auth: oauth state nonce does not match")
 	ErrEmailNotVerified   = errors.New("auth: google account email is not verified")
 )

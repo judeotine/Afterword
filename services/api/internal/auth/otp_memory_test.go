@@ -20,9 +20,26 @@ func newMemoryOTPStore() *memoryOTPStore {
 	return &memoryOTPStore{}
 }
 
-func (s *memoryOTPStore) CreateOTP(_ context.Context, params auth.CreateOTPParams) (auth.OTPRecord, error) {
+func (s *memoryOTPStore) TryCreateOTP(_ context.Context, params auth.TryCreateOTPParams) (auth.OTPRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	var byDestination, byIP int64
+	for _, record := range s.records {
+		if record.Channel == params.Channel && record.Destination == params.Destination && !record.CreatedAt.Before(params.DestinationSince) {
+			byDestination++
+		}
+		if params.RequestIP != "" && record.RequestIP == params.RequestIP && !record.CreatedAt.Before(params.IPSince) {
+			byIP++
+		}
+	}
+	if byDestination >= params.DestinationLimit {
+		return auth.OTPRecord{}, auth.ErrRateLimited
+	}
+	if params.RequestIP != "" && byIP >= params.IPLimit {
+		return auth.OTPRecord{}, auth.ErrRateLimited
+	}
+
 	record := auth.OTPRecord{
 		ID:          uuid.New(),
 		Channel:     params.Channel,
@@ -54,43 +71,43 @@ func (s *memoryOTPStore) LatestOTP(_ context.Context, channel auth.Channel, dest
 	return matching[0], nil
 }
 
-func (s *memoryOTPStore) CountOTPsByDestination(_ context.Context, channel auth.Channel, destination string, since time.Time) (int64, error) {
+func (s *memoryOTPStore) ClaimOTPAttempt(_ context.Context, params auth.ClaimOTPAttemptParams) (int32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var count int64
-	for _, record := range s.records {
-		if record.Channel == channel && record.Destination == destination && !record.CreatedAt.Before(since) {
-			count++
-		}
-	}
-	return count, nil
-}
 
-func (s *memoryOTPStore) CountOTPsByIP(_ context.Context, ip string, since time.Time) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if ip == "" {
-		return 0, nil
-	}
-	var count int64
-	for _, record := range s.records {
-		if record.RequestIP == ip && !record.CreatedAt.Before(since) {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func (s *memoryOTPStore) RecordOTPAttempt(_ context.Context, id uuid.UUID) (int32, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	index := -1
 	for i := range s.records {
-		if s.records[i].ID == id {
-			s.records[i].Attempts++
-			return s.records[i].Attempts, nil
+		if s.records[i].ID == params.ID {
+			index = i
+			break
 		}
 	}
-	return 0, auth.ErrCodeNotFound
+	if index < 0 {
+		return 0, auth.ErrTooManyAttempts
+	}
+	record := s.records[index]
+	if record.ConsumedAt != nil || record.Attempts >= params.MaxAttempts {
+		return 0, auth.ErrTooManyAttempts
+	}
+
+	var byDestination, byIP int64
+	for _, other := range s.records {
+		if other.Channel == params.Channel && other.Destination == params.Destination && !other.CreatedAt.Before(params.DestinationSince) {
+			byDestination += int64(other.Attempts)
+		}
+		if params.RequestIP != "" && other.RequestIP == params.RequestIP && !other.CreatedAt.Before(params.IPSince) {
+			byIP += int64(other.Attempts)
+		}
+	}
+	if byDestination >= params.DestinationLimit {
+		return 0, auth.ErrTooManyAttempts
+	}
+	if params.RequestIP != "" && byIP >= params.IPLimit {
+		return 0, auth.ErrTooManyAttempts
+	}
+
+	s.records[index].Attempts++
+	return s.records[index].Attempts, nil
 }
 
 func (s *memoryOTPStore) ConsumeOTP(_ context.Context, id uuid.UUID, at time.Time) error {

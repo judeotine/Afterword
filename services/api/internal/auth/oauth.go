@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ const (
 	googleTokenURL          = "https://oauth2.googleapis.com/token"
 	googleUserInfoURL       = "https://openidconnect.googleapis.com/v1/userinfo"
 	oauthStateBytes         = 32
+	oauthNonceBytes         = 32
 	maxUserInfoResponseSize = 1 << 16
 )
 
@@ -31,6 +33,7 @@ type OAuthStateRecord struct {
 	ID           uuid.UUID
 	Provider     string
 	StateHash    string
+	NonceHash    string
 	CodeVerifier string
 	RedirectTo   string
 	ExpiresAt    time.Time
@@ -41,6 +44,7 @@ type OAuthStateRecord struct {
 type CreateOAuthStateParams struct {
 	Provider     string
 	StateHash    string
+	NonceHash    string
 	CodeVerifier string
 	RedirectTo   string
 	ExpiresAt    time.Time
@@ -62,6 +66,7 @@ type GoogleProfile struct {
 type StartedAuthorization struct {
 	AuthorizationURL string
 	State            string
+	Nonce            string
 	ExpiresAt        time.Time
 }
 
@@ -134,6 +139,10 @@ func (g *GoogleAuthenticator) Start(ctx context.Context, redirectTo string) (Sta
 	if err != nil {
 		return StartedAuthorization{}, err
 	}
+	nonce, err := NewOpaqueToken(oauthNonceBytes)
+	if err != nil {
+		return StartedAuthorization{}, err
+	}
 	verifier := oauth2.GenerateVerifier()
 
 	now := g.clock().UTC()
@@ -142,6 +151,7 @@ func (g *GoogleAuthenticator) Start(ctx context.Context, redirectTo string) (Sta
 	if _, err := g.store.CreateOAuthState(ctx, CreateOAuthStateParams{
 		Provider:     GoogleProvider,
 		StateHash:    hashState(state),
+		NonceHash:    HashToken(nonce),
 		CodeVerifier: verifier,
 		RedirectTo:   SafeRedirectPath(redirectTo),
 		ExpiresAt:    expiresAt,
@@ -156,10 +166,10 @@ func (g *GoogleAuthenticator) Start(ctx context.Context, redirectTo string) (Sta
 		oauth2.S256ChallengeOption(verifier),
 	)
 
-	return StartedAuthorization{AuthorizationURL: authorizationURL, State: state, ExpiresAt: expiresAt}, nil
+	return StartedAuthorization{AuthorizationURL: authorizationURL, State: state, Nonce: nonce, ExpiresAt: expiresAt}, nil
 }
 
-func (g *GoogleAuthenticator) Complete(ctx context.Context, state, code string) (CompletedAuthorization, error) {
+func (g *GoogleAuthenticator) Complete(ctx context.Context, state, code, presentedNonce string) (CompletedAuthorization, error) {
 	if strings.TrimSpace(state) == "" || strings.TrimSpace(code) == "" {
 		return CompletedAuthorization{}, ErrStateNotFound
 	}
@@ -168,6 +178,9 @@ func (g *GoogleAuthenticator) Complete(ctx context.Context, state, code string) 
 	record, err := g.store.ConsumeOAuthState(ctx, GoogleProvider, hashState(state), now)
 	if err != nil {
 		return CompletedAuthorization{}, err
+	}
+	if subtle.ConstantTimeCompare([]byte(HashToken(strings.TrimSpace(presentedNonce))), []byte(record.NonceHash)) != 1 {
+		return CompletedAuthorization{}, ErrStateNonceMismatch
 	}
 	if !now.Before(record.ExpiresAt) {
 		return CompletedAuthorization{}, ErrStateExpired

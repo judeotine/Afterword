@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/rs/zerolog/hlog"
 
@@ -10,7 +11,11 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/httpx"
 )
 
-const googleErrorPath = "/sign-in?error=google"
+const (
+	googleErrorPath       = "/sign-in?error=google"
+	googleStateCookieName = "afterword_google_state"
+	googleStateCookiePath = "/v1/auth/google"
+)
 
 func (s *Server) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 	if s.google == nil {
@@ -24,6 +29,7 @@ func (s *Server) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	http.SetCookie(w, s.googleStateCookie(started.Nonce, started.ExpiresAt))
 	http.Redirect(w, r, started.AuthorizationURL, http.StatusFound)
 }
 
@@ -33,6 +39,12 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var presentedNonce string
+	if cookie, err := r.Cookie(googleStateCookieName); err == nil {
+		presentedNonce = cookie.Value
+	}
+	http.SetCookie(w, s.expiredGoogleStateCookie())
+
 	query := r.URL.Query()
 	if provider := query.Get("error"); provider != "" {
 		hlog.FromRequest(r).Warn().Str("provider_error", provider).Msg("google returned an error")
@@ -40,9 +52,10 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	completed, err := s.google.Complete(r.Context(), query.Get("state"), query.Get("code"))
+	completed, err := s.google.Complete(r.Context(), query.Get("state"), query.Get("code"), presentedNonce)
 	if err != nil {
-		if errors.Is(err, auth.ErrStateNotFound) || errors.Is(err, auth.ErrStateExpired) || errors.Is(err, auth.ErrEmailNotVerified) {
+		if errors.Is(err, auth.ErrStateNotFound) || errors.Is(err, auth.ErrStateExpired) ||
+			errors.Is(err, auth.ErrStateNonceMismatch) || errors.Is(err, auth.ErrEmailNotVerified) {
 			hlog.FromRequest(r).Warn().Err(err).Msg("google sign-in was refused")
 		} else {
 			hlog.FromRequest(r).Error().Err(err).Msg("google sign-in failed")
@@ -75,4 +88,29 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) redirectToApp(w http.ResponseWriter, r *http.Request, path string) {
 	http.Redirect(w, r, s.appBaseURL+path, http.StatusFound)
+}
+
+func (s *Server) googleStateCookie(nonce string, expiresAt time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name:     googleStateCookieName,
+		Value:    nonce,
+		Path:     googleStateCookiePath,
+		Expires:  expiresAt,
+		MaxAge:   int(time.Until(expiresAt).Seconds()),
+		HttpOnly: true,
+		Secure:   s.cookieSafe,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+func (s *Server) expiredGoogleStateCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     googleStateCookieName,
+		Value:    "",
+		Path:     googleStateCookiePath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.cookieSafe,
+		SameSite: http.SameSiteLaxMode,
+	}
 }

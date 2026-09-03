@@ -177,7 +177,7 @@ func TestRefreshRotationInvalidatesThePresentedToken(t *testing.T) {
 	}
 
 	fixture.now = fixture.now.Add(time.Hour)
-	rotated, err := fixture.manager.Rotate(context.Background(), first.Token)
+	rotated, err := fixture.manager.Rotate(context.Background(), first.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestRefreshRotationInvalidatesThePresentedToken(t *testing.T) {
 		t.Fatalf("last used at %v", records[0].LastUsedAt)
 	}
 
-	if _, err := fixture.manager.Rotate(context.Background(), rotated.Token); err != nil {
+	if _, err := fixture.manager.Rotate(context.Background(), rotated.Token, ""); err != nil {
 		t.Fatalf("the new token should rotate: %v", err)
 	}
 }
@@ -218,20 +218,20 @@ func TestRefreshReuseRevokesTheWholeFamily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	second, err := fixture.manager.Rotate(context.Background(), first.Token)
+	second, err := fixture.manager.Rotate(context.Background(), first.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	third, err := fixture.manager.Rotate(context.Background(), second.Token)
+	third, err := fixture.manager.Rotate(context.Background(), second.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 
-	if _, err := fixture.manager.Rotate(context.Background(), first.Token); !errors.Is(err, auth.ErrRefreshReused) {
+	if _, err := fixture.manager.Rotate(context.Background(), first.Token, ""); !errors.Is(err, auth.ErrRefreshReused) {
 		t.Fatalf("replay: got %v, want ErrRefreshReused", err)
 	}
 
-	if _, err := fixture.manager.Rotate(context.Background(), third.Token); !errors.Is(err, auth.ErrRefreshRevoked) {
+	if _, err := fixture.manager.Rotate(context.Background(), third.Token, ""); !errors.Is(err, auth.ErrRefreshRevoked) {
 		t.Fatalf("live token after a replay: got %v, want ErrRefreshRevoked", err)
 	}
 
@@ -255,18 +255,18 @@ func TestRefreshReuseLeavesOtherFamiliesAlone(t *testing.T) {
 		t.Fatalf("issue: %v", err)
 	}
 
-	rotatedDesktop, err := fixture.manager.Rotate(context.Background(), desktop.Token)
+	rotatedDesktop, err := fixture.manager.Rotate(context.Background(), desktop.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	if _, err := fixture.manager.Rotate(context.Background(), desktop.Token); !errors.Is(err, auth.ErrRefreshReused) {
+	if _, err := fixture.manager.Rotate(context.Background(), desktop.Token, ""); !errors.Is(err, auth.ErrRefreshReused) {
 		t.Fatalf("replay: got %v, want ErrRefreshReused", err)
 	}
-	if _, err := fixture.manager.Rotate(context.Background(), rotatedDesktop.Token); !errors.Is(err, auth.ErrRefreshRevoked) {
+	if _, err := fixture.manager.Rotate(context.Background(), rotatedDesktop.Token, ""); !errors.Is(err, auth.ErrRefreshRevoked) {
 		t.Fatalf("desktop family should be dead: %v", err)
 	}
 
-	if _, err := fixture.manager.Rotate(context.Background(), phone.Token); err != nil {
+	if _, err := fixture.manager.Rotate(context.Background(), phone.Token, ""); err != nil {
 		t.Fatalf("the phone family should still work: %v", err)
 	}
 }
@@ -279,7 +279,7 @@ func TestRefreshRotateRejectsAnExpiredToken(t *testing.T) {
 	}
 
 	fixture.now = fixture.now.Add(auth.DefaultRefreshTokenTTL)
-	if _, err := fixture.manager.Rotate(context.Background(), issued.Token); !errors.Is(err, auth.ErrRefreshExpired) {
+	if _, err := fixture.manager.Rotate(context.Background(), issued.Token, ""); !errors.Is(err, auth.ErrRefreshExpired) {
 		t.Fatalf("got %v, want ErrRefreshExpired", err)
 	}
 }
@@ -292,7 +292,7 @@ func TestRefreshRotateAcceptsATokenJustBeforeExpiry(t *testing.T) {
 	}
 
 	fixture.now = fixture.now.Add(auth.DefaultRefreshTokenTTL - time.Second)
-	if _, err := fixture.manager.Rotate(context.Background(), issued.Token); err != nil {
+	if _, err := fixture.manager.Rotate(context.Background(), issued.Token, ""); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
 }
@@ -300,7 +300,7 @@ func TestRefreshRotateAcceptsATokenJustBeforeExpiry(t *testing.T) {
 func TestRefreshRotateRejectsUnknownTokens(t *testing.T) {
 	fixture := newRefreshFixture(t)
 	for _, token := range []string{"", "   ", "nonsense", base64.RawURLEncoding.EncodeToString(make([]byte, 32))} {
-		if _, err := fixture.manager.Rotate(context.Background(), token); !errors.Is(err, auth.ErrRefreshNotFound) {
+		if _, err := fixture.manager.Rotate(context.Background(), token, ""); !errors.Is(err, auth.ErrRefreshNotFound) {
 			t.Fatalf("token %q: got %v, want ErrRefreshNotFound", token, err)
 		}
 	}
@@ -312,7 +312,7 @@ func TestRefreshRevokeEndsTheFamily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	rotated, err := fixture.manager.Rotate(context.Background(), issued.Token)
+	rotated, err := fixture.manager.Rotate(context.Background(), issued.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestRefreshRevokeEndsTheFamily(t *testing.T) {
 	if err := fixture.manager.Revoke(context.Background(), rotated.Token); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if _, err := fixture.manager.Rotate(context.Background(), rotated.Token); !errors.Is(err, auth.ErrRefreshRevoked) {
+	if _, err := fixture.manager.Rotate(context.Background(), rotated.Token, ""); !errors.Is(err, auth.ErrRefreshRevoked) {
 		t.Fatalf("got %v, want ErrRefreshRevoked", err)
 	}
 }
@@ -346,7 +346,7 @@ func TestRefreshConcurrentRotationYieldsOneWinner(t *testing.T) {
 	for i := 0; i < racers; i++ {
 		go func(index int) {
 			defer wg.Done()
-			_, err := fixture.manager.Rotate(context.Background(), issued.Token)
+			_, err := fixture.manager.Rotate(context.Background(), issued.Token, "")
 			results[index] = err
 		}(i)
 	}
@@ -364,6 +364,48 @@ func TestRefreshConcurrentRotationYieldsOneWinner(t *testing.T) {
 	}
 	if winners != 1 {
 		t.Fatalf("%d rotations succeeded, want exactly 1", winners)
+	}
+}
+
+func TestRefreshRotateRejectsAMismatchedDeviceAndRevokesTheFamily(t *testing.T) {
+	fixture := newRefreshFixture(t)
+	userID := uuid.New()
+
+	issued, err := fixture.manager.Issue(context.Background(), userID, "desktop-1")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	if _, err := fixture.manager.Rotate(context.Background(), issued.Token, "someone-elses-device"); !errors.Is(err, auth.ErrRefreshReused) {
+		t.Fatalf("got %v, want ErrRefreshReused", err)
+	}
+
+	for _, record := range fixture.store.all() {
+		if record.RevokedAt == nil {
+			t.Fatalf("record %v survived the device mismatch", record.ID)
+		}
+	}
+}
+
+func TestRefreshRotateAcceptsAMatchingDevice(t *testing.T) {
+	fixture := newRefreshFixture(t)
+	issued, err := fixture.manager.Issue(context.Background(), uuid.New(), "desktop-1")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if _, err := fixture.manager.Rotate(context.Background(), issued.Token, "desktop-1"); err != nil {
+		t.Fatalf("rotate with the matching device: %v", err)
+	}
+}
+
+func TestRefreshRotateIgnoresAnUnassertedDevice(t *testing.T) {
+	fixture := newRefreshFixture(t)
+	issued, err := fixture.manager.Issue(context.Background(), uuid.New(), "desktop-1")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if _, err := fixture.manager.Rotate(context.Background(), issued.Token, ""); err != nil {
+		t.Fatalf("rotate without asserting a device: %v", err)
 	}
 }
 

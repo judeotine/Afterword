@@ -68,9 +68,18 @@ func TestStoreOTPLifecycle(t *testing.T) {
 		t.Fatalf("latest %v, want %v", latest.ID, record.ID)
 	}
 
-	attempts, err := store.RecordOTPAttempt(ctx, record.ID)
+	attempts, err := store.ClaimOTPAttempt(ctx, auth.ClaimOTPAttemptParams{
+		ID:               record.ID,
+		Channel:          auth.ChannelEmail,
+		Destination:      "person@example.com",
+		MaxAttempts:      auth.DefaultOTPMaxAttempts,
+		DestinationSince: now.Add(-auth.DefaultVerifyDestinationWindow),
+		DestinationLimit: auth.DefaultVerifiesPerDestination,
+		IPSince:          now.Add(-auth.DefaultVerifyIPWindow),
+		IPLimit:          auth.DefaultVerifiesPerIP,
+	})
 	if err != nil || attempts != 1 {
-		t.Fatalf("record attempt: %d, %v", attempts, err)
+		t.Fatalf("claim attempt: %d, %v", attempts, err)
 	}
 
 	if err := store.ConsumeOTP(ctx, record.ID, now.Add(time.Minute)); err != nil {
@@ -228,7 +237,7 @@ func TestRefreshManagerAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
-	second, err := manager.Rotate(ctx, first.Token)
+	second, err := manager.Rotate(ctx, first.Token, "")
 	if err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
@@ -236,13 +245,13 @@ func TestRefreshManagerAgainstPostgres(t *testing.T) {
 		t.Fatalf("rotated %+v", second)
 	}
 
-	if _, err := manager.Rotate(ctx, first.Token); !errors.Is(err, auth.ErrRefreshReused) {
+	if _, err := manager.Rotate(ctx, first.Token, ""); !errors.Is(err, auth.ErrRefreshReused) {
 		t.Fatalf("replay: got %v, want ErrRefreshReused", err)
 	}
-	if _, err := manager.Rotate(ctx, second.Token); !errors.Is(err, auth.ErrRefreshRevoked) {
+	if _, err := manager.Rotate(ctx, second.Token, ""); !errors.Is(err, auth.ErrRefreshRevoked) {
 		t.Fatalf("live token after replay: got %v, want ErrRefreshRevoked", err)
 	}
-	if _, err := manager.Rotate(ctx, "not-a-token"); !errors.Is(err, auth.ErrRefreshNotFound) {
+	if _, err := manager.Rotate(ctx, "not-a-token", ""); !errors.Is(err, auth.ErrRefreshNotFound) {
 		t.Fatalf("unknown token: got %v", err)
 	}
 }
@@ -266,7 +275,7 @@ func TestRefreshRotationIsAtomicUnderConcurrency(t *testing.T) {
 	results := make(chan error, racers)
 	for i := 0; i < racers; i++ {
 		go func() {
-			_, err := manager.Rotate(ctx, issued.Token)
+			_, err := manager.Rotate(ctx, issued.Token, "")
 			results <- err
 		}()
 	}
@@ -283,6 +292,120 @@ func TestRefreshRotationIsAtomicUnderConcurrency(t *testing.T) {
 	}
 	if winners != 1 {
 		t.Fatalf("%d rotations succeeded, want exactly 1", winners)
+	}
+}
+
+func TestOTPVerifyAttemptClaimIsAtomicUnderConcurrency(t *testing.T) {
+	store, _ := newStore(t)
+	sender := &recordingSender{}
+	service, err := auth.NewOTPService(auth.OTPServiceOptions{
+		Store:       store,
+		EmailSender: sender,
+		SMSSender:   sender,
+		HashCost:    bcrypt.MinCost,
+	})
+	if err != nil {
+		t.Fatalf("new otp service: %v", err)
+	}
+	ctx := context.Background()
+
+	if _, err := service.Send(ctx, auth.SendCodeRequest{
+		Channel:     auth.ChannelEmail,
+		Destination: "racer@example.com",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	const racers = 50
+	results := make(chan error, racers)
+	for i := 0; i < racers; i++ {
+		go func() {
+			_, err := service.Verify(ctx, auth.VerifyCodeRequest{
+				Channel:     auth.ChannelEmail,
+				Destination: "racer@example.com",
+				Code:        "000000",
+			})
+			results <- err
+		}()
+	}
+
+	var mismatches, lockedOut int
+	for i := 0; i < racers; i++ {
+		switch err := <-results; {
+		case errors.Is(err, auth.ErrCodeMismatch):
+			mismatches++
+		case errors.Is(err, auth.ErrTooManyAttempts):
+			lockedOut++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if mismatches != auth.DefaultOTPMaxAttempts {
+		t.Fatalf("%d guesses were compared, want exactly %d", mismatches, auth.DefaultOTPMaxAttempts)
+	}
+	if lockedOut != racers-auth.DefaultOTPMaxAttempts {
+		t.Fatalf("%d guesses were locked out, want %d", lockedOut, racers-auth.DefaultOTPMaxAttempts)
+	}
+
+	record, err := store.LatestOTP(ctx, auth.ChannelEmail, "racer@example.com")
+	if err != nil {
+		t.Fatalf("latest otp: %v", err)
+	}
+	if record.Attempts != auth.DefaultOTPMaxAttempts {
+		t.Fatalf("stored attempts = %d, want exactly %d: the claim raced past the cap", record.Attempts, auth.DefaultOTPMaxAttempts)
+	}
+}
+
+func TestOTPSendIsAtomicUnderConcurrency(t *testing.T) {
+	store, _ := newStore(t)
+	sender := &recordingSender{}
+	service, err := auth.NewOTPService(auth.OTPServiceOptions{
+		Store:       store,
+		EmailSender: sender,
+		SMSSender:   sender,
+		HashCost:    bcrypt.MinCost,
+	})
+	if err != nil {
+		t.Fatalf("new otp service: %v", err)
+	}
+	ctx := context.Background()
+
+	const racers = 20
+	results := make(chan error, racers)
+	for i := 0; i < racers; i++ {
+		go func() {
+			_, err := service.Send(ctx, auth.SendCodeRequest{
+				Channel:     auth.ChannelEmail,
+				Destination: "burst@example.com",
+			})
+			results <- err
+		}()
+	}
+
+	var sent, limited int
+	for i := 0; i < racers; i++ {
+		switch err := <-results; {
+		case err == nil:
+			sent++
+		case errors.Is(err, auth.ErrRateLimited):
+			limited++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if sent != auth.DefaultSendsPerDestination {
+		t.Fatalf("%d sends succeeded, want exactly %d", sent, auth.DefaultSendsPerDestination)
+	}
+	if limited != racers-auth.DefaultSendsPerDestination {
+		t.Fatalf("%d sends were rate limited, want %d", limited, racers-auth.DefaultSendsPerDestination)
+	}
+
+	rows, err := store.CountOTPsByDestination(ctx, auth.ChannelEmail, "burst@example.com", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("count by destination: %v", err)
+	}
+	if rows != int64(auth.DefaultSendsPerDestination) {
+		t.Fatalf("%d rows were inserted, want exactly %d: the rate limit raced past the cap", rows, auth.DefaultSendsPerDestination)
 	}
 }
 

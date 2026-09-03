@@ -93,6 +93,7 @@ func (s *Server) handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		Channel:     channel,
 		Destination: body.Destination,
 		Code:        strings.TrimSpace(body.Code),
+		RequestIP:   requestIP(r),
 	})
 	if err != nil {
 		switch {
@@ -120,6 +121,7 @@ func (s *Server) handleVerifyCode(w http.ResponseWriter, r *http.Request) {
 type refreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 	WorkspaceID  string `json:"workspace_id"`
+	DeviceID     string `json:"device_id"`
 }
 
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +147,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		requestedWorkspace = parsed
 	}
 
-	rotated, err := s.refresh.Rotate(r.Context(), presented)
+	rotated, err := s.refresh.Rotate(r.Context(), presented, body.DeviceID)
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrRefreshReused):

@@ -32,6 +32,7 @@ func (s *memoryStateStore) CreateOAuthState(_ context.Context, params auth.Creat
 		ID:           uuid.New(),
 		Provider:     params.Provider,
 		StateHash:    params.StateHash,
+		NonceHash:    params.NonceHash,
 		CodeVerifier: params.CodeVerifier,
 		RedirectTo:   params.RedirectTo,
 		ExpiresAt:    params.ExpiresAt,
@@ -192,7 +193,7 @@ func TestGoogleCompleteReturnsTheVerifiedProfile(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	completed, err := fixture.authenticator.Complete(context.Background(), started.State, "authorization-code")
+	completed, err := fixture.authenticator.Complete(context.Background(), started.State, "authorization-code", started.Nonce)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -219,10 +220,10 @@ func TestGoogleCompleteAcceptsAStateOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); err != nil {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); !errors.Is(err, auth.ErrStateNotFound) {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); !errors.Is(err, auth.ErrStateNotFound) {
 		t.Fatalf("replay: got %v, want ErrStateNotFound", err)
 	}
 }
@@ -230,11 +231,11 @@ func TestGoogleCompleteAcceptsAStateOnlyOnce(t *testing.T) {
 func TestGoogleCompleteRejectsAnUnknownOrEmptyState(t *testing.T) {
 	fixture := newGoogleFixture(t)
 	for _, state := range []string{"", "  ", "unknown-state"} {
-		if _, err := fixture.authenticator.Complete(context.Background(), state, "code"); !errors.Is(err, auth.ErrStateNotFound) {
+		if _, err := fixture.authenticator.Complete(context.Background(), state, "code", ""); !errors.Is(err, auth.ErrStateNotFound) {
 			t.Fatalf("state %q: got %v, want ErrStateNotFound", state, err)
 		}
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), "state", ""); !errors.Is(err, auth.ErrStateNotFound) {
+	if _, err := fixture.authenticator.Complete(context.Background(), "state", "", ""); !errors.Is(err, auth.ErrStateNotFound) {
 		t.Fatalf("empty code: got %v", err)
 	}
 }
@@ -246,7 +247,7 @@ func TestGoogleCompleteRejectsAnExpiredState(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 	fixture.now = fixture.now.Add(auth.DefaultOAuthStateTTL)
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); !errors.Is(err, auth.ErrStateExpired) {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); !errors.Is(err, auth.ErrStateExpired) {
 		t.Fatalf("got %v, want ErrStateExpired", err)
 	}
 }
@@ -259,7 +260,7 @@ func TestGoogleCompleteRejectsAnUnverifiedEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); !errors.Is(err, auth.ErrEmailNotVerified) {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); !errors.Is(err, auth.ErrEmailNotVerified) {
 		t.Fatalf("got %v, want ErrEmailNotVerified", err)
 	}
 }
@@ -272,7 +273,7 @@ func TestGoogleCompleteAcceptsAStringEmailVerifiedFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); err != nil {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 }
@@ -285,7 +286,7 @@ func TestGoogleCompleteReportsProviderFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); err == nil {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); err == nil {
 		t.Fatal("expected the exchange failure to surface")
 	}
 
@@ -295,8 +296,48 @@ func TestGoogleCompleteReportsProviderFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code"); err == nil {
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); err == nil {
 		t.Fatal("expected the profile failure to surface")
+	}
+}
+
+func TestGoogleCompleteAcceptsTheMatchingNonce(t *testing.T) {
+	fixture := newGoogleFixture(t)
+	started, err := fixture.authenticator.Start(context.Background(), "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if started.Nonce == "" {
+		t.Fatal("no nonce was issued")
+	}
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); err != nil {
+		t.Fatalf("complete with the matching nonce: %v", err)
+	}
+}
+
+func TestGoogleCompleteRejectsAMismatchedNonce(t *testing.T) {
+	fixture := newGoogleFixture(t)
+	started, err := fixture.authenticator.Start(context.Background(), "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", "a-different-browsers-nonce"); !errors.Is(err, auth.ErrStateNonceMismatch) {
+		t.Fatalf("got %v, want ErrStateNonceMismatch", err)
+	}
+
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", started.Nonce); !errors.Is(err, auth.ErrStateNotFound) {
+		t.Fatalf("the state should be single use even after a mismatch: got %v, want ErrStateNotFound", err)
+	}
+}
+
+func TestGoogleCompleteRejectsAMissingNonce(t *testing.T) {
+	fixture := newGoogleFixture(t)
+	started, err := fixture.authenticator.Start(context.Background(), "")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := fixture.authenticator.Complete(context.Background(), started.State, "code", ""); !errors.Is(err, auth.ErrStateNonceMismatch) {
+		t.Fatalf("got %v, want ErrStateNonceMismatch", err)
 	}
 }
 

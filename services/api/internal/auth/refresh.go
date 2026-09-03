@@ -96,7 +96,7 @@ func (m *RefreshManager) Issue(ctx context.Context, userID uuid.UUID, deviceID s
 	return m.mint(ctx, userID, uuid.New(), deviceID)
 }
 
-func (m *RefreshManager) Rotate(ctx context.Context, presented string) (RefreshToken, error) {
+func (m *RefreshManager) Rotate(ctx context.Context, presented, deviceID string) (RefreshToken, error) {
 	record, err := m.lookup(ctx, presented)
 	if err != nil {
 		return RefreshToken{}, err
@@ -123,6 +123,14 @@ func (m *RefreshManager) Rotate(ctx context.Context, presented string) (RefreshT
 		return RefreshToken{}, err
 	}
 	if !claimed {
+		if _, err := m.store.RevokeRefreshFamily(ctx, record.FamilyID, now); err != nil {
+			return RefreshToken{}, err
+		}
+		return RefreshToken{}, ErrRefreshReused
+	}
+
+	presentedDevice := normalizeDeviceID(deviceID)
+	if presentedDevice != "" && presentedDevice != record.DeviceID {
 		if _, err := m.store.RevokeRefreshFamily(ctx, record.FamilyID, now); err != nil {
 			return RefreshToken{}, err
 		}

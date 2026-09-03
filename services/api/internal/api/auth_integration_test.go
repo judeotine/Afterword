@@ -258,7 +258,7 @@ func TestOTPVerifyLocksOutAfterTooManyAttempts(t *testing.T) {
 		wrong = "111111"
 	}
 
-	for i := 0; i < auth.DefaultOTPMaxAttempts-1; i++ {
+	for i := 0; i < auth.DefaultOTPMaxAttempts; i++ {
 		got := harness.do(http.MethodPost, "/v1/auth/otp/verify", map[string]string{
 			"channel": "email", "destination": "person@example.com", "code": wrong,
 		})

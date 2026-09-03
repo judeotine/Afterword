@@ -42,6 +42,11 @@ const (
 	DefaultSendsPerIP          = 30
 	DefaultIPWindow            = time.Hour
 
+	DefaultVerifiesPerDestination  = 10
+	DefaultVerifyDestinationWindow = 10 * time.Minute
+	DefaultVerifiesPerIP           = 60
+	DefaultVerifyIPWindow          = time.Hour
+
 	otpCodeDigits      = 6
 	maxDestinationSize = 254
 )
@@ -73,12 +78,35 @@ type CreateOTPParams struct {
 	CreatedAt   time.Time
 }
 
+type TryCreateOTPParams struct {
+	Channel          Channel
+	Destination      string
+	CodeHash         string
+	ExpiresAt        time.Time
+	RequestIP        string
+	CreatedAt        time.Time
+	DestinationSince time.Time
+	DestinationLimit int64
+	IPSince          time.Time
+	IPLimit          int64
+}
+
+type ClaimOTPAttemptParams struct {
+	ID               uuid.UUID
+	Channel          Channel
+	Destination      string
+	RequestIP        string
+	MaxAttempts      int32
+	DestinationSince time.Time
+	DestinationLimit int64
+	IPSince          time.Time
+	IPLimit          int64
+}
+
 type OTPStore interface {
-	CreateOTP(ctx context.Context, params CreateOTPParams) (OTPRecord, error)
+	TryCreateOTP(ctx context.Context, params TryCreateOTPParams) (OTPRecord, error)
 	LatestOTP(ctx context.Context, channel Channel, destination string) (OTPRecord, error)
-	CountOTPsByDestination(ctx context.Context, channel Channel, destination string, since time.Time) (int64, error)
-	CountOTPsByIP(ctx context.Context, ip string, since time.Time) (int64, error)
-	RecordOTPAttempt(ctx context.Context, id uuid.UUID) (int32, error)
+	ClaimOTPAttempt(ctx context.Context, params ClaimOTPAttemptParams) (int32, error)
 	ConsumeOTP(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 
@@ -99,6 +127,7 @@ type VerifyCodeRequest struct {
 	Channel     Channel
 	Destination string
 	Code        string
+	RequestIP   string
 }
 
 type VerifiedContact struct {
@@ -107,33 +136,41 @@ type VerifiedContact struct {
 }
 
 type OTPServiceOptions struct {
-	Store               OTPStore
-	EmailSender         EmailSender
-	SMSSender           SMSSender
-	ProductName         string
-	TTL                 time.Duration
-	MaxAttempts         int32
-	SendsPerDestination int64
-	DestinationWindow   time.Duration
-	SendsPerIP          int64
-	IPWindow            time.Duration
-	HashCost            int
-	Clock               func() time.Time
+	Store                   OTPStore
+	EmailSender             EmailSender
+	SMSSender               SMSSender
+	ProductName             string
+	TTL                     time.Duration
+	MaxAttempts             int32
+	SendsPerDestination     int64
+	DestinationWindow       time.Duration
+	SendsPerIP              int64
+	IPWindow                time.Duration
+	VerifiesPerDestination  int64
+	VerifyDestinationWindow time.Duration
+	VerifiesPerIP           int64
+	VerifyIPWindow          time.Duration
+	HashCost                int
+	Clock                   func() time.Time
 }
 
 type OTPService struct {
-	store               OTPStore
-	email               EmailSender
-	sms                 SMSSender
-	productName         string
-	ttl                 time.Duration
-	maxAttempts         int32
-	sendsPerDestination int64
-	destinationWindow   time.Duration
-	sendsPerIP          int64
-	ipWindow            time.Duration
-	hashCost            int
-	clock               func() time.Time
+	store                   OTPStore
+	email                   EmailSender
+	sms                     SMSSender
+	productName             string
+	ttl                     time.Duration
+	maxAttempts             int32
+	sendsPerDestination     int64
+	destinationWindow       time.Duration
+	sendsPerIP              int64
+	ipWindow                time.Duration
+	verifiesPerDestination  int64
+	verifyDestinationWindow time.Duration
+	verifiesPerIP           int64
+	verifyIPWindow          time.Duration
+	hashCost                int
+	clock                   func() time.Time
 }
 
 func NewOTPService(options OTPServiceOptions) (*OTPService, error) {
@@ -141,18 +178,22 @@ func NewOTPService(options OTPServiceOptions) (*OTPService, error) {
 		return nil, errors.New("auth: an otp store is required")
 	}
 	service := &OTPService{
-		store:               options.Store,
-		email:               options.EmailSender,
-		sms:                 options.SMSSender,
-		productName:         firstNonEmpty(options.ProductName, "Afterword"),
-		ttl:                 positiveDuration(options.TTL, DefaultOTPTTL),
-		maxAttempts:         positiveInt32(options.MaxAttempts, DefaultOTPMaxAttempts),
-		sendsPerDestination: positiveInt64(options.SendsPerDestination, DefaultSendsPerDestination),
-		destinationWindow:   positiveDuration(options.DestinationWindow, DefaultDestinationWindow),
-		sendsPerIP:          positiveInt64(options.SendsPerIP, DefaultSendsPerIP),
-		ipWindow:            positiveDuration(options.IPWindow, DefaultIPWindow),
-		hashCost:            options.HashCost,
-		clock:               options.Clock,
+		store:                   options.Store,
+		email:                   options.EmailSender,
+		sms:                     options.SMSSender,
+		productName:             firstNonEmpty(options.ProductName, "Afterword"),
+		ttl:                     positiveDuration(options.TTL, DefaultOTPTTL),
+		maxAttempts:             positiveInt32(options.MaxAttempts, DefaultOTPMaxAttempts),
+		sendsPerDestination:     positiveInt64(options.SendsPerDestination, DefaultSendsPerDestination),
+		destinationWindow:       positiveDuration(options.DestinationWindow, DefaultDestinationWindow),
+		sendsPerIP:              positiveInt64(options.SendsPerIP, DefaultSendsPerIP),
+		ipWindow:                positiveDuration(options.IPWindow, DefaultIPWindow),
+		verifiesPerDestination:  positiveInt64(options.VerifiesPerDestination, DefaultVerifiesPerDestination),
+		verifyDestinationWindow: positiveDuration(options.VerifyDestinationWindow, DefaultVerifyDestinationWindow),
+		verifiesPerIP:           positiveInt64(options.VerifiesPerIP, DefaultVerifiesPerIP),
+		verifyIPWindow:          positiveDuration(options.VerifyIPWindow, DefaultVerifyIPWindow),
+		hashCost:                options.HashCost,
+		clock:                   options.Clock,
 	}
 	if service.hashCost <= 0 {
 		service.hashCost = bcrypt.DefaultCost
@@ -174,10 +215,6 @@ func (s *OTPService) Send(ctx context.Context, request SendCodeRequest) (SentCod
 
 	now := s.clock().UTC()
 
-	if err := s.checkRateLimits(ctx, channel, destination, request.RequestIP, now); err != nil {
-		return SentCode{}, err
-	}
-
 	code, err := newNumericCode()
 	if err != nil {
 		return SentCode{}, err
@@ -187,13 +224,17 @@ func (s *OTPService) Send(ctx context.Context, request SendCodeRequest) (SentCod
 		return SentCode{}, fmt.Errorf("hash verification code: %w", err)
 	}
 
-	record, err := s.store.CreateOTP(ctx, CreateOTPParams{
-		Channel:     channel,
-		Destination: destination,
-		CodeHash:    string(hashed),
-		ExpiresAt:   now.Add(s.ttl),
-		RequestIP:   request.RequestIP,
-		CreatedAt:   now,
+	record, err := s.store.TryCreateOTP(ctx, TryCreateOTPParams{
+		Channel:          channel,
+		Destination:      destination,
+		CodeHash:         string(hashed),
+		ExpiresAt:        now.Add(s.ttl),
+		RequestIP:        request.RequestIP,
+		CreatedAt:        now,
+		DestinationSince: now.Add(-s.destinationWindow),
+		DestinationLimit: s.sendsPerDestination,
+		IPSince:          now.Add(-s.ipWindow),
+		IPLimit:          s.sendsPerIP,
 	})
 	if err != nil {
 		return SentCode{}, err
@@ -225,23 +266,26 @@ func (s *OTPService) Verify(ctx context.Context, request VerifyCodeRequest) (Ver
 		return VerifiedContact{}, err
 	}
 
-	if record.Attempts >= s.maxAttempts {
-		return VerifiedContact{}, ErrTooManyAttempts
-	}
-
 	now := s.clock().UTC()
 	if !now.Before(record.ExpiresAt) {
 		return VerifiedContact{}, ErrCodeExpired
 	}
 
+	if _, err := s.store.ClaimOTPAttempt(ctx, ClaimOTPAttemptParams{
+		ID:               record.ID,
+		Channel:          channel,
+		Destination:      destination,
+		RequestIP:        request.RequestIP,
+		MaxAttempts:      s.maxAttempts,
+		DestinationSince: now.Add(-s.verifyDestinationWindow),
+		DestinationLimit: s.verifiesPerDestination,
+		IPSince:          now.Add(-s.verifyIPWindow),
+		IPLimit:          s.verifiesPerIP,
+	}); err != nil {
+		return VerifiedContact{}, err
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(record.CodeHash), []byte(request.Code)); err != nil {
-		attempts, attemptErr := s.store.RecordOTPAttempt(ctx, record.ID)
-		if attemptErr != nil {
-			return VerifiedContact{}, attemptErr
-		}
-		if attempts >= s.maxAttempts {
-			return VerifiedContact{}, ErrTooManyAttempts
-		}
 		return VerifiedContact{}, ErrCodeMismatch
 	}
 
@@ -250,28 +294,6 @@ func (s *OTPService) Verify(ctx context.Context, request VerifyCodeRequest) (Ver
 	}
 
 	return VerifiedContact{Channel: channel, Destination: destination}, nil
-}
-
-func (s *OTPService) checkRateLimits(ctx context.Context, channel Channel, destination, ip string, now time.Time) error {
-	perDestination, err := s.store.CountOTPsByDestination(ctx, channel, destination, now.Add(-s.destinationWindow))
-	if err != nil {
-		return err
-	}
-	if perDestination >= s.sendsPerDestination {
-		return fmt.Errorf("%w: too many codes for that destination", ErrRateLimited)
-	}
-
-	if ip == "" {
-		return nil
-	}
-	perIP, err := s.store.CountOTPsByIP(ctx, ip, now.Add(-s.ipWindow))
-	if err != nil {
-		return err
-	}
-	if perIP >= s.sendsPerIP {
-		return fmt.Errorf("%w: too many codes from that address", ErrRateLimited)
-	}
-	return nil
 }
 
 func (s *OTPService) senderFor(channel Channel) error {

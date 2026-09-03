@@ -296,7 +296,7 @@ func TestOTPVerifyLocksOutAfterTheAttemptLimit(t *testing.T) {
 	fixture.send(t, auth.ChannelEmail, "person@example.com", "")
 	code := fixture.lastEmailedCode(t)
 
-	for i := 0; i < auth.DefaultOTPMaxAttempts-1; i++ {
+	for i := 0; i < auth.DefaultOTPMaxAttempts; i++ {
 		if _, err := fixture.service.Verify(context.Background(), auth.VerifyCodeRequest{
 			Channel:     auth.ChannelEmail,
 			Destination: "person@example.com",
@@ -311,7 +311,7 @@ func TestOTPVerifyLocksOutAfterTheAttemptLimit(t *testing.T) {
 		Destination: "person@example.com",
 		Code:        wrongCode(code),
 	}); !errors.Is(err, auth.ErrTooManyAttempts) {
-		t.Fatalf("final wrong attempt: got %v, want ErrTooManyAttempts", err)
+		t.Fatalf("attempt beyond the limit: got %v, want ErrTooManyAttempts", err)
 	}
 
 	if _, err := fixture.service.Verify(context.Background(), auth.VerifyCodeRequest{

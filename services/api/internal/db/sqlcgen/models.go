@@ -171,6 +171,8 @@ type Meeting struct {
 	TranscriptObject *string            `json:"transcript_object"`
 	Status           string             `json:"status"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	AudioBytes       *int64             `json:"audio_bytes"`
+	TranscriptBytes  *int64             `json:"transcript_bytes"`
 }
 
 type Membership struct {

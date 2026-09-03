@@ -15,6 +15,7 @@ import (
 )
 
 type Store struct {
+	pool    *pgxpool.Pool
 	queries *sqlcgen.Queries
 }
 
@@ -22,7 +23,25 @@ func NewStore(pool *pgxpool.Pool) (*Store, error) {
 	if pool == nil {
 		return nil, errors.New("auth: a database pool is required")
 	}
-	return &Store{queries: sqlcgen.New(pool)}, nil
+	return &Store{pool: pool, queries: sqlcgen.New(pool)}, nil
+}
+
+func (s *Store) inTx(ctx context.Context, fn func(*sqlcgen.Queries) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	if err := fn(s.queries.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit transaction: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CreateOTP(ctx context.Context, params CreateOTPParams) (OTPRecord, error) {
@@ -38,6 +57,49 @@ func (s *Store) CreateOTP(ctx context.Context, params CreateOTPParams) (OTPRecor
 		return OTPRecord{}, fmt.Errorf("create verification code: %w", err)
 	}
 	return otpFromRow(row), nil
+}
+
+func (s *Store) TryCreateOTP(ctx context.Context, params TryCreateOTPParams) (OTPRecord, error) {
+	var record OTPRecord
+	err := s.inTx(ctx, func(q *sqlcgen.Queries) error {
+		if err := q.LockAuthOTPDestination(ctx, params.Destination); err != nil {
+			return fmt.Errorf("lock destination: %w", err)
+		}
+		row, err := q.TryCreateAuthOTP(ctx, sqlcgen.TryCreateAuthOTPParams{
+			Channel:          string(params.Channel),
+			Destination:      params.Destination,
+			CodeHash:         params.CodeHash,
+			ExpiresAt:        timestamp(params.ExpiresAt),
+			RequestIp:        params.RequestIP,
+			CreatedAt:        timestamp(params.CreatedAt),
+			DestinationSince: timestamp(params.DestinationSince),
+			DestinationLimit: params.DestinationLimit,
+			IpSince:          timestamp(params.IPSince),
+			IpLimit:          params.IPLimit,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrRateLimited
+			}
+			return fmt.Errorf("create verification code: %w", err)
+		}
+		record = OTPRecord{
+			ID:          row.ID,
+			Channel:     Channel(row.Channel),
+			Destination: row.Destination,
+			CodeHash:    row.CodeHash,
+			ExpiresAt:   moment(row.ExpiresAt),
+			Attempts:    row.Attempts,
+			ConsumedAt:  optionalMoment(row.ConsumedAt),
+			RequestIP:   row.RequestIp,
+			CreatedAt:   moment(row.CreatedAt),
+		}
+		return nil
+	})
+	if err != nil {
+		return OTPRecord{}, err
+	}
+	return record, nil
 }
 
 func (s *Store) LatestOTP(ctx context.Context, channel Channel, destination string) (OTPRecord, error) {
@@ -80,13 +142,34 @@ func (s *Store) CountOTPsByIP(ctx context.Context, ip string, since time.Time) (
 	return count, nil
 }
 
-func (s *Store) RecordOTPAttempt(ctx context.Context, id uuid.UUID) (int32, error) {
-	attempts, err := s.queries.RecordAuthOTPAttempt(ctx, id)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrCodeNotFound
+func (s *Store) ClaimOTPAttempt(ctx context.Context, params ClaimOTPAttemptParams) (int32, error) {
+	var attempts int32
+	err := s.inTx(ctx, func(q *sqlcgen.Queries) error {
+		if err := q.LockAuthOTPDestination(ctx, params.Destination); err != nil {
+			return fmt.Errorf("lock destination: %w", err)
 		}
-		return 0, fmt.Errorf("record verification attempt: %w", err)
+		claimed, err := q.ClaimAuthOTPAttempt(ctx, sqlcgen.ClaimAuthOTPAttemptParams{
+			ID:               params.ID,
+			MaxAttempts:      params.MaxAttempts,
+			Channel:          string(params.Channel),
+			Destination:      params.Destination,
+			DestinationSince: timestamp(params.DestinationSince),
+			DestinationLimit: params.DestinationLimit,
+			RequestIp:        params.RequestIP,
+			IpSince:          timestamp(params.IPSince),
+			IpLimit:          params.IPLimit,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrTooManyAttempts
+			}
+			return fmt.Errorf("claim verification attempt: %w", err)
+		}
+		attempts = claimed
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	return attempts, nil
 }
@@ -184,6 +267,7 @@ func (s *Store) CreateOAuthState(ctx context.Context, params CreateOAuthStatePar
 	row, err := s.queries.CreateOAuthState(ctx, sqlcgen.CreateOAuthStateParams{
 		Provider:     params.Provider,
 		StateHash:    params.StateHash,
+		NonceHash:    params.NonceHash,
 		CodeVerifier: params.CodeVerifier,
 		RedirectTo:   params.RedirectTo,
 		ExpiresAt:    timestamp(params.ExpiresAt),
@@ -251,6 +335,7 @@ func oauthStateFromRow(row sqlcgen.OauthState) OAuthStateRecord {
 		ID:           row.ID,
 		Provider:     row.Provider,
 		StateHash:    row.StateHash,
+		NonceHash:    row.NonceHash,
 		CodeVerifier: row.CodeVerifier,
 		RedirectTo:   row.RedirectTo,
 		ExpiresAt:    moment(row.ExpiresAt),
