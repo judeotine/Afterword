@@ -31,7 +31,7 @@ modules:
       # workflow's checksums output or `sha256sum afterword_0.4.0_amd64.deb`).
       - type: file
         url: https://github.com/judeotine/Afterword/releases/download/v0.4.0/afterword_0.4.0_amd64.deb
-        sha256: 0000000000000000000000000000000000000000000000000000000000000000000000000000  # PLACEHOLDER - paste real sha256 from release.yml before building/submitting
+        sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # PLACEHOLDER - paste real sha256 from release.yml before building/submitting
       - type: file
         path: com.afterword.app.desktop
       - type: file
