@@ -22,6 +22,9 @@ Recording without telling people is not a feature we ship.
   order; a change that starts the recorder first is a bug, not an optimisation.
 - The message names the bot, the person it is attending for, what is shared
   with them, a privacy-policy link, and how to object (`src/consent.ts`).
+- That link comes from `PRIVACY_URL`, which is required and has no default: the
+  service refuses to start without one, so a deployment can never announce a
+  policy that does not describe it.
 - The bot joins muted, with its camera off, under a name that says what it is.
 - **Do not deploy this externally until the disclosure flow has been reviewed.**
   Jurisdictions differ on one-party vs all-party consent, and the in-meeting
@@ -108,7 +111,7 @@ means the audio could not be decoded, 3 means the model is missing.
 | `TRANSCRIBE_ENGINE` | `whisper` | `whisper` or `parakeet` |
 | `TRANSCRIBE_MODEL` | `base` | Model name passed to the CLI |
 | `MODELS_DIR` | `./models` | Model directory passed to the CLI |
-| `PRIVACY_URL` | Afterword `PRIVACY_POLICY.md` on GitHub | Link included in the consent notice |
+| `PRIVACY_URL` | **required** | Link included in the consent notice; the service refuses to start without it |
 | `HEADLESS` | `true` | Run Chromium headless (`false` to watch it locally) |
 | `PULSE_SINK_NAME` | `afterword_sink` | Name of the PulseAudio null sink |
 

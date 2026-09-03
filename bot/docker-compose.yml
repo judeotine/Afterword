@@ -13,6 +13,9 @@ services:
       - "127.0.0.1:8787:8787"
     environment:
       BOT_NAME: Afterword Notetaker
+      # Required, no default: the consent notice announces this link to every
+      # participant, so point it at the policy for *this* deployment.
+      PRIVACY_URL: https://github.com/judeotine/Afterword/blob/main/PRIVACY_POLICY.md
       HEADLESS: "true"
       RECORDINGS_DIR: /app/recordings
       MODELS_DIR: /app/models

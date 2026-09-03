@@ -21,10 +21,12 @@ export const configSchema = z.object({
   TRANSCRIBE_ENGINE: z.enum(['whisper', 'parakeet']).default('whisper'),
   TRANSCRIBE_MODEL: z.string().min(1).default('base'),
   MODELS_DIR: z.string().min(1).default('./models'),
-  PRIVACY_URL: z
-    .string()
-    .url()
-    .default('https://github.com/judeotine/Afterword/blob/main/PRIVACY_POLICY.md'),
+  /**
+   * Link to the privacy policy the consent notice reads out. Required, with no
+   * default: every participant is pointed at this URL, so a deployment has to
+   * name a policy that actually describes it.
+   */
+  PRIVACY_URL: z.string().url(),
   /** Run Chromium headless. Set to false to watch the bot locally. */
   HEADLESS: booleanish.default('true'),
   /** Name of the PulseAudio null sink the browser plays into. */
