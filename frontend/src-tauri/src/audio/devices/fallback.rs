@@ -51,7 +51,9 @@ use crate::audio::device_detection::InputDeviceKind;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```no_run
+/// use app_lib::audio::devices::fallback::get_safe_recording_devices_macos;
+///
 /// // When AirPods are default mic, built-in speaker is default output:
 /// let (mic, system) = get_safe_recording_devices_macos()?;
 ///
@@ -59,6 +61,7 @@ use crate::audio::device_detection::InputDeviceKind;
 /// // "🎧 Bluetooth microphone detected: AirPods Pro"
 /// // "→ Overriding to stable built-in: MacBook Pro Microphone"
 /// // "✅ Using wired speaker: MacBook Pro Speakers"
+/// # Ok::<(), anyhow::Error>(())
 /// ```
 #[cfg(target_os = "macos")]
 pub fn get_safe_recording_devices_macos() -> Result<(Option<AudioDevice>, Option<AudioDevice>)> {
