@@ -8,7 +8,6 @@ import { Button } from './ui/button';
 import {
     Tooltip,
     TooltipContent,
-    TooltipProvider,
     TooltipTrigger,
 } from './ui/tooltip';
 import { useAccount } from '@/hooks/useAccount';
@@ -114,7 +113,6 @@ export function About() {
                 </div>
             </div>
 
-            {/* Plan & credits - Compact */}
             <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center space-y-3">
                 {account.mode === 'local' ? (
                     <>
@@ -131,30 +129,28 @@ export function About() {
                         </p>
                     </>
                 )}
-                <TooltipProvider>
-                    <div className="flex items-center justify-center gap-2">
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <span tabIndex={0}>
-                                    <Button disabled className="text-xs">
-                                        Sign in
-                                    </Button>
-                                </span>
-                            </TooltipTrigger>
-                            <TooltipContent>Coming soon</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <span tabIndex={0}>
-                                    <Button disabled variant="outline" className="text-xs">
-                                        Top up credits
-                                    </Button>
-                                </span>
-                            </TooltipTrigger>
-                            <TooltipContent>Coming soon</TooltipContent>
-                        </Tooltip>
-                    </div>
-                </TooltipProvider>
+                <div className="flex items-center justify-center gap-2">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span tabIndex={0}>
+                                <Button disabled className="text-xs">
+                                    Sign in
+                                </Button>
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Coming soon</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span tabIndex={0}>
+                                <Button disabled variant="outline" className="text-xs">
+                                    Top up credits
+                                </Button>
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Coming soon</TooltipContent>
+                    </Tooltip>
+                </div>
             </div>
 
             {/* Footer - Compact */}
