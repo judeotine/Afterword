@@ -13,9 +13,8 @@ type Pinger interface {
 }
 
 type healthResponse struct {
-	Status  string `json:"status"`
-	DB      string `json:"db"`
-	Version string `json:"version,omitempty"`
+	Status string `json:"status"`
+	DB     string `json:"db"`
 }
 
 func Health(pinger Pinger, timeout time.Duration) http.HandlerFunc {

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/hlog"
 )
@@ -13,12 +12,9 @@ func LoggerContext(logger zerolog.Logger) func(http.Handler) http.Handler {
 	return hlog.NewHandler(logger)
 }
 
-const RequestIDHeader = "X-Request-Id"
-
 func RequestIDContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if id := middleware.GetReqID(r.Context()); id != "" {
-			w.Header().Set(RequestIDHeader, id)
+		if id := RequestIDFromContext(r.Context()); id != "" {
 			hlog.FromRequest(r).UpdateContext(func(c zerolog.Context) zerolog.Context {
 				return c.Str("request_id", id)
 			})

@@ -171,3 +171,51 @@ func TestRouterTimesOutSlowHandlers(t *testing.T) {
 		t.Errorf("body = %s", got)
 	}
 }
+
+func TestRouterWithoutAnAllowedOriginRejectsEveryOrigin(t *testing.T) {
+	router := NewRouter(RouterOptions{
+		Logger:         zerolog.New(io.Discard),
+		DB:             &stubPinger{},
+		RequestTimeout: time.Second,
+	})
+
+	for _, origin := range []string{"https://app.afterword.io", "https://evil.example", "null"} {
+		request := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
+		request.Header.Set("Origin", origin)
+		request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+
+		if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("Access-Control-Allow-Origin = %q for origin %q, want empty", got, origin)
+		}
+	}
+}
+
+func TestRouterEchoesAWellFormedRequestID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set(RequestIDHeader, "caddy-0001")
+	recorder := httptest.NewRecorder()
+
+	newTestRouter(t, &stubPinger{}).ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get(RequestIDHeader); got != "caddy-0001" {
+		t.Errorf("X-Request-Id = %q, want the inbound id", got)
+	}
+}
+
+func TestRouterRejectsAMalformedRequestID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set(RequestIDHeader, "not a valid id")
+	recorder := httptest.NewRecorder()
+
+	newTestRouter(t, &stubPinger{}).ServeHTTP(recorder, request)
+
+	got := recorder.Header().Get(RequestIDHeader)
+	if got == "not a valid id" {
+		t.Fatal("router echoed a malformed request id")
+	}
+	if !requestIDPattern.MatchString(got) {
+		t.Errorf("X-Request-Id = %q, want a generated id", got)
+	}
+}
