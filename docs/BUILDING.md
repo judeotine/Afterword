@@ -20,14 +20,22 @@ If you're new to building on Linux, start here. These simple commands work for m
 ```bash
 # Ubuntu/Debian
 sudo apt update
-sudo apt install build-essential cmake git
+sudo apt install build-essential cmake git libpulse-dev libasound2-dev
 
 # Fedora/RHEL
-sudo dnf install gcc-c++ cmake git
+sudo dnf install gcc-c++ cmake git pulseaudio-libs-devel alsa-lib-devel
 
 # Arch Linux
-sudo pacman -S base-devel cmake git
+sudo pacman -S base-devel cmake git libpulse alsa-lib
 ```
+
+> 🔊 **Audio dependencies:** `libpulse-dev` (PulseAudio client headers) and
+> `libasound2-dev` (ALSA headers) are **required**. Afterword captures the
+> microphone through ALSA/cpal and system audio through the PulseAudio/PipeWire
+> monitor source of the default sink. PipeWire users need its PulseAudio
+> compatibility layer (`pipewire-pulse`), which most distributions install by
+> default. See [TESTING_LINUX_AUDIO.md](TESTING_LINUX_AUDIO.md) for how to verify
+> system-audio capture works on your machine.
 
 #### 2. Build and Run
 

@@ -1,8 +1,12 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+#[cfg(not(target_os = "linux"))]
+use anyhow::anyhow;
 use cpal::traits::{HostTrait, DeviceTrait};
 use log::{info, warn};
 
 use super::configuration::{AudioDevice, DeviceType};
+#[cfg(target_os = "linux")]
+use super::configuration::LINUX_SYSTEM_AUDIO_DEVICE_NAME;
 
 /// Get the default output (speaker/system audio) device for the system
 pub fn default_output_device() -> Result<AudioDevice> {
@@ -35,7 +39,17 @@ pub fn default_output_device() -> Result<AudioDevice> {
         return Ok(AudioDevice::new(device.name()?, DeviceType::Output));
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        // System audio comes from the PulseAudio/PipeWire monitor of the default
+        // sink, which follows the default output device automatically.
+        return Ok(AudioDevice::new(
+            LINUX_SYSTEM_AUDIO_DEVICE_NAME.to_string(),
+            DeviceType::Output,
+        ));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let host = cpal::default_host();
         let device = host

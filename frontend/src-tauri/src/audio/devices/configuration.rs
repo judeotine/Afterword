@@ -46,6 +46,14 @@ pub struct DeviceControl {
     pub is_paused: bool,
 }
 
+/// Name of the synthetic Linux system-audio device.
+///
+/// On Linux system audio is captured from the PulseAudio/PipeWire monitor source
+/// of the default sink rather than from a cpal device, so this entry is always
+/// offered in the device list and is never looked up in cpal. The frontend can
+/// rely on this exact string.
+pub const LINUX_SYSTEM_AUDIO_DEVICE_NAME: &str = "System Audio (PulseAudio/PipeWire)";
+
 #[derive(Clone, Eq, PartialEq, Hash, Serialize, Debug, Deserialize)]
 pub enum DeviceType {
     Input,
@@ -154,7 +162,16 @@ pub async fn get_device_and_config(
 
                 #[cfg(target_os = "linux")]
                 {
-                    // For Linux, we use PulseAudio monitor sources for system audio
+                    // The synthetic system-audio device is handled by the PulseAudio
+                    // backend in `audio::stream`, never by cpal.
+                    if audio_device.name == LINUX_SYSTEM_AUDIO_DEVICE_NAME {
+                        return Err(anyhow!(
+                            "'{}' is captured via PulseAudio/PipeWire, not cpal",
+                            LINUX_SYSTEM_AUDIO_DEVICE_NAME
+                        ));
+                    }
+
+                    // Otherwise fall back to ALSA monitor sources exposed through cpal
                     if let Ok(pulse_host) = cpal::host_from_id(cpal::HostId::Alsa) {
                         for device in pulse_host.input_devices()? {
                             if let Ok(name) = device.name() {
@@ -172,5 +189,28 @@ pub async fn get_device_and_config(
         }
 
         Err(anyhow!("Device not found: {}", audio_device.name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The frontend and the Linux capture backend both key off this exact string,
+    /// so it must stay stable on every platform.
+    #[test]
+    fn linux_system_audio_device_name_is_exported_and_stable() {
+        assert_eq!(
+            LINUX_SYSTEM_AUDIO_DEVICE_NAME,
+            "System Audio (PulseAudio/PipeWire)"
+        );
+
+        // It must parse as an output device via the standard naming convention.
+        let device = AudioDevice::new(
+            LINUX_SYSTEM_AUDIO_DEVICE_NAME.to_string(),
+            DeviceType::Output,
+        );
+        assert_eq!(device.device_type, DeviceType::Output);
+        assert_eq!(device.name, LINUX_SYSTEM_AUDIO_DEVICE_NAME);
     }
 }

@@ -5,14 +5,17 @@ use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
 
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use futures_channel::mpsc;
 #[cfg(target_os = "macos")]
 use super::core_audio::CoreAudioCapture;
-#[cfg(target_os = "macos")]
+#[cfg(target_os = "linux")]
+use super::pulse_monitor::PulseMonitorCapture;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use log::info;
 
-/// System audio capture using Core Audio tap (macOS) or CPAL (other platforms)
+/// System audio capture using a Core Audio tap (macOS), the PulseAudio/PipeWire
+/// default monitor source (Linux), or CPAL (other platforms)
 pub struct SystemAudioCapture {
     _host: cpal::Host,
 }
@@ -96,10 +99,66 @@ impl SystemAudioCapture {
             })
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
-            // For non-macOS platforms, you would implement WASAPI/ALSA loopback here
-            anyhow::bail!("System audio capture not yet implemented for this platform")
+            info!("Starting PulseAudio/PipeWire monitor capture (Linux)");
+            // Record the monitor source of the default sink
+            let pulse = PulseMonitorCapture::new(None)?;
+            let pulse_stream = pulse.stream()?;
+            let sample_rate = pulse_stream.sample_rate();
+
+            // Convert PulseMonitorStream to SystemAudioStream
+            let (tx, rx) = mpsc::unbounded::<Vec<f32>>();
+            let (drop_tx, drop_rx) = std::sync::mpsc::channel::<()>();
+
+            // Spawn task to forward PulseAudio samples
+            tokio::spawn(async move {
+                use futures_util::StreamExt;
+                let mut stream = pulse_stream;
+                let mut buffer = Vec::new();
+                let chunk_size = 1024;
+
+                loop {
+                    // Check if we should stop
+                    if drop_rx.try_recv().is_ok() {
+                        break;
+                    }
+
+                    match stream.next().await {
+                        Some(sample) => {
+                            buffer.push(sample);
+                            if buffer.len() >= chunk_size {
+                                if tx.unbounded_send(buffer.clone()).is_err() {
+                                    break;
+                                }
+                                buffer.clear();
+                            }
+                        }
+                        None => break,
+                    }
+                }
+
+                // Send any remaining samples
+                if !buffer.is_empty() {
+                    let _ = tx.unbounded_send(buffer);
+                }
+            });
+
+            let receiver = rx.map(futures_util::stream::iter).flatten();
+
+            info!("PulseAudio/PipeWire monitor capture started successfully");
+
+            Ok(SystemAudioStream {
+                drop_tx,
+                sample_rate,
+                receiver: Box::pin(receiver),
+            })
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            // Windows loopback capture (WASAPI) is not implemented yet
+            anyhow::bail!("System audio capture not yet implemented on Windows")
         }
     }
 
