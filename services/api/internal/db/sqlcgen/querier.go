@@ -19,6 +19,8 @@ type Querier interface {
 	CountAuthOTPsByDestination(ctx context.Context, arg CountAuthOTPsByDestinationParams) (int64, error)
 	CountAuthOTPsByIP(ctx context.Context, arg CountAuthOTPsByIPParams) (int64, error)
 	CountChildFolders(ctx context.Context, arg CountChildFoldersParams) (int64, error)
+	CountOTPVerifyAttemptsByDestination(ctx context.Context, arg CountOTPVerifyAttemptsByDestinationParams) (int64, error)
+	CountOTPVerifyAttemptsByIP(ctx context.Context, arg CountOTPVerifyAttemptsByIPParams) (int64, error)
 	CountSegmentsForMeeting(ctx context.Context, arg CountSegmentsForMeetingParams) (int64, error)
 	CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
@@ -36,6 +38,7 @@ type Querier interface {
 	CreateMeeting(ctx context.Context, arg CreateMeetingParams) (Meeting, error)
 	CreateMembership(ctx context.Context, arg CreateMembershipParams) (Membership, error)
 	CreateOAuthState(ctx context.Context, arg CreateOAuthStateParams) (OauthState, error)
+	CreateOTPVerifyAttempt(ctx context.Context, arg CreateOTPVerifyAttemptParams) error
 	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
 	CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (RefreshToken, error)
 	CreateShareLink(ctx context.Context, arg CreateShareLinkParams) (ShareLink, error)
@@ -136,7 +139,10 @@ type Querier interface {
 	ListWorkspaceMembersWithUsers(ctx context.Context, workspaceID uuid.UUID) ([]ListWorkspaceMembersWithUsersRow, error)
 	ListWorkspacesByUser(ctx context.Context, arg ListWorkspacesByUserParams) ([]Workspace, error)
 	ListWorkspacesWithRoleByUser(ctx context.Context, userID uuid.UUID) ([]ListWorkspacesWithRoleByUserRow, error)
-	LockAuthOTPDestination(ctx context.Context, destination string) error
+	LockAuthOTPSendDestination(ctx context.Context, destination string) error
+	LockAuthOTPSendIP(ctx context.Context, ip string) error
+	LockAuthOTPVerifyDestination(ctx context.Context, destination string) error
+	LockAuthOTPVerifyIP(ctx context.Context, ip string) error
 	LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID) (uuid.UUID, error)
 	LockShareLinkIP(ctx context.Context, requestIp string) error
 	MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) (int64, error)
@@ -146,7 +152,6 @@ type Querier interface {
 	RevokeWorkspaceInvite(ctx context.Context, arg RevokeWorkspaceInviteParams) (int64, error)
 	SetMeetingLinkSharing(ctx context.Context, arg SetMeetingLinkSharingParams) (Meeting, error)
 	TouchHealthcheck(ctx context.Context) (Healthcheck, error)
-	TryCreateAuthOTP(ctx context.Context, arg TryCreateAuthOTPParams) (AuthOtp, error)
 	TryRecordShareLinkRequest(ctx context.Context, arg TryRecordShareLinkRequestParams) (uuid.UUID, error)
 	UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (ApiToken, error)
 	UpdateAuditLogEntry(ctx context.Context, arg UpdateAuditLogEntryParams) (AuditLog, error)

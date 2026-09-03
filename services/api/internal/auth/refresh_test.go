@@ -409,6 +409,43 @@ func TestRefreshRotateIgnoresAnUnassertedDevice(t *testing.T) {
 	}
 }
 
+func TestRefreshRotateAdoptsAnEmptyStoredDevice(t *testing.T) {
+	fixture := newRefreshFixture(t)
+	issued, err := fixture.manager.Issue(context.Background(), uuid.New(), "")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	adopted, err := fixture.manager.Rotate(context.Background(), issued.Token, "desktop-1")
+	if err != nil {
+		t.Fatalf("rotate onto a legacy empty device binding: %v", err)
+	}
+	if adopted.DeviceID != "desktop-1" {
+		t.Fatalf("device %q, want the presented device to be adopted", adopted.DeviceID)
+	}
+
+	if _, err := fixture.manager.Rotate(context.Background(), adopted.Token, "desktop-1"); err != nil {
+		t.Fatalf("rotate with the now-adopted device: %v", err)
+	}
+}
+
+func TestRefreshRotateStillRejectsAMismatchAfterAdoption(t *testing.T) {
+	fixture := newRefreshFixture(t)
+	issued, err := fixture.manager.Issue(context.Background(), uuid.New(), "")
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	adopted, err := fixture.manager.Rotate(context.Background(), issued.Token, "desktop-1")
+	if err != nil {
+		t.Fatalf("rotate onto a legacy empty device binding: %v", err)
+	}
+
+	if _, err := fixture.manager.Rotate(context.Background(), adopted.Token, "someone-elses-device"); !errors.Is(err, auth.ErrRefreshReused) {
+		t.Fatalf("got %v, want ErrRefreshReused", err)
+	}
+}
+
 func TestNewRefreshManagerRequiresAStore(t *testing.T) {
 	if _, err := auth.NewRefreshManager(auth.RefreshManagerOptions{}); err == nil {
 		t.Fatal("expected an error when no store is given")

@@ -5,6 +5,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -45,13 +46,17 @@ func TestStoreOTPLifecycle(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
-	record, err := store.CreateOTP(ctx, auth.CreateOTPParams{
-		Channel:     auth.ChannelEmail,
-		Destination: "person@example.com",
-		CodeHash:    "hash-1",
-		ExpiresAt:   now.Add(10 * time.Minute),
-		RequestIP:   "203.0.113.7",
-		CreatedAt:   now,
+	record, err := store.TryCreateOTP(ctx, auth.TryCreateOTPParams{
+		Channel:          auth.ChannelEmail,
+		Destination:      "person@example.com",
+		CodeHash:         "hash-1",
+		ExpiresAt:        now.Add(10 * time.Minute),
+		RequestIP:        "203.0.113.7",
+		CreatedAt:        now,
+		DestinationSince: now.Add(-auth.DefaultDestinationWindow),
+		DestinationLimit: auth.DefaultSendsPerDestination,
+		IPSince:          now.Add(-auth.DefaultIPWindow),
+		IPLimit:          auth.DefaultSendsPerIP,
 	})
 	if err != nil {
 		t.Fatalf("create otp: %v", err)
@@ -70,9 +75,9 @@ func TestStoreOTPLifecycle(t *testing.T) {
 
 	attempts, err := store.ClaimOTPAttempt(ctx, auth.ClaimOTPAttemptParams{
 		ID:               record.ID,
-		Channel:          auth.ChannelEmail,
 		Destination:      "person@example.com",
 		MaxAttempts:      auth.DefaultOTPMaxAttempts,
+		Now:              now,
 		DestinationSince: now.Add(-auth.DefaultVerifyDestinationWindow),
 		DestinationLimit: auth.DefaultVerifiesPerDestination,
 		IPSince:          now.Add(-auth.DefaultVerifyIPWindow),
@@ -93,53 +98,40 @@ func TestStoreOTPLifecycle(t *testing.T) {
 	}
 }
 
-func TestStoreOTPCounters(t *testing.T) {
+func TestStoreDeleteExpiredOTPs(t *testing.T) {
 	store, _ := newStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
 	for i := 0; i < 3; i++ {
-		if _, err := store.CreateOTP(ctx, auth.CreateOTPParams{
-			Channel:     auth.ChannelEmail,
-			Destination: "person@example.com",
-			CodeHash:    "hash",
-			ExpiresAt:   now.Add(10 * time.Minute),
-			RequestIP:   "203.0.113.7",
-			CreatedAt:   now.Add(-time.Duration(i) * time.Minute),
+		if _, err := store.TryCreateOTP(ctx, auth.TryCreateOTPParams{
+			Channel:          auth.ChannelEmail,
+			Destination:      "person@example.com",
+			CodeHash:         "hash",
+			ExpiresAt:        now.Add(10 * time.Minute),
+			RequestIP:        "203.0.113.7",
+			CreatedAt:        now.Add(-time.Duration(i) * time.Minute),
+			DestinationSince: now.Add(-time.Hour),
+			DestinationLimit: 100,
+			IPSince:          now.Add(-time.Hour),
+			IPLimit:          100,
 		}); err != nil {
-			t.Fatalf("create otp: %v", err)
+			t.Fatalf("create otp %d: %v", i, err)
 		}
 	}
-	if _, err := store.CreateOTP(ctx, auth.CreateOTPParams{
-		Channel:     auth.ChannelEmail,
-		Destination: "person@example.com",
-		CodeHash:    "old",
-		ExpiresAt:   now.Add(-90 * time.Minute),
-		RequestIP:   "203.0.113.7",
-		CreatedAt:   now.Add(-2 * time.Hour),
+	if _, err := store.TryCreateOTP(ctx, auth.TryCreateOTPParams{
+		Channel:          auth.ChannelEmail,
+		Destination:      "person@example.com",
+		CodeHash:         "old",
+		ExpiresAt:        now.Add(-90 * time.Minute),
+		RequestIP:        "203.0.113.7",
+		CreatedAt:        now.Add(-2 * time.Hour),
+		DestinationSince: now.Add(-3 * time.Hour),
+		DestinationLimit: 100,
+		IPSince:          now.Add(-3 * time.Hour),
+		IPLimit:          100,
 	}); err != nil {
 		t.Fatalf("create old otp: %v", err)
-	}
-
-	byDestination, err := store.CountOTPsByDestination(ctx, auth.ChannelEmail, "person@example.com", now.Add(-10*time.Minute))
-	if err != nil {
-		t.Fatalf("count by destination: %v", err)
-	}
-	if byDestination != 3 {
-		t.Fatalf("count by destination = %d, want 3", byDestination)
-	}
-
-	byIP, err := store.CountOTPsByIP(ctx, "203.0.113.7", now.Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("count by ip: %v", err)
-	}
-	if byIP != 3 {
-		t.Fatalf("count by ip = %d, want 3", byIP)
-	}
-
-	empty, err := store.CountOTPsByIP(ctx, "", now.Add(-time.Hour))
-	if err != nil || empty != 0 {
-		t.Fatalf("count by empty ip = %d, %v", empty, err)
 	}
 
 	removed, err := store.DeleteExpiredOTPs(ctx, now)
@@ -357,7 +349,7 @@ func TestOTPVerifyAttemptClaimIsAtomicUnderConcurrency(t *testing.T) {
 }
 
 func TestOTPSendIsAtomicUnderConcurrency(t *testing.T) {
-	store, _ := newStore(t)
+	store, pool := newStore(t)
 	sender := &recordingSender{}
 	service, err := auth.NewOTPService(auth.OTPServiceOptions{
 		Store:       store,
@@ -400,12 +392,156 @@ func TestOTPSendIsAtomicUnderConcurrency(t *testing.T) {
 		t.Fatalf("%d sends were rate limited, want %d", limited, racers-auth.DefaultSendsPerDestination)
 	}
 
-	rows, err := store.CountOTPsByDestination(ctx, auth.ChannelEmail, "burst@example.com", time.Now().Add(-time.Hour))
-	if err != nil {
-		t.Fatalf("count by destination: %v", err)
-	}
+	rows := countAuthOTPRows(t, pool, "burst@example.com")
 	if rows != int64(auth.DefaultSendsPerDestination) {
 		t.Fatalf("%d rows were inserted, want exactly %d: the rate limit raced past the cap", rows, auth.DefaultSendsPerDestination)
+	}
+}
+
+func countAuthOTPRows(t *testing.T, pool *pgxpool.Pool, destination string) int64 {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var count int64
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM auth_otps WHERE destination = $1`, destination,
+	).Scan(&count); err != nil {
+		t.Fatalf("count auth_otps rows: %v", err)
+	}
+	return count
+}
+
+func countAuthOTPVerifyAttemptRows(t *testing.T, pool *pgxpool.Pool, ip string) int64 {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var count int64
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM auth_otp_verify_attempts WHERE ip = $1`, ip,
+	).Scan(&count); err != nil {
+		t.Fatalf("count auth_otp_verify_attempts rows: %v", err)
+	}
+	return count
+}
+
+func TestOTPVerifyDestinationRateLimitFires(t *testing.T) {
+	store, _ := newStore(t)
+	sender := &recordingSender{}
+	service, err := auth.NewOTPService(auth.OTPServiceOptions{
+		Store:       store,
+		EmailSender: sender,
+		SMSSender:   sender,
+		HashCost:    bcrypt.MinCost,
+	})
+	if err != nil {
+		t.Fatalf("new otp service: %v", err)
+	}
+	ctx := context.Background()
+	destination := "destination-limit@example.com"
+
+	if _, err := service.Send(ctx, auth.SendCodeRequest{
+		Channel:     auth.ChannelEmail,
+		Destination: destination,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	for i := int64(0); i < auth.DefaultVerifiesPerDestination; i++ {
+		_, err := service.Verify(ctx, auth.VerifyCodeRequest{
+			Channel:     auth.ChannelEmail,
+			Destination: destination,
+			Code:        "000000",
+		})
+		if errors.Is(err, auth.ErrVerifyDestinationRateLimited) {
+			t.Fatalf("attempt %d: the destination limit fired early", i+1)
+		}
+		if err == nil || (!errors.Is(err, auth.ErrCodeMismatch) && !errors.Is(err, auth.ErrTooManyAttempts)) {
+			t.Fatalf("attempt %d: unexpected error %v", i+1, err)
+		}
+	}
+
+	_, err = service.Verify(ctx, auth.VerifyCodeRequest{
+		Channel:     auth.ChannelEmail,
+		Destination: destination,
+		Code:        "000000",
+	})
+	if !errors.Is(err, auth.ErrVerifyDestinationRateLimited) {
+		t.Fatalf("11th attempt: got %v, want ErrVerifyDestinationRateLimited", err)
+	}
+}
+
+func TestOTPVerifyIPRateLimitFiresAcrossDestinations(t *testing.T) {
+	store, pool := newStore(t)
+	sender := &recordingSender{}
+	service, err := auth.NewOTPService(auth.OTPServiceOptions{
+		Store:       store,
+		EmailSender: sender,
+		SMSSender:   sender,
+		HashCost:    bcrypt.MinCost,
+	})
+	if err != nil {
+		t.Fatalf("new otp service: %v", err)
+	}
+	ctx := context.Background()
+
+	const (
+		destinations   = 10
+		perDestination = 6
+		clientIP       = "203.0.113.44"
+	)
+	if destinations*perDestination < int(auth.DefaultVerifiesPerIP) {
+		t.Fatalf("test setup does not reach the ip limit: %d < %d", destinations*perDestination, auth.DefaultVerifiesPerIP)
+	}
+	if perDestination >= int(auth.DefaultVerifiesPerDestination) {
+		t.Fatalf("test setup would trip the destination limit first: %d >= %d", perDestination, auth.DefaultVerifiesPerDestination)
+	}
+
+	firstDestination := "ip-limit-0@example.com"
+	for d := 0; d < destinations; d++ {
+		destination := fmt.Sprintf("ip-limit-%d@example.com", d)
+		if _, err := service.Send(ctx, auth.SendCodeRequest{
+			Channel:     auth.ChannelEmail,
+			Destination: destination,
+		}); err != nil {
+			t.Fatalf("send %d: %v", d, err)
+		}
+		for i := 0; i < perDestination; i++ {
+			_, err := service.Verify(ctx, auth.VerifyCodeRequest{
+				Channel:     auth.ChannelEmail,
+				Destination: destination,
+				Code:        "000000",
+				RequestIP:   clientIP,
+			})
+			if errors.Is(err, auth.ErrVerifyIPRateLimited) {
+				t.Fatalf("destination %d attempt %d: the ip limit fired early", d, i+1)
+			}
+		}
+	}
+
+	if rows := countAuthOTPVerifyAttemptRows(t, pool, clientIP); rows != int64(destinations*perDestination) {
+		t.Fatalf("recorded %d verify attempts for that address, want %d", rows, destinations*perDestination)
+	}
+
+	_, err = service.Verify(ctx, auth.VerifyCodeRequest{
+		Channel:     auth.ChannelEmail,
+		Destination: firstDestination,
+		Code:        "000000",
+		RequestIP:   clientIP,
+	})
+	if !errors.Is(err, auth.ErrVerifyIPRateLimited) {
+		t.Fatalf("61st attempt: got %v, want ErrVerifyIPRateLimited", err)
+	}
+
+	elsewhere, err := service.Verify(ctx, auth.VerifyCodeRequest{
+		Channel:     auth.ChannelEmail,
+		Destination: firstDestination,
+		Code:        "000000",
+		RequestIP:   "203.0.113.45",
+	})
+	if errors.Is(err, auth.ErrVerifyIPRateLimited) {
+		t.Fatalf("a different address was limited: %v", elsewhere)
 	}
 }
 

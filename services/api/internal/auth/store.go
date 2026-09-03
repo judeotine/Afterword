@@ -44,56 +44,55 @@ func (s *Store) inTx(ctx context.Context, fn func(*sqlcgen.Queries) error) error
 	return nil
 }
 
-func (s *Store) CreateOTP(ctx context.Context, params CreateOTPParams) (OTPRecord, error) {
-	row, err := s.queries.CreateAuthOTP(ctx, sqlcgen.CreateAuthOTPParams{
-		Channel:     string(params.Channel),
-		Destination: params.Destination,
-		CodeHash:    params.CodeHash,
-		ExpiresAt:   timestamp(params.ExpiresAt),
-		RequestIp:   params.RequestIP,
-		CreatedAt:   timestamp(params.CreatedAt),
-	})
-	if err != nil {
-		return OTPRecord{}, fmt.Errorf("create verification code: %w", err)
-	}
-	return otpFromRow(row), nil
-}
-
 func (s *Store) TryCreateOTP(ctx context.Context, params TryCreateOTPParams) (OTPRecord, error) {
 	var record OTPRecord
 	err := s.inTx(ctx, func(q *sqlcgen.Queries) error {
-		if err := q.LockAuthOTPDestination(ctx, params.Destination); err != nil {
+		if err := q.LockAuthOTPSendDestination(ctx, params.Destination); err != nil {
 			return fmt.Errorf("lock destination: %w", err)
 		}
-		row, err := q.TryCreateAuthOTP(ctx, sqlcgen.TryCreateAuthOTPParams{
-			Channel:          string(params.Channel),
-			Destination:      params.Destination,
-			CodeHash:         params.CodeHash,
-			ExpiresAt:        timestamp(params.ExpiresAt),
-			RequestIp:        params.RequestIP,
-			CreatedAt:        timestamp(params.CreatedAt),
-			DestinationSince: timestamp(params.DestinationSince),
-			DestinationLimit: params.DestinationLimit,
-			IpSince:          timestamp(params.IPSince),
-			IpLimit:          params.IPLimit,
+		if params.RequestIP != "" {
+			if err := q.LockAuthOTPSendIP(ctx, params.RequestIP); err != nil {
+				return fmt.Errorf("lock address: %w", err)
+			}
+		}
+
+		byDestination, err := q.CountAuthOTPsByDestination(ctx, sqlcgen.CountAuthOTPsByDestinationParams{
+			Channel:     string(params.Channel),
+			Destination: params.Destination,
+			Since:       timestamp(params.DestinationSince),
 		})
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrRateLimited
+			return fmt.Errorf("count codes by destination: %w", err)
+		}
+		if byDestination >= params.DestinationLimit {
+			return ErrDestinationRateLimited
+		}
+
+		if params.RequestIP != "" {
+			byIP, err := q.CountAuthOTPsByIP(ctx, sqlcgen.CountAuthOTPsByIPParams{
+				RequestIp: params.RequestIP,
+				Since:     timestamp(params.IPSince),
+			})
+			if err != nil {
+				return fmt.Errorf("count codes by address: %w", err)
 			}
+			if byIP >= params.IPLimit {
+				return ErrIPRateLimited
+			}
+		}
+
+		row, err := q.CreateAuthOTP(ctx, sqlcgen.CreateAuthOTPParams{
+			Channel:     string(params.Channel),
+			Destination: params.Destination,
+			CodeHash:    params.CodeHash,
+			ExpiresAt:   timestamp(params.ExpiresAt),
+			RequestIp:   params.RequestIP,
+			CreatedAt:   timestamp(params.CreatedAt),
+		})
+		if err != nil {
 			return fmt.Errorf("create verification code: %w", err)
 		}
-		record = OTPRecord{
-			ID:          row.ID,
-			Channel:     Channel(row.Channel),
-			Destination: row.Destination,
-			CodeHash:    row.CodeHash,
-			ExpiresAt:   moment(row.ExpiresAt),
-			Attempts:    row.Attempts,
-			ConsumedAt:  optionalMoment(row.ConsumedAt),
-			RequestIP:   row.RequestIp,
-			CreatedAt:   moment(row.CreatedAt),
-		}
+		record = otpFromRow(row)
 		return nil
 	})
 	if err != nil {
@@ -116,48 +115,53 @@ func (s *Store) LatestOTP(ctx context.Context, channel Channel, destination stri
 	return otpFromRow(row), nil
 }
 
-func (s *Store) CountOTPsByDestination(ctx context.Context, channel Channel, destination string, since time.Time) (int64, error) {
-	count, err := s.queries.CountAuthOTPsByDestination(ctx, sqlcgen.CountAuthOTPsByDestinationParams{
-		Channel:     string(channel),
-		Destination: destination,
-		Since:       timestamp(since),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("count verification codes by destination: %w", err)
-	}
-	return count, nil
-}
-
-func (s *Store) CountOTPsByIP(ctx context.Context, ip string, since time.Time) (int64, error) {
-	if ip == "" {
-		return 0, nil
-	}
-	count, err := s.queries.CountAuthOTPsByIP(ctx, sqlcgen.CountAuthOTPsByIPParams{
-		RequestIp: ip,
-		Since:     timestamp(since),
-	})
-	if err != nil {
-		return 0, fmt.Errorf("count verification codes by address: %w", err)
-	}
-	return count, nil
-}
-
 func (s *Store) ClaimOTPAttempt(ctx context.Context, params ClaimOTPAttemptParams) (int32, error) {
 	var attempts int32
 	err := s.inTx(ctx, func(q *sqlcgen.Queries) error {
-		if err := q.LockAuthOTPDestination(ctx, params.Destination); err != nil {
+		if err := q.LockAuthOTPVerifyDestination(ctx, params.Destination); err != nil {
 			return fmt.Errorf("lock destination: %w", err)
 		}
+		if params.RequestIP != "" {
+			if err := q.LockAuthOTPVerifyIP(ctx, params.RequestIP); err != nil {
+				return fmt.Errorf("lock address: %w", err)
+			}
+		}
+
+		byDestination, err := q.CountOTPVerifyAttemptsByDestination(ctx, sqlcgen.CountOTPVerifyAttemptsByDestinationParams{
+			Destination: params.Destination,
+			Since:       timestamp(params.DestinationSince),
+		})
+		if err != nil {
+			return fmt.Errorf("count verify attempts by destination: %w", err)
+		}
+		if byDestination >= params.DestinationLimit {
+			return ErrVerifyDestinationRateLimited
+		}
+
+		if params.RequestIP != "" {
+			byIP, err := q.CountOTPVerifyAttemptsByIP(ctx, sqlcgen.CountOTPVerifyAttemptsByIPParams{
+				Ip:    params.RequestIP,
+				Since: timestamp(params.IPSince),
+			})
+			if err != nil {
+				return fmt.Errorf("count verify attempts by address: %w", err)
+			}
+			if byIP >= params.IPLimit {
+				return ErrVerifyIPRateLimited
+			}
+		}
+
+		if err := q.CreateOTPVerifyAttempt(ctx, sqlcgen.CreateOTPVerifyAttemptParams{
+			Destination: params.Destination,
+			Ip:          params.RequestIP,
+			CreatedAt:   timestamp(params.Now),
+		}); err != nil {
+			return fmt.Errorf("record verify attempt: %w", err)
+		}
+
 		claimed, err := q.ClaimAuthOTPAttempt(ctx, sqlcgen.ClaimAuthOTPAttemptParams{
-			ID:               params.ID,
-			MaxAttempts:      params.MaxAttempts,
-			Channel:          string(params.Channel),
-			Destination:      params.Destination,
-			DestinationSince: timestamp(params.DestinationSince),
-			DestinationLimit: params.DestinationLimit,
-			RequestIp:        params.RequestIP,
-			IpSince:          timestamp(params.IPSince),
-			IpLimit:          params.IPLimit,
+			ID:          params.ID,
+			MaxAttempts: params.MaxAttempts,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

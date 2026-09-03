@@ -130,14 +130,18 @@ func (m *RefreshManager) Rotate(ctx context.Context, presented, deviceID string)
 	}
 
 	presentedDevice := normalizeDeviceID(deviceID)
-	if presentedDevice != "" && presentedDevice != record.DeviceID {
+	effectiveDevice := record.DeviceID
+	switch {
+	case record.DeviceID == "" && presentedDevice != "":
+		effectiveDevice = presentedDevice
+	case presentedDevice != "" && presentedDevice != record.DeviceID:
 		if _, err := m.store.RevokeRefreshFamily(ctx, record.FamilyID, now); err != nil {
 			return RefreshToken{}, err
 		}
 		return RefreshToken{}, ErrRefreshReused
 	}
 
-	return m.mint(ctx, record.UserID, record.FamilyID, record.DeviceID)
+	return m.mint(ctx, record.UserID, record.FamilyID, effectiveDevice)
 }
 
 func (m *RefreshManager) Revoke(ctx context.Context, presented string) error {

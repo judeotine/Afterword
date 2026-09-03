@@ -41,6 +41,13 @@ type AuthOtp struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type AuthOtpVerifyAttempt struct {
+	ID          uuid.UUID          `json:"id"`
+	Destination string             `json:"destination"`
+	Ip          string             `json:"ip"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type BotJob struct {
 	ID                 uuid.UUID          `json:"id"`
 	WorkspaceID        uuid.UUID          `json:"workspace_id"`

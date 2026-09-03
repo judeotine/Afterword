@@ -11,9 +11,16 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/auth"
 )
 
+type memoryVerifyAttempt struct {
+	Destination string
+	IP          string
+	CreatedAt   time.Time
+}
+
 type memoryOTPStore struct {
-	mu      sync.Mutex
-	records []auth.OTPRecord
+	mu             sync.Mutex
+	records        []auth.OTPRecord
+	verifyAttempts []memoryVerifyAttempt
 }
 
 func newMemoryOTPStore() *memoryOTPStore {
@@ -34,10 +41,10 @@ func (s *memoryOTPStore) TryCreateOTP(_ context.Context, params auth.TryCreateOT
 		}
 	}
 	if byDestination >= params.DestinationLimit {
-		return auth.OTPRecord{}, auth.ErrRateLimited
+		return auth.OTPRecord{}, auth.ErrDestinationRateLimited
 	}
 	if params.RequestIP != "" && byIP >= params.IPLimit {
-		return auth.OTPRecord{}, auth.ErrRateLimited
+		return auth.OTPRecord{}, auth.ErrIPRateLimited
 	}
 
 	record := auth.OTPRecord{
@@ -85,24 +92,31 @@ func (s *memoryOTPStore) ClaimOTPAttempt(_ context.Context, params auth.ClaimOTP
 	if index < 0 {
 		return 0, auth.ErrTooManyAttempts
 	}
-	record := s.records[index]
-	if record.ConsumedAt != nil || record.Attempts >= params.MaxAttempts {
-		return 0, auth.ErrTooManyAttempts
-	}
 
 	var byDestination, byIP int64
-	for _, other := range s.records {
-		if other.Channel == params.Channel && other.Destination == params.Destination && !other.CreatedAt.Before(params.DestinationSince) {
-			byDestination += int64(other.Attempts)
+	for _, attempt := range s.verifyAttempts {
+		if attempt.Destination == params.Destination && !attempt.CreatedAt.Before(params.DestinationSince) {
+			byDestination++
 		}
-		if params.RequestIP != "" && other.RequestIP == params.RequestIP && !other.CreatedAt.Before(params.IPSince) {
-			byIP += int64(other.Attempts)
+		if params.RequestIP != "" && attempt.IP == params.RequestIP && !attempt.CreatedAt.Before(params.IPSince) {
+			byIP++
 		}
 	}
 	if byDestination >= params.DestinationLimit {
-		return 0, auth.ErrTooManyAttempts
+		return 0, auth.ErrVerifyDestinationRateLimited
 	}
 	if params.RequestIP != "" && byIP >= params.IPLimit {
+		return 0, auth.ErrVerifyIPRateLimited
+	}
+
+	s.verifyAttempts = append(s.verifyAttempts, memoryVerifyAttempt{
+		Destination: params.Destination,
+		IP:          params.RequestIP,
+		CreatedAt:   params.Now,
+	})
+
+	record := s.records[index]
+	if record.ConsumedAt != nil || record.Attempts >= params.MaxAttempts {
 		return 0, auth.ErrTooManyAttempts
 	}
 

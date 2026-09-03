@@ -69,15 +69,6 @@ type OTPRecord struct {
 	CreatedAt   time.Time
 }
 
-type CreateOTPParams struct {
-	Channel     Channel
-	Destination string
-	CodeHash    string
-	ExpiresAt   time.Time
-	RequestIP   string
-	CreatedAt   time.Time
-}
-
 type TryCreateOTPParams struct {
 	Channel          Channel
 	Destination      string
@@ -93,10 +84,10 @@ type TryCreateOTPParams struct {
 
 type ClaimOTPAttemptParams struct {
 	ID               uuid.UUID
-	Channel          Channel
 	Destination      string
 	RequestIP        string
 	MaxAttempts      int32
+	Now              time.Time
 	DestinationSince time.Time
 	DestinationLimit int64
 	IPSince          time.Time
@@ -273,10 +264,10 @@ func (s *OTPService) Verify(ctx context.Context, request VerifyCodeRequest) (Ver
 
 	if _, err := s.store.ClaimOTPAttempt(ctx, ClaimOTPAttemptParams{
 		ID:               record.ID,
-		Channel:          channel,
 		Destination:      destination,
 		RequestIP:        request.RequestIP,
 		MaxAttempts:      s.maxAttempts,
+		Now:              now,
 		DestinationSince: now.Add(-s.verifyDestinationWindow),
 		DestinationLimit: s.verifiesPerDestination,
 		IPSince:          now.Add(-s.verifyIPWindow),
