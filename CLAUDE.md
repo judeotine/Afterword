@@ -203,10 +203,13 @@ await listen<TranscriptUpdate>('transcript-update', (event) => {
 
 ### Whisper Model Management
 
-**Model Storage Locations**:
-- **Development**: `frontend/models/`
-- **Production (macOS)**: `~/Library/Application Support/Afterword/models/`
-- **Production (Windows)**: `%APPDATA%\Afterword\models\`
+**Model Storage Locations** (`app_data_dir()/models`, set by
+`whisper_engine::commands::set_models_directory`; the same path in development
+and production, because it is keyed on the bundle identifier
+`com.afterword.app`):
+- **macOS**: `~/Library/Application Support/com.afterword.app/models/`
+- **Windows**: `%APPDATA%\com.afterword.app\models\`
+- **Linux**: `~/.local/share/com.afterword.app/models/`
 
 **Model Loading** (crates/afterword-core/src/whisper_engine/whisper_engine.rs, re-exported as `crate::whisper_engine` in the desktop app):
 ```rust

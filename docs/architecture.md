@@ -42,7 +42,8 @@ graph TD
 ### Backend (Rust Core)
 
 *   **Tauri Core:** The heart of the desktop app, responsible for managing the window, handling events, and exposing the Rust core to the frontend.
-*   **Audio Engine / Transcription Engine:** Live in `crates/afterword-core`, a Tauri-free crate. It captures audio from the microphone and system, processes it, and transcribes it with local speech-to-text models (Whisper or Parakeet), optionally GPU-accelerated. The desktop app's `app_lib` re-exports this crate rather than containing the code itself.
+*   **Audio capture:** Stays in the desktop app (`frontend/src-tauri/src/audio`), because capturing the microphone and system audio needs the platform APIs and permissions the app owns.
+*   **Audio processing / Transcription Engine:** Live in `crates/afterword-core`, a Tauri-free crate. It resamples, denoises and voice-activity-filters the captured audio and transcribes it with local speech-to-text models (Whisper or Parakeet), optionally GPU-accelerated. The desktop app's `app_lib` re-exports this crate rather than containing the code itself, and the meeting bot's CLI is built from the same crate.
 *   **Database:** A local SQLite database that stores meeting metadata, transcripts, and summaries.
 *   **Summary Engine:** Generates meeting summaries using various Large Language Models (LLMs), including local models via Ollama.
 

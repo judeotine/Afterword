@@ -6,13 +6,14 @@ are built and published automatically by `.github/workflows/release.yml` wheneve
 
 ## 1. Bump the version
 
-The app version must be updated in three places, kept in sync:
+The app version must be updated in four places, kept in sync:
 
 - `frontend/package.json` — `"version"`
 - `frontend/src-tauri/tauri.conf.json` — `"version"`
 - `frontend/src-tauri/Cargo.toml` — `[package] version`
+- `crates/afterword-core/Cargo.toml` — `[package] version`
 
-All three should use the same semantic version, e.g. `0.5.0`.
+All four should use the same semantic version, e.g. `0.5.0`.
 
 Commit the version bump on `main` (or the release branch) before tagging.
 

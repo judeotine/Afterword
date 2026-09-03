@@ -5,7 +5,7 @@ use std::sync::Mutex as StdMutex;
 
 // Performance optimization: Conditional logging macros for hot paths.
 // Defined in afterword-core so the shared pipeline modules can use them too.
-pub(crate) use afterword_core::{perf_debug, perf_trace};
+pub(crate) use afterword_core::perf_debug;
 
 // Re-export async logging macros for external use (removed due to macro conflicts)
 

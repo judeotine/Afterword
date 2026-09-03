@@ -99,7 +99,8 @@ struct Cli {
     #[arg(long)]
     model: Option<String>,
 
-    /// Models directory (defaults to $AFTERWORD_MODELS_DIR, then <data dir>/Afterword/models).
+    /// Models directory (defaults to $AFTERWORD_MODELS_DIR, then this CLI's own
+    /// <data dir>/Afterword/models, which is not where the desktop app keeps its models).
     #[arg(long = "models-dir")]
     models_dir: Option<PathBuf>,
 
@@ -176,7 +177,10 @@ impl std::fmt::Display for CliError {
 // ---------------------------------------------------------------------------
 
 /// Resolve the models directory: `--models-dir`, else `$AFTERWORD_MODELS_DIR`,
-/// else `<system data dir>/Afterword/models` (the desktop app's layout).
+/// else `<system data dir>/Afterword/models`. That last one is this CLI's own
+/// default; the desktop app stores models under its bundle identifier
+/// (`<app data dir>/com.afterword.app/models`), so point `--models-dir` there
+/// to share a download with it.
 fn resolve_models_dir(
     flag: Option<&Path>,
     env_value: Option<&str>,

@@ -440,9 +440,17 @@ mod tests {
 
     #[test]
     fn test_builtin_mic_detection() {
-        let kind = InputDeviceKind::detect("MacBook Pro Microphone", 0, 0);
-        // Should fall through to Unknown (no Bluetooth pattern, no buffer size)
-        assert_eq!(kind, InputDeviceKind::Unknown);
+        // Hermetic on purpose: `detect` consults the live Core Audio device list
+        // first, so on a Mac whose built-in microphone really is named "MacBook
+        // Pro Microphone" it answers Wired (transport BUILT_IN). What this test
+        // is about is the fallback chain behind that probe: the name matches no
+        // Bluetooth or virtual-device pattern, and with no buffer size there is
+        // nothing to measure, which is what leaves `detect` at Unknown.
+        assert_eq!(
+            InputDeviceKind::detect_by_name("MacBook Pro Microphone"),
+            None
+        );
+        assert_eq!(InputDeviceKind::detect_by_buffer_size(0, 0), None);
     }
 
     #[test]
