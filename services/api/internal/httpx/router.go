@@ -61,7 +61,7 @@ func NewRouter(opts RouterOptions) http.Handler {
 func corsMiddleware(origin string) func(http.Handler) http.Handler {
 	options := cors.Options{
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", "Idempotency-Key"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-Id", "X-Workspace-Id", "Idempotency-Key"},
 		ExposedHeaders:   []string{"X-Request-Id"},
 		AllowCredentials: true,
 		MaxAge:           300,

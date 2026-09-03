@@ -219,3 +219,20 @@ func TestRouterRejectsAMalformedRequestID(t *testing.T) {
 		t.Errorf("X-Request-Id = %q, want a generated id", got)
 	}
 }
+
+func TestRouterAllowsTheWorkspaceHeaderOnPreflight(t *testing.T) {
+	router := newTestRouter(t, &stubPinger{})
+
+	request := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
+	request.Header.Set("Origin", "https://app.afterword.io")
+	request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	request.Header.Set("Access-Control-Request-Headers", "Authorization, X-Workspace-Id")
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	allowed := strings.ToLower(recorder.Header().Get("Access-Control-Allow-Headers"))
+	if !strings.Contains(allowed, "x-workspace-id") {
+		t.Errorf("Access-Control-Allow-Headers = %q, want it to include X-Workspace-Id", allowed)
+	}
+}

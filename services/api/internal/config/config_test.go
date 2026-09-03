@@ -249,3 +249,80 @@ func TestLoadRejectsInvalidTrustedProxies(t *testing.T) {
 		t.Errorf("error %q does not name TRUSTED_PROXY_CIDRS", err)
 	}
 }
+
+func TestAuthDefaults(t *testing.T) {
+	cfg, err := Load(lookupFrom(map[string]string{
+		"DATABASE_URL": "postgres://afterword:afterword@localhost:5432/afterword",
+		"JWT_SECRET":   "0123456789abcdef0123456789abcdef",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Auth.EmailSender != "log" || cfg.Auth.SMSSender != "log" {
+		t.Fatalf("sender defaults = %q / %q", cfg.Auth.EmailSender, cfg.Auth.SMSSender)
+	}
+	if cfg.Auth.SMTP.Port != 587 || !cfg.Auth.SMTP.StartTLS {
+		t.Fatalf("smtp defaults = %+v", cfg.Auth.SMTP)
+	}
+	if cfg.Auth.GoogleRedirectURL != "http://localhost:8080/v1/auth/google/callback" {
+		t.Fatalf("GoogleRedirectURL = %q", cfg.Auth.GoogleRedirectURL)
+	}
+	if cfg.GoogleConfigured() {
+		t.Fatal("GoogleConfigured() is true without credentials")
+	}
+}
+
+func TestAuthValues(t *testing.T) {
+	cfg, err := Load(lookupFrom(map[string]string{
+		"DATABASE_URL":         "postgres://afterword:afterword@localhost:5432/afterword",
+		"JWT_SECRET":           "0123456789abcdef0123456789abcdef",
+		"API_BASE_URL":         "https://api.afterword.app",
+		"GOOGLE_CLIENT_ID":     "client-id",
+		"GOOGLE_CLIENT_SECRET": "client-secret",
+		"EMAIL_SENDER":         "SMTP",
+		"SMS_SENDER":           "noop",
+		"SMTP_HOST":            "smtp.example.com",
+		"SMTP_PORT":            "465",
+		"SMTP_FROM":            "Afterword <hello@example.com>",
+		"SMTP_STARTTLS":        "false",
+	}))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Auth.EmailSender != "smtp" || cfg.Auth.SMSSender != "noop" {
+		t.Fatalf("senders = %q / %q", cfg.Auth.EmailSender, cfg.Auth.SMSSender)
+	}
+	if cfg.Auth.SMTP.Port != 465 || cfg.Auth.SMTP.StartTLS {
+		t.Fatalf("smtp = %+v", cfg.Auth.SMTP)
+	}
+	if cfg.Auth.GoogleRedirectURL != "https://api.afterword.app/v1/auth/google/callback" {
+		t.Fatalf("GoogleRedirectURL = %q", cfg.Auth.GoogleRedirectURL)
+	}
+	if !cfg.GoogleConfigured() {
+		t.Fatal("GoogleConfigured() is false with credentials")
+	}
+}
+
+func TestAuthRejectsIncompleteConfiguration(t *testing.T) {
+	cases := []map[string]string{
+		{"EMAIL_SENDER": "smtp"},
+		{"EMAIL_SENDER": "smtp", "SMTP_HOST": "smtp.example.com"},
+		{"EMAIL_SENDER": "carrier-pigeon"},
+		{"SMS_SENDER": "twilio"},
+		{"GOOGLE_CLIENT_ID": "client-id"},
+		{"GOOGLE_CLIENT_SECRET": "client-secret"},
+		{"SMTP_PORT": "0"},
+	}
+	for _, extra := range cases {
+		values := map[string]string{
+			"DATABASE_URL": "postgres://afterword:afterword@localhost:5432/afterword",
+			"JWT_SECRET":   "0123456789abcdef0123456789abcdef",
+		}
+		for key, value := range extra {
+			values[key] = value
+		}
+		if _, err := Load(lookupFrom(values)); err == nil {
+			t.Fatalf("Load(%v) accepted an incomplete configuration", extra)
+		}
+	}
+}

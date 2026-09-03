@@ -23,6 +23,24 @@ type S3Config struct {
 	UseSSL    bool
 }
 
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	StartTLS bool
+}
+
+type AuthConfig struct {
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string
+	EmailSender        string
+	SMSSender          string
+	SMTP               SMTPConfig
+}
+
 type Config struct {
 	Port             int
 	DatabaseURL      string
@@ -32,6 +50,7 @@ type Config struct {
 	APIBaseURL       string
 	LogLevel         string
 	S3               S3Config
+	Auth             AuthConfig
 	TrustedProxies   []netip.Prefix
 	RequestTimeout   time.Duration
 	ShutdownTimeout  time.Duration
@@ -71,15 +90,60 @@ func Load(lookup LookupFunc) (Config, error) {
 			Region:    reader.optional("S3_REGION", "us-east-1"),
 			UseSSL:    reader.boolean("S3_USE_SSL", false),
 		},
+		Auth: AuthConfig{
+			GoogleClientID:     reader.optional("GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret: reader.optional("GOOGLE_CLIENT_SECRET", ""),
+			EmailSender:        reader.choice("EMAIL_SENDER", "log", emailSenders),
+			SMSSender:          reader.choice("SMS_SENDER", "log", smsSenders),
+			SMTP: SMTPConfig{
+				Host:     reader.optional("SMTP_HOST", ""),
+				Port:     reader.boundedInt("SMTP_PORT", 587, 1, 65535),
+				Username: reader.optional("SMTP_USERNAME", ""),
+				Password: reader.optional("SMTP_PASSWORD", ""),
+				From:     reader.optional("SMTP_FROM", ""),
+				StartTLS: reader.boolean("SMTP_STARTTLS", true),
+			},
+		},
 		TrustedProxies:  reader.trustedProxies("TRUSTED_PROXY_CIDRS"),
 		RequestTimeout:  reader.duration("REQUEST_TIMEOUT", 30*time.Second),
 		ShutdownTimeout: reader.duration("SHUTDOWN_TIMEOUT", 15*time.Second),
+	}
+
+	cfg.Auth.GoogleRedirectURL = reader.baseURL("GOOGLE_REDIRECT_URL", cfg.APIBaseURL+googleCallbackPath)
+
+	if cfg.Auth.EmailSender == emailSenderSMTP {
+		if cfg.Auth.SMTP.Host == "" {
+			reader.reject("SMTP_HOST", "is required when EMAIL_SENDER is smtp")
+		}
+		if cfg.Auth.SMTP.From == "" {
+			reader.reject("SMTP_FROM", "is required when EMAIL_SENDER is smtp")
+		}
+	}
+	if (cfg.Auth.GoogleClientID == "") != (cfg.Auth.GoogleClientSecret == "") {
+		reader.reject("GOOGLE_CLIENT_SECRET", "and GOOGLE_CLIENT_ID must be set together")
 	}
 
 	if err := reader.err(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+const (
+	googleCallbackPath = "/v1/auth/google/callback"
+	emailSenderLog     = "log"
+	emailSenderSMTP    = "smtp"
+	smsSenderLog       = "log"
+	smsSenderNoop      = "noop"
+)
+
+var (
+	emailSenders = []string{emailSenderLog, emailSenderSMTP}
+	smsSenders   = []string{smsSenderLog, smsSenderNoop}
+)
+
+func (c Config) GoogleConfigured() bool {
+	return c.Auth.GoogleClientID != "" && c.Auth.GoogleClientSecret != ""
 }
 
 type reader struct {
@@ -219,6 +283,21 @@ func (r *reader) logLevel(key, fallback string) string {
 		return fallback
 	}
 	return level
+}
+
+func (r *reader) choice(key, fallback string, allowed []string) string {
+	value, ok := r.raw(key)
+	if !ok {
+		return fallback
+	}
+	candidate := strings.ToLower(value)
+	for _, option := range allowed {
+		if candidate == option {
+			return candidate
+		}
+	}
+	r.reject(key, "must be one of "+strings.Join(allowed, ", "))
+	return fallback
 }
 
 func (r *reader) baseURL(key, fallback string) string {

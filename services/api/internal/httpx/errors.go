@@ -8,6 +8,12 @@ const (
 	CodeInternalError      = "internal_error"
 	CodeRequestTimeout     = "request_timeout"
 	CodeServiceUnavailable = "service_unavailable"
+	CodeUnauthorized       = "unauthorized"
+	CodeTokenExpired       = "token_expired"
+	CodeForbidden          = "forbidden"
+	CodeInvalidRequest     = "invalid_request"
+	CodeValidationFailed   = "validation_failed"
+	CodeRateLimited        = "rate_limited"
 )
 
 type ErrorBody struct {
