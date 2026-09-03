@@ -149,6 +149,9 @@ ffmpeg-sidecar = { git = "https://github.com/nathanbabcock/ffmpeg-sidecar", bran
 
 sqlx = { version = "0.8", features = [ "runtime-tokio", "sqlite", "chrono"] }
 
+# OS keychain storage for provider API keys
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
+
 # Common Tauri configuration
 tauri = { version = "2.6.2", features = [ "macos-private-api", "protocol-asset", "tray-icon"] }
 tauri-plugin-fs = "2.4.0"

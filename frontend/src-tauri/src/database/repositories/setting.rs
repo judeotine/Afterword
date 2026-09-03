@@ -1,6 +1,65 @@
 use crate::database::models::{Setting, TranscriptSetting};
+use crate::database::secrets::{default_store, SecretStore};
 use crate::summary::CustomOpenAIConfig;
 use sqlx::SqlitePool;
+
+/// Provider id used for the custom OpenAI-compatible endpoint's key.
+const CUSTOM_OPENAI_PROVIDER: &str = "custom-openai";
+
+/// Legacy SQLite column that used to hold the API key for a summary provider.
+/// `Ok(None)` means the provider needs no key at all.
+fn api_key_column(provider: &str) -> std::result::Result<Option<&'static str>, sqlx::Error> {
+    match provider {
+        "openai" => Ok(Some("openaiApiKey")),
+        "claude" => Ok(Some("anthropicApiKey")),
+        "ollama" => Ok(Some("ollamaApiKey")),
+        "groq" => Ok(Some("groqApiKey")),
+        "openrouter" => Ok(Some("openRouterApiKey")),
+        "builtin-ai" => Ok(None), // No API key needed
+        _ => Err(sqlx::Error::Protocol(
+            format!("Invalid provider: {}", provider).into(),
+        )),
+    }
+}
+
+/// Clear the legacy plaintext column once the key lives in the keychain.
+async fn clear_legacy_column(
+    pool: &SqlitePool,
+    column: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    let query = format!("UPDATE settings SET \"{}\" = NULL WHERE id = '1'", column);
+    sqlx::query(&query).execute(pool).await?;
+    Ok(())
+}
+
+/// Read the legacy plaintext column, tolerating both a missing row and a NULL value.
+async fn read_legacy_column(
+    pool: &SqlitePool,
+    column: &str,
+) -> std::result::Result<Option<String>, sqlx::Error> {
+    let query = format!("SELECT \"{}\" FROM settings WHERE id = '1' LIMIT 1", column);
+    let value: Option<Option<String>> = sqlx::query_scalar(&query).fetch_optional(pool).await?;
+    Ok(value.flatten())
+}
+
+/// Write the legacy plaintext column (fallback when no keychain is available).
+async fn write_legacy_column(
+    pool: &SqlitePool,
+    column: &str,
+    api_key: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    let query = format!(
+        r#"
+            INSERT INTO settings (id, provider, model, whisperModel, "{}")
+            VALUES ('1', 'openai', 'gpt-4o-2024-11-20', 'large-v3', $1)
+            ON CONFLICT(id) DO UPDATE SET
+                "{}" = $1
+            "#,
+        column, column
+    );
+    sqlx::query(&query).bind(api_key).execute(pool).await?;
+    Ok(())
+}
 
 #[derive(serde::Deserialize, Debug)]
 pub struct SaveModelConfigRequest {
@@ -72,6 +131,17 @@ impl SettingsRepository {
         provider: &str,
         api_key: &str,
     ) -> std::result::Result<(), sqlx::Error> {
+        Self::save_api_key_with_store(pool, default_store(), provider, api_key).await
+    }
+
+    /// Save an API key into the OS keychain, falling back to the legacy SQLite
+    /// column when no keychain is available (e.g. headless Linux).
+    pub async fn save_api_key_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        provider: &str,
+        api_key: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
         // Custom OpenAI uses JSON config (customOpenAIConfig) instead of a separate API key column
         if provider == "custom-openai" {
             return Err(sqlx::Error::Protocol(
@@ -79,64 +149,79 @@ impl SettingsRepository {
             ));
         }
 
-        let api_key_column = match provider {
-            "openai" => "openaiApiKey",
-            "claude" => "anthropicApiKey",
-            "ollama" => "ollamaApiKey",
-            "groq" => "groqApiKey",
-            "openrouter" => "openRouterApiKey",
-            "builtin-ai" => return Ok(()), // No API key needed
-            _ => {
-                return Err(sqlx::Error::Protocol(
-                    format!("Invalid provider: {}", provider).into(),
-                ))
-            }
+        let Some(api_key_column) = api_key_column(provider)? else {
+            return Ok(()); // Provider needs no API key
         };
 
-        let query = format!(
-            r#"
-            INSERT INTO settings (id, provider, model, whisperModel, "{}")
-            VALUES ('1', 'openai', 'gpt-4o-2024-11-20', 'large-v3', $1)
-            ON CONFLICT(id) DO UPDATE SET
-                "{}" = $1
-            "#,
-            api_key_column, api_key_column
-        );
-        sqlx::query(&query).bind(api_key).execute(pool).await?;
-
-        Ok(())
+        match store.set(provider, api_key) {
+            Ok(()) => {
+                // Key is in the keychain now; drop the plaintext copy.
+                clear_legacy_column(pool, api_key_column).await?;
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!(
+                    "Keychain unavailable for provider '{}' ({}); storing API key in the database instead",
+                    provider,
+                    e
+                );
+                write_legacy_column(pool, api_key_column, api_key).await
+            }
+        }
     }
 
     pub async fn get_api_key(
         pool: &SqlitePool,
         provider: &str,
     ) -> std::result::Result<Option<String>, sqlx::Error> {
+        Self::get_api_key_with_store(pool, default_store(), provider).await
+    }
+
+    /// Read an API key: keychain first, then the legacy SQLite column (which is
+    /// migrated into the keychain on a best-effort basis when found).
+    pub async fn get_api_key_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        provider: &str,
+    ) -> std::result::Result<Option<String>, sqlx::Error> {
         // Custom OpenAI uses JSON config - extract API key from there
         if provider == "custom-openai" {
-            let config = Self::get_custom_openai_config(pool).await?;
+            let config = Self::get_custom_openai_config_with_store(pool, store).await?;
             return Ok(config.and_then(|c| c.api_key));
         }
 
-        let api_key_column = match provider {
-            "openai" => "openaiApiKey",
-            "ollama" => "ollamaApiKey",
-            "groq" => "groqApiKey",
-            "claude" => "anthropicApiKey",
-            "openrouter" => "openRouterApiKey",
-            "builtin-ai" => return Ok(None), // No API key needed
-            _ => {
-                return Err(sqlx::Error::Protocol(
-                    format!("Invalid provider: {}", provider).into(),
-                ))
-            }
+        let Some(api_key_column) = api_key_column(provider)? else {
+            return Ok(None); // Provider needs no API key
         };
 
-        let query = format!(
-            "SELECT {} FROM settings WHERE id = '1' LIMIT 1",
-            api_key_column
-        );
-        let api_key = sqlx::query_scalar(&query).fetch_optional(pool).await?;
-        Ok(api_key)
+        match store.get(provider) {
+            Ok(Some(key)) => return Ok(Some(key)),
+            Ok(None) => {}
+            Err(e) => log::warn!(
+                "Keychain unavailable for provider '{}' ({}); reading API key from the database",
+                provider,
+                e
+            ),
+        }
+
+        let legacy_key = read_legacy_column(pool, api_key_column).await?;
+
+        if let Some(key) = legacy_key.as_deref() {
+            // Best-effort migration of a plaintext key into the keychain.
+            match store.set(provider, key) {
+                Ok(()) => {
+                    clear_legacy_column(pool, api_key_column).await?;
+                    log::info!("Migrated API key for provider '{}' into the keychain", provider);
+                }
+                Err(e) => log::warn!(
+                    "Could not migrate API key for provider '{}' into the keychain: {}",
+                    provider,
+                    e
+                ),
+            }
+        }
+
+        Ok(legacy_key)
     }
 
     pub async fn get_transcript_config(
@@ -235,6 +320,23 @@ impl SettingsRepository {
         pool: &SqlitePool,
         provider: &str,
     ) -> std::result::Result<(), sqlx::Error> {
+        Self::delete_api_key_with_store(pool, default_store(), provider).await
+    }
+
+    /// Delete an API key from both the keychain and the legacy SQLite column.
+    pub async fn delete_api_key_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        provider: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        if let Err(e) = store.delete(provider) {
+            log::warn!(
+                "Failed to delete keychain entry for provider '{}': {}",
+                provider,
+                e
+            );
+        }
+
         // Custom OpenAI uses JSON config - clear the entire config
         if provider == "custom-openai" {
             sqlx::query("UPDATE settings SET customOpenAIConfig = NULL WHERE id = '1'")
@@ -243,27 +345,11 @@ impl SettingsRepository {
             return Ok(());
         }
 
-        let api_key_column = match provider {
-            "openai" => "openaiApiKey",
-            "ollama" => "ollamaApiKey",
-            "groq" => "groqApiKey",
-            "claude" => "anthropicApiKey",
-            "openrouter" => "openRouterApiKey",
-            "builtin-ai" => return Ok(()), // No API key needed
-            _ => {
-                return Err(sqlx::Error::Protocol(
-                    format!("Invalid provider: {}", provider).into(),
-                ))
-            }
+        let Some(api_key_column) = api_key_column(provider)? else {
+            return Ok(()); // Provider needs no API key
         };
 
-        let query = format!(
-            "UPDATE settings SET {} = NULL WHERE id = '1'",
-            api_key_column
-        );
-        sqlx::query(&query).execute(pool).await?;
-
-        Ok(())
+        clear_legacy_column(pool, api_key_column).await
     }
 
     // ===== CUSTOM OPENAI CONFIG METHODS =====
@@ -276,6 +362,18 @@ impl SettingsRepository {
     /// * `Err(sqlx::Error)` - Database error
     pub async fn get_custom_openai_config(
         pool: &SqlitePool,
+    ) -> std::result::Result<Option<CustomOpenAIConfig>, sqlx::Error> {
+        Self::get_custom_openai_config_with_store(pool, default_store()).await
+    }
+
+    /// Same as [`Self::get_custom_openai_config`], with an injectable secret store.
+    ///
+    /// The stored JSON never contains the API key: it is read from the keychain
+    /// under the provider id "custom-openai". A legacy key still embedded in the
+    /// JSON is migrated into the keychain (best effort) and stripped from the JSON.
+    pub async fn get_custom_openai_config_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
     ) -> std::result::Result<Option<CustomOpenAIConfig>, sqlx::Error> {
         use sqlx::Row;
 
@@ -290,27 +388,57 @@ impl SettingsRepository {
         .fetch_optional(pool)
         .await?;
 
-        match row {
-            Some(record) => {
-                let config_json: Option<String> = record.get("customOpenAIConfig");
+        let Some(record) = row else {
+            return Ok(None);
+        };
 
-                if let Some(json) = config_json {
-                    // Parse JSON into CustomOpenAIConfig
-                    let config: CustomOpenAIConfig = serde_json::from_str(&json)
-                        .map_err(|e| sqlx::Error::Protocol(
-                            format!("Invalid JSON in customOpenAIConfig: {}", e).into()
-                        ))?;
+        let config_json: Option<String> = record.get("customOpenAIConfig");
+        let Some(json) = config_json else {
+            return Ok(None);
+        };
 
-                    Ok(Some(config))
-                } else {
-                    Ok(None)
+        // Parse JSON into CustomOpenAIConfig
+        let mut config: CustomOpenAIConfig = serde_json::from_str(&json)
+            .map_err(|e| sqlx::Error::Protocol(
+                format!("Invalid JSON in customOpenAIConfig: {}", e).into()
+            ))?;
+
+        match config.api_key.take() {
+            // Legacy config with the key inside the JSON: migrate it out.
+            Some(legacy_key) if !legacy_key.trim().is_empty() => {
+                match store.set(CUSTOM_OPENAI_PROVIDER, &legacy_key) {
+                    Ok(()) => {
+                        Self::write_custom_openai_json(pool, &config).await?;
+                        log::info!("Migrated custom-openai API key into the keychain");
+                    }
+                    Err(e) => log::warn!(
+                        "Could not migrate custom-openai API key into the keychain: {}",
+                        e
+                    ),
                 }
+                config.api_key = Some(legacy_key);
             }
-            None => Ok(None),
+            _ => {
+                config.api_key = match store.get(CUSTOM_OPENAI_PROVIDER) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        log::warn!(
+                            "Keychain unavailable for custom-openai ({}); no API key available",
+                            e
+                        );
+                        None
+                    }
+                };
+            }
         }
+
+        Ok(Some(config))
     }
 
     /// Saves the custom OpenAI configuration as JSON
+    ///
+    /// The API key is stored in the OS keychain rather than the JSON blob; on a
+    /// keychain failure it falls back to the JSON so the config still works.
     ///
     /// # Arguments
     /// * `pool` - Database connection pool
@@ -323,7 +451,41 @@ impl SettingsRepository {
         pool: &SqlitePool,
         config: &CustomOpenAIConfig,
     ) -> std::result::Result<(), sqlx::Error> {
-        // Serialize config to JSON
+        Self::save_custom_openai_config_with_store(pool, default_store(), config).await
+    }
+
+    /// Same as [`Self::save_custom_openai_config`], with an injectable secret store.
+    pub async fn save_custom_openai_config_with_store(
+        pool: &SqlitePool,
+        store: &dyn SecretStore,
+        config: &CustomOpenAIConfig,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let mut stored = config.clone();
+
+        match config.api_key.as_deref() {
+            Some(key) if !key.trim().is_empty() => match store.set(CUSTOM_OPENAI_PROVIDER, key) {
+                Ok(()) => stored.api_key = None,
+                Err(e) => log::warn!(
+                    "Keychain unavailable for custom-openai ({}); storing API key in the database instead",
+                    e
+                ),
+            },
+            _ => {
+                stored.api_key = None;
+                if let Err(e) = store.delete(CUSTOM_OPENAI_PROVIDER) {
+                    log::warn!("Failed to clear custom-openai keychain entry: {}", e);
+                }
+            }
+        }
+
+        Self::write_custom_openai_json(pool, &stored).await
+    }
+
+    /// Serialize a config into the customOpenAIConfig column verbatim.
+    async fn write_custom_openai_json(
+        pool: &SqlitePool,
+        config: &CustomOpenAIConfig,
+    ) -> std::result::Result<(), sqlx::Error> {
         let config_json = serde_json::to_string(config)
             .map_err(|e| sqlx::Error::Protocol(
                 format!("Failed to serialize config to JSON: {}", e).into()
@@ -344,5 +506,207 @@ impl SettingsRepository {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::manager::DatabaseManager;
+    use crate::database::secrets::test_support::MockSecretStore;
+
+    async fn temp_pool() -> (tempfile::TempDir, DatabaseManager) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir
+            .path()
+            .join("meeting_minutes.sqlite")
+            .to_string_lossy()
+            .to_string();
+        let legacy_path = dir
+            .path()
+            .join("does_not_exist.db")
+            .to_string_lossy()
+            .to_string();
+        let manager = DatabaseManager::new(&db_path, &legacy_path)
+            .await
+            .expect("open database");
+        (dir, manager)
+    }
+
+    async fn legacy_value(pool: &SqlitePool, column: &str) -> Option<String> {
+        read_legacy_column(pool, column).await.expect("read column")
+    }
+
+    #[tokio::test]
+    async fn save_api_key_prefers_the_keychain_and_clears_the_column() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        // Pre-existing plaintext key, as written by an older build.
+        write_legacy_column(pool, "openaiApiKey", "sk-old")
+            .await
+            .unwrap();
+
+        SettingsRepository::save_api_key_with_store(pool, &store, "openai", "sk-new")
+            .await
+            .unwrap();
+
+        assert_eq!(store.peek("openai").as_deref(), Some("sk-new"));
+        assert_eq!(legacy_value(pool, "openaiApiKey").await, None);
+
+        let read_back = SettingsRepository::get_api_key_with_store(pool, &store, "openai")
+            .await
+            .unwrap();
+        assert_eq!(read_back.as_deref(), Some("sk-new"));
+    }
+
+    #[tokio::test]
+    async fn save_api_key_falls_back_to_sqlite_without_a_keychain() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::unavailable();
+
+        SettingsRepository::save_api_key_with_store(pool, &store, "claude", "sk-fallback")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            legacy_value(pool, "anthropicApiKey").await.as_deref(),
+            Some("sk-fallback")
+        );
+
+        // Reading still works when the keychain stays unavailable.
+        let read_back = SettingsRepository::get_api_key_with_store(pool, &store, "claude")
+            .await
+            .unwrap();
+        assert_eq!(read_back.as_deref(), Some("sk-fallback"));
+    }
+
+    #[tokio::test]
+    async fn get_api_key_migrates_a_legacy_column_into_the_keychain() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        write_legacy_column(pool, "groqApiKey", "gsk-legacy")
+            .await
+            .unwrap();
+
+        let key = SettingsRepository::get_api_key_with_store(pool, &store, "groq")
+            .await
+            .unwrap();
+
+        assert_eq!(key.as_deref(), Some("gsk-legacy"));
+        assert_eq!(store.peek("groq").as_deref(), Some("gsk-legacy"));
+        assert_eq!(legacy_value(pool, "groqApiKey").await, None);
+    }
+
+    #[tokio::test]
+    async fn get_api_key_returns_none_when_nothing_is_stored() {
+        let (_dir, db) = temp_pool().await;
+        let store = MockSecretStore::new();
+
+        let key = SettingsRepository::get_api_key_with_store(db.pool(), &store, "openrouter")
+            .await
+            .unwrap();
+        assert_eq!(key, None);
+    }
+
+    #[tokio::test]
+    async fn delete_api_key_clears_both_stores() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        write_legacy_column(pool, "openaiApiKey", "sk-old")
+            .await
+            .unwrap();
+        store.set("openai", "sk-new").unwrap();
+
+        SettingsRepository::delete_api_key_with_store(pool, &store, "openai")
+            .await
+            .unwrap();
+
+        assert_eq!(store.peek("openai"), None);
+        assert_eq!(legacy_value(pool, "openaiApiKey").await, None);
+    }
+
+    #[tokio::test]
+    async fn custom_openai_key_is_stored_outside_the_json_config() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        let config = CustomOpenAIConfig {
+            endpoint: "http://localhost:8000/v1".to_string(),
+            api_key: Some("sk-custom".to_string()),
+            model: "llama-3-70b".to_string(),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+        };
+
+        SettingsRepository::save_custom_openai_config_with_store(pool, &store, &config)
+            .await
+            .unwrap();
+
+        assert_eq!(store.peek("custom-openai").as_deref(), Some("sk-custom"));
+
+        let raw: Option<String> =
+            sqlx::query_scalar("SELECT customOpenAIConfig FROM settings WHERE id = '1'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let raw = raw.expect("config json");
+        assert!(
+            !raw.contains("sk-custom"),
+            "API key must not be written into the JSON config: {raw}"
+        );
+
+        let loaded = SettingsRepository::get_custom_openai_config_with_store(pool, &store)
+            .await
+            .unwrap()
+            .expect("config");
+        assert_eq!(loaded.api_key.as_deref(), Some("sk-custom"));
+        assert_eq!(loaded.endpoint, config.endpoint);
+
+        // get_api_key routes custom-openai through the same store.
+        let via_get = SettingsRepository::get_api_key_with_store(pool, &store, "custom-openai")
+            .await
+            .unwrap();
+        assert_eq!(via_get.as_deref(), Some("sk-custom"));
+    }
+
+    #[tokio::test]
+    async fn legacy_custom_openai_key_in_json_is_migrated() {
+        let (_dir, db) = temp_pool().await;
+        let pool = db.pool();
+        let store = MockSecretStore::new();
+
+        // Simulate an older build that wrote the key inside the JSON.
+        let legacy_json = r#"{"endpoint":"http://localhost:8000/v1","apiKey":"sk-legacy","model":"m","maxTokens":null,"temperature":null,"topP":null}"#;
+        sqlx::query(
+            "INSERT INTO settings (id, provider, model, whisperModel, customOpenAIConfig)
+             VALUES ('1', 'custom-openai', 'm', 'large-v3', $1)",
+        )
+        .bind(legacy_json)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let loaded = SettingsRepository::get_custom_openai_config_with_store(pool, &store)
+            .await
+            .unwrap()
+            .expect("config");
+        assert_eq!(loaded.api_key.as_deref(), Some("sk-legacy"));
+        assert_eq!(store.peek("custom-openai").as_deref(), Some("sk-legacy"));
+
+        let raw: Option<String> =
+            sqlx::query_scalar("SELECT customOpenAIConfig FROM settings WHERE id = '1'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert!(!raw.expect("json").contains("sk-legacy"));
     }
 }
