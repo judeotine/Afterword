@@ -17,6 +17,9 @@
 //! - `model`: ONNX model wrapper and inference logic
 
 pub mod model;
+// The file layout (parakeet_engine/parakeet_engine.rs) is what the desktop app's
+// re-exports import from; renaming it would churn every call site.
+#[allow(clippy::module_inception)]
 pub mod parakeet_engine;
 
 pub use model::{ParakeetError, ParakeetModel, TimestampedResult};

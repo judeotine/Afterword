@@ -128,7 +128,7 @@ impl WhisperEngine {
                 // Production mode fallback (shouldn't reach here, caller should provide path)
                 log::warn!("WhisperEngine: No models directory provided, using fallback path");
                 dirs::data_dir()
-                    .or_else(|| dirs::home_dir())
+                    .or_else(dirs::home_dir)
                     .ok_or_else(|| anyhow!("Could not find system data directory"))?
                     .join("Afterword")
                     .join("models")
@@ -210,8 +210,7 @@ impl WhisperEngine {
                                              filename);
                                     ModelStatus::Corrupted {
                                         file_size: file_size_bytes,
-                                        expected_min_size: (expected_min_size_mb * 1024 * 1024)
-                                            as u64,
+                                        expected_min_size: expected_min_size_mb * 1024 * 1024,
                                     }
                                 }
                             }
@@ -233,8 +232,7 @@ impl WhisperEngine {
                                                  filename, file_size_mb, size_mb);
                                         ModelStatus::Corrupted {
                                             file_size: file_size_bytes,
-                                            expected_min_size: (expected_min_size_mb * 1024 * 1024)
-                                                as u64,
+                                            expected_min_size: expected_min_size_mb * 1024 * 1024,
                                         }
                                     }
                                 }
@@ -243,7 +241,7 @@ impl WhisperEngine {
                                          filename, file_size_mb, size_mb);
                                 ModelStatus::Corrupted {
                                     file_size: file_size_bytes,
-                                    expected_min_size: (expected_min_size_mb * 1024 * 1024) as u64,
+                                    expected_min_size: expected_min_size_mb * 1024 * 1024,
                                 }
                             }
                         } else {
@@ -259,7 +257,7 @@ impl WhisperEngine {
             let model_info = ModelInfo {
                 name: name.to_string(),
                 path: model_path,
-                size_mb: size_mb as u32,
+                size_mb,
                 accuracy: accuracy.to_string(),
                 speed: speed.to_string(),
                 status,
@@ -530,13 +528,13 @@ impl WhisperEngine {
 
         let mut word_counts = HashMap::new();
         for word in &words {
-            *word_counts.entry(word.to_lowercase()).or_insert(0) += 1;
+            *word_counts.entry(word.to_lowercase()).or_insert(0usize) += 1;
         }
 
         let total_words = words.len() as f32;
         let repeated_words: usize = word_counts
             .values()
-            .map(|&count| if count > 1 { count - 1 } else { 0 })
+            .map(|&count| count.saturating_sub(1))
             .sum();
 
         repeated_words as f32 / total_words
@@ -1171,10 +1169,7 @@ impl WhisperEngine {
 
             // Report progress every 1% or every 2 seconds for better UI responsiveness
             let time_since_last_report = last_report_time.elapsed().as_secs();
-            if progress >= last_progress_report + 1
-                || progress == 100
-                || time_since_last_report >= 2
-            {
+            if progress > last_progress_report || progress == 100 || time_since_last_report >= 2 {
                 log::info!(
                     "Download progress: {}% ({:.1} MB / {:.1} MB)",
                     progress,

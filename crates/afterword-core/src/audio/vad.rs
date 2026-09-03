@@ -34,8 +34,10 @@ impl ContinuousVadProcessor {
         const VAD_SAMPLE_RATE: u32 = 16000;
 
         // Use STRICT settings to prevent silence from reaching Whisper
-        let mut config = VadConfig::default();
-        config.sample_rate = VAD_SAMPLE_RATE as usize;
+        let mut config = VadConfig {
+            sample_rate: VAD_SAMPLE_RATE as usize,
+            ..Default::default()
+        };
 
         // CONTINUOUS SPEECH FIX: Tuned for capturing complete 5+ second utterances
         // Previous: 0.55/0.40 with 400ms redemption was fragmenting speech into 40ms segments
@@ -130,10 +132,10 @@ impl ContinuousVadProcessor {
         // Simple moving average filter (basic low-pass)
         let filter_size =
             (self.sample_rate as f64 / (cutoff_freq * self.sample_rate as f64)) as usize;
-        let filter_size = std::cmp::max(1, std::cmp::min(filter_size, 5)); // Limit filter size
+        let filter_size = filter_size.clamp(1, 5); // Limit filter size
 
         for i in 0..samples.len() {
-            let start = if i >= filter_size { i - filter_size } else { 0 };
+            let start = i.saturating_sub(filter_size);
             let end = std::cmp::min(i + filter_size + 1, samples.len());
             let sum: f32 = samples[start..end].iter().sum();
             filtered_samples.push(sum / (end - start) as f32);
@@ -405,7 +407,7 @@ where
         let mut processed = 0;
         let mut last_progress = 0u32;
         let mut chunk_count = 0;
-        let total_chunks = (total_samples + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let total_chunks = total_samples.div_ceil(CHUNK_SIZE);
 
         for chunk in samples_mono_16k.chunks(CHUNK_SIZE) {
             chunk_count += 1;
@@ -485,7 +487,7 @@ mod tests {
         let speech_interval = 10.0; // seconds between speech starts
         let speech_duration = 5.0; // seconds of speech
 
-        for i in 0..total_samples {
+        for (i, sample) in samples.iter_mut().enumerate() {
             let time = i as f32 / sample_rate as f32;
             let cycle_time = time % speech_interval;
 
@@ -497,7 +499,7 @@ mod tests {
                 let freq3 = freq1 * 3.0; // Another harmonic
 
                 let amplitude = 0.3 + 0.1 * (time * 5.0).sin(); // Amplitude modulation
-                samples[i] = amplitude
+                *sample = amplitude
                     * (0.5 * (2.0 * std::f32::consts::PI * freq1 * time).sin()
                         + 0.3 * (2.0 * std::f32::consts::PI * freq2 * time).sin()
                         + 0.2 * (2.0 * std::f32::consts::PI * freq3 * time).sin());
@@ -655,7 +657,7 @@ mod tests {
 
         // Should find speech segments
         assert!(
-            all_segments.len() >= 1,
+            !all_segments.is_empty(),
             "Expected at least 1 speech segment"
         );
     }

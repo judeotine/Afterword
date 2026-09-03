@@ -200,6 +200,9 @@ impl HardwareProfile {
         Self::has_windows_vulkan_loader(Path::new(r"C:\Windows"))
     }
 
+    // Only reached by the Windows detection path above; the unit tests exercise it on
+    // every platform, so it is dead code only in a non-Windows non-test build.
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn has_windows_vulkan_loader(system_root: &Path) -> bool {
         system_root.join("System32").join("vulkan-1.dll").is_file()
     }
