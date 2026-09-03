@@ -74,7 +74,9 @@ jobs:
 
       - name: Build tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo test --workspace --no-run
+        run: |
+          cargo test --workspace --no-run
+          cargo test -p afterword --lib --no-run
 
       - name: Write Common Controls v6 manifest beside app test binaries (Windows)
         if: runner.os == 'Windows'
