@@ -145,6 +145,7 @@ func (s *Server) Routes(router chi.Router) {
 					r.Patch("/", s.handleUpdateMeeting)
 					r.Delete("/", s.handleDeleteMeeting)
 					r.Post("/finalize", s.handleFinalizeMeeting)
+					r.Post("/upload-urls", s.handleUploadTargets)
 					r.Put("/segments", s.handleReplaceSegments)
 					r.Get("/segments", s.handleListSegments)
 					r.Post("/share", s.handleCreateShareLink)

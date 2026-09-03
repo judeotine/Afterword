@@ -35,10 +35,6 @@ func TestVisibilityMatrix(t *testing.T) {
 		{meetings.VisibilityWorkspace, memberActor, "member", true, false},
 		{meetings.VisibilityWorkspace, adminActor, "admin", true, true},
 		{meetings.VisibilityWorkspace, strangerActor, "stranger", false, false},
-		{meetings.VisibilityLink, ownerActor, "owner", true, true},
-		{meetings.VisibilityLink, memberActor, "member", true, false},
-		{meetings.VisibilityLink, adminActor, "admin", true, true},
-		{meetings.VisibilityLink, strangerActor, "stranger", false, false},
 	}
 
 	for _, testCase := range cases {
@@ -51,6 +47,28 @@ func TestVisibilityMatrix(t *testing.T) {
 				t.Fatalf("ManageableBy = %v, want %v", got, testCase.manage)
 			}
 		})
+	}
+}
+
+func TestLinkSharingDoesNotWidenMemberVisibility(t *testing.T) {
+	workspace := uuid.New()
+	owner := uuid.New()
+	member := auth.Membership{WorkspaceID: workspace, UserID: uuid.New(), Role: auth.RoleAdmin}
+
+	meeting := meetings.Meeting{
+		WorkspaceID: workspace,
+		OwnerUserID: &owner,
+		Visibility:  meetings.VisibilityPrivate,
+		LinkSharing: true,
+	}
+	if meeting.VisibleTo(member) || meeting.ManageableBy(member) {
+		t.Fatal("turning on link sharing exposed a private meeting to another member")
+	}
+
+	meeting.Visibility = meetings.VisibilityWorkspace
+	meeting.LinkSharing = false
+	if !meeting.VisibleTo(member) {
+		t.Fatal("revoking a share link hid a workspace-visible meeting from a member")
 	}
 }
 

@@ -13,14 +13,19 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/db/sqlcgen"
 )
 
+const (
+	DefaultShareRateWindow = time.Minute
+	DefaultShareRateLimit  = 120
+)
+
 type ShareParams struct {
 	Permission string
 	ExpiresAt  *time.Time
 }
 
-func (s *Service) CreateShareLink(ctx context.Context, actor auth.Membership, meetingID uuid.UUID, params ShareParams) (ShareLink, error) {
+func (s *Service) CreateShareLink(ctx context.Context, actor auth.Membership, meetingID uuid.UUID, params ShareParams) (ShareLink, Meeting, error) {
 	if _, err := s.manageable(ctx, actor, meetingID); err != nil {
-		return ShareLink{}, err
+		return ShareLink{}, Meeting{}, err
 	}
 	permission := params.Permission
 	if permission == "" {
@@ -28,12 +33,12 @@ func (s *Service) CreateShareLink(ctx context.Context, actor auth.Membership, me
 	}
 	token, err := auth.NewOpaqueToken(ShareTokenBytes)
 	if err != nil {
-		return ShareLink{}, fmt.Errorf("generate share token: %w", err)
+		return ShareLink{}, Meeting{}, fmt.Errorf("generate share token: %w", err)
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return ShareLink{}, fmt.Errorf("begin share transaction: %w", err)
+		return ShareLink{}, Meeting{}, fmt.Errorf("begin share transaction: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
@@ -43,30 +48,33 @@ func (s *Service) CreateShareLink(ctx context.Context, actor auth.Membership, me
 	row, err := queries.CreateShareLink(ctx, sqlcgen.CreateShareLinkParams{
 		MeetingID:   meetingID,
 		WorkspaceID: actor.WorkspaceID,
-		Token:       token,
+		TokenHash:   HashShareToken(token),
 		Permission:  permission,
 		ExpiresAt:   optionalTimestamp(params.ExpiresAt),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ShareLink{}, ErrMeetingNotFound
+			return ShareLink{}, Meeting{}, ErrMeetingNotFound
 		}
-		return ShareLink{}, fmt.Errorf("create share link: %w", err)
+		return ShareLink{}, Meeting{}, fmt.Errorf("create share link: %w", err)
 	}
 
-	visibility := VisibilityLink
-	if _, err := queries.UpdateMeetingDetails(ctx, sqlcgen.UpdateMeetingDetailsParams{
-		ID:          meetingID,
-		WorkspaceID: actor.WorkspaceID,
-		Visibility:  &visibility,
-	}); err != nil {
-		return ShareLink{}, fmt.Errorf("open meeting for link sharing: %w", err)
+	updated, err := queries.SetMeetingLinkSharing(ctx, sqlcgen.SetMeetingLinkSharingParams{
+		ID:                 meetingID,
+		WorkspaceID:        actor.WorkspaceID,
+		LinkSharingEnabled: true,
+	})
+	if err != nil {
+		return ShareLink{}, Meeting{}, fmt.Errorf("enable link sharing: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return ShareLink{}, fmt.Errorf("commit share transaction: %w", err)
+		return ShareLink{}, Meeting{}, fmt.Errorf("commit share transaction: %w", err)
 	}
-	return shareLinkFromRow(row), nil
+
+	link := shareLinkFromRow(row)
+	link.Token = token
+	return link, meetingFromRow(updated), nil
 }
 
 func (s *Service) ListShareLinks(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) ([]ShareLink, error) {
@@ -87,30 +95,44 @@ func (s *Service) ListShareLinks(ctx context.Context, actor auth.Membership, mee
 	return links, nil
 }
 
-func (s *Service) RevokeShareLinks(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) error {
+func (s *Service) RevokeShareLinks(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Meeting, error) {
 	if _, err := s.manageable(ctx, actor, meetingID); err != nil {
-		return err
+		return Meeting{}, err
 	}
-	if _, err := s.queries.DeleteShareLinksForMeeting(ctx, sqlcgen.DeleteShareLinksForMeetingParams{
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Meeting{}, fmt.Errorf("begin revoke transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	queries := s.queries.WithTx(tx)
+	if _, err := queries.DeleteShareLinksForMeeting(ctx, sqlcgen.DeleteShareLinksForMeetingParams{
 		MeetingID:   meetingID,
 		WorkspaceID: actor.WorkspaceID,
 	}); err != nil {
-		return fmt.Errorf("revoke share links: %w", err)
+		return Meeting{}, fmt.Errorf("revoke share links: %w", err)
 	}
 
-	visibility := VisibilityPrivate
-	if _, err := s.queries.UpdateMeetingDetails(ctx, sqlcgen.UpdateMeetingDetailsParams{
-		ID:          meetingID,
-		WorkspaceID: actor.WorkspaceID,
-		Visibility:  &visibility,
-	}); err != nil {
-		return fmt.Errorf("close meeting to link sharing: %w", err)
+	updated, err := queries.SetMeetingLinkSharing(ctx, sqlcgen.SetMeetingLinkSharingParams{
+		ID:                 meetingID,
+		WorkspaceID:        actor.WorkspaceID,
+		LinkSharingEnabled: false,
+	})
+	if err != nil {
+		return Meeting{}, fmt.Errorf("disable link sharing: %w", err)
 	}
-	return nil
+
+	if err := tx.Commit(ctx); err != nil {
+		return Meeting{}, fmt.Errorf("commit revoke transaction: %w", err)
+	}
+	return meetingFromRow(updated), nil
 }
 
 func (s *Service) Shared(ctx context.Context, token string) (Shared, error) {
-	row, err := s.queries.GetMeetingByShareToken(ctx, token)
+	row, err := s.queries.GetMeetingByShareTokenHash(ctx, HashShareToken(token))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Shared{}, ErrShareLinkNotFound
@@ -124,8 +146,8 @@ func (s *Service) Shared(ctx context.Context, token string) (Shared, error) {
 	}
 
 	meeting := meetingFromRow(row.Meeting)
-	if meeting.Visibility != VisibilityLink {
-		return Shared{}, ErrShareLinkNotFound
+	if !meeting.LinkSharing {
+		return Shared{}, ErrShareLinkClosed
 	}
 
 	downloads, err := s.downloads(ctx, meeting)
@@ -141,4 +163,54 @@ func (s *Service) SharedSegments(ctx context.Context, token string, afterSeq *in
 		return SegmentPage{}, err
 	}
 	return s.segments(ctx, shared.Meeting.WorkspaceID, shared.Meeting.ID, afterSeq, pageSize)
+}
+
+func (s *Service) AllowSharedRequest(ctx context.Context, requestIP string) error {
+	if requestIP == "" {
+		return nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin share rate limit transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	queries := s.queries.WithTx(tx)
+	if err := queries.LockShareLinkIP(ctx, requestIP); err != nil {
+		return fmt.Errorf("lock share link address: %w", err)
+	}
+
+	now := s.clock()
+	_, err = queries.TryRecordShareLinkRequest(ctx, sqlcgen.TryRecordShareLinkRequestParams{
+		RequestIp:    requestIP,
+		RecordedAt:   optionalTimestamp(&now),
+		Since:        optionalTimestamp(timePointer(now.Add(-s.shareWindow))),
+		RequestLimit: s.shareLimit,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRateLimited
+		}
+		return fmt.Errorf("record share link request: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit share rate limit transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) SweepShareLinkRequests(ctx context.Context) (int64, error) {
+	before := s.clock().Add(-24 * time.Hour)
+	removed, err := s.queries.DeleteExpiredShareLinkRequests(ctx, optionalTimestamp(&before))
+	if err != nil {
+		return 0, fmt.Errorf("sweep share link requests: %w", err)
+	}
+	return removed, nil
+}
+
+func timePointer(at time.Time) *time.Time {
+	return &at
 }

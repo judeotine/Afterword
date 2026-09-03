@@ -48,10 +48,22 @@ func (q *Queries) CountSegmentsForMeeting(ctx context.Context, arg CountSegments
 	return count, err
 }
 
+const deleteExpiredShareLinkRequests = `-- name: DeleteExpiredShareLinkRequests :execrows
+DELETE FROM share_link_requests WHERE created_at < $1
+`
+
+func (q *Queries) DeleteExpiredShareLinkRequests(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredShareLinkRequests, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteMeetingReturning = `-- name: DeleteMeetingReturning :one
 DELETE FROM meetings
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
 `
 
 type DeleteMeetingReturningParams struct {
@@ -80,6 +92,8 @@ func (q *Queries) DeleteMeetingReturning(ctx context.Context, arg DeleteMeetingR
 		&i.CreatedAt,
 		&i.AudioBytes,
 		&i.TranscriptBytes,
+		&i.LinkSharingEnabled,
+		&i.FinalizeGeneration,
 	)
 	return i, err
 }
@@ -131,18 +145,20 @@ UPDATE meetings SET
     status = $1,
     audio_bytes = $2,
     transcript_bytes = $3,
-    duration_s = COALESCE($4, duration_s)
-WHERE id = $5 AND workspace_id = $6
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes
+    duration_s = COALESCE($4, duration_s),
+    finalize_generation = $5
+WHERE id = $6 AND workspace_id = $7
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
 `
 
 type FinalizeMeetingObjectsParams struct {
-	Status          string    `json:"status"`
-	AudioBytes      *int64    `json:"audio_bytes"`
-	TranscriptBytes *int64    `json:"transcript_bytes"`
-	DurationS       *int32    `json:"duration_s"`
-	ID              uuid.UUID `json:"id"`
-	WorkspaceID     uuid.UUID `json:"workspace_id"`
+	Status             string    `json:"status"`
+	AudioBytes         *int64    `json:"audio_bytes"`
+	TranscriptBytes    *int64    `json:"transcript_bytes"`
+	DurationS          *int32    `json:"duration_s"`
+	FinalizeGeneration int32     `json:"finalize_generation"`
+	ID                 uuid.UUID `json:"id"`
+	WorkspaceID        uuid.UUID `json:"workspace_id"`
 }
 
 func (q *Queries) FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetingObjectsParams) (Meeting, error) {
@@ -151,6 +167,7 @@ func (q *Queries) FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetin
 		arg.AudioBytes,
 		arg.TranscriptBytes,
 		arg.DurationS,
+		arg.FinalizeGeneration,
 		arg.ID,
 		arg.WorkspaceID,
 	)
@@ -173,25 +190,27 @@ func (q *Queries) FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetin
 		&i.CreatedAt,
 		&i.AudioBytes,
 		&i.TranscriptBytes,
+		&i.LinkSharingEnabled,
+		&i.FinalizeGeneration,
 	)
 	return i, err
 }
 
-const getMeetingByShareToken = `-- name: GetMeetingByShareToken :one
-SELECT meetings.id, meetings.workspace_id, meetings.owner_user_id, meetings.title, meetings.source, meetings.platform, meetings.started_at, meetings.duration_s, meetings.consent_state, meetings.visibility, meetings.folder_id, meetings.audio_object, meetings.transcript_object, meetings.status, meetings.created_at, meetings.audio_bytes, meetings.transcript_bytes, share_links.id, share_links.meeting_id, share_links.token, share_links.permission, share_links.expires_at, share_links.created_at
+const getMeetingByShareTokenHash = `-- name: GetMeetingByShareTokenHash :one
+SELECT meetings.id, meetings.workspace_id, meetings.owner_user_id, meetings.title, meetings.source, meetings.platform, meetings.started_at, meetings.duration_s, meetings.consent_state, meetings.visibility, meetings.folder_id, meetings.audio_object, meetings.transcript_object, meetings.status, meetings.created_at, meetings.audio_bytes, meetings.transcript_bytes, meetings.link_sharing_enabled, meetings.finalize_generation, share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash
 FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
-WHERE share_links.token = $1
+WHERE share_links.token_hash = $1
 `
 
-type GetMeetingByShareTokenRow struct {
+type GetMeetingByShareTokenHashRow struct {
 	Meeting   Meeting   `json:"meeting"`
 	ShareLink ShareLink `json:"share_link"`
 }
 
-func (q *Queries) GetMeetingByShareToken(ctx context.Context, token string) (GetMeetingByShareTokenRow, error) {
-	row := q.db.QueryRow(ctx, getMeetingByShareToken, token)
-	var i GetMeetingByShareTokenRow
+func (q *Queries) GetMeetingByShareTokenHash(ctx context.Context, tokenHash string) (GetMeetingByShareTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getMeetingByShareTokenHash, tokenHash)
+	var i GetMeetingByShareTokenHashRow
 	err := row.Scan(
 		&i.Meeting.ID,
 		&i.Meeting.WorkspaceID,
@@ -210,14 +229,49 @@ func (q *Queries) GetMeetingByShareToken(ctx context.Context, token string) (Get
 		&i.Meeting.CreatedAt,
 		&i.Meeting.AudioBytes,
 		&i.Meeting.TranscriptBytes,
+		&i.Meeting.LinkSharingEnabled,
+		&i.Meeting.FinalizeGeneration,
 		&i.ShareLink.ID,
 		&i.ShareLink.MeetingID,
-		&i.ShareLink.Token,
 		&i.ShareLink.Permission,
 		&i.ShareLink.ExpiresAt,
 		&i.ShareLink.CreatedAt,
+		&i.ShareLink.TokenHash,
 	)
 	return i, err
+}
+
+const listClipObjectsForMeeting = `-- name: ListClipObjectsForMeeting :many
+SELECT clips.object FROM clips
+JOIN meetings ON meetings.id = clips.meeting_id
+WHERE clips.meeting_id = $1
+  AND meetings.workspace_id = $2
+  AND clips.object IS NOT NULL
+`
+
+type ListClipObjectsForMeetingParams struct {
+	MeetingID   uuid.UUID `json:"meeting_id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListClipObjectsForMeeting(ctx context.Context, arg ListClipObjectsForMeetingParams) ([]*string, error) {
+	rows, err := q.db.Query(ctx, listClipObjectsForMeeting, arg.MeetingID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []*string{}
+	for rows.Next() {
+		var object *string
+		if err := rows.Scan(&object); err != nil {
+			return nil, err
+		}
+		items = append(items, object)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listFolders = `-- name: ListFolders :many
@@ -253,7 +307,7 @@ func (q *Queries) ListFolders(ctx context.Context, workspaceID uuid.UUID) ([]Fol
 }
 
 const listMeetingsPage = `-- name: ListMeetingsPage :many
-SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes FROM meetings
+SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation FROM meetings
 WHERE workspace_id = $1
   AND (visibility <> 'private' OR owner_user_id = $2)
   AND ($3::uuid IS NULL OR folder_id = $3::uuid)
@@ -320,6 +374,8 @@ func (q *Queries) ListMeetingsPage(ctx context.Context, arg ListMeetingsPagePara
 			&i.CreatedAt,
 			&i.AudioBytes,
 			&i.TranscriptBytes,
+			&i.LinkSharingEnabled,
+			&i.FinalizeGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -397,7 +453,7 @@ func (q *Queries) ListSegmentsBySeq(ctx context.Context, arg ListSegmentsBySeqPa
 }
 
 const listShareLinksForMeeting = `-- name: ListShareLinksForMeeting :many
-SELECT share_links.id, share_links.meeting_id, share_links.token, share_links.permission, share_links.expires_at, share_links.created_at FROM share_links
+SELECT share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
 WHERE share_links.meeting_id = $1
   AND meetings.workspace_id = $2
@@ -421,10 +477,10 @@ func (q *Queries) ListShareLinksForMeeting(ctx context.Context, arg ListShareLin
 		if err := rows.Scan(
 			&i.ID,
 			&i.MeetingID,
-			&i.Token,
 			&i.Permission,
 			&i.ExpiresAt,
 			&i.CreatedAt,
+			&i.TokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -434,6 +490,83 @@ func (q *Queries) ListShareLinksForMeeting(ctx context.Context, arg ListShareLin
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockShareLinkIP = `-- name: LockShareLinkIP :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text))
+`
+
+func (q *Queries) LockShareLinkIP(ctx context.Context, requestIp string) error {
+	_, err := q.db.Exec(ctx, lockShareLinkIP, requestIp)
+	return err
+}
+
+const setMeetingLinkSharing = `-- name: SetMeetingLinkSharing :one
+UPDATE meetings SET link_sharing_enabled = $1
+WHERE id = $2 AND workspace_id = $3
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+`
+
+type SetMeetingLinkSharingParams struct {
+	LinkSharingEnabled bool      `json:"link_sharing_enabled"`
+	ID                 uuid.UUID `json:"id"`
+	WorkspaceID        uuid.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) SetMeetingLinkSharing(ctx context.Context, arg SetMeetingLinkSharingParams) (Meeting, error) {
+	row := q.db.QueryRow(ctx, setMeetingLinkSharing, arg.LinkSharingEnabled, arg.ID, arg.WorkspaceID)
+	var i Meeting
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.OwnerUserID,
+		&i.Title,
+		&i.Source,
+		&i.Platform,
+		&i.StartedAt,
+		&i.DurationS,
+		&i.ConsentState,
+		&i.Visibility,
+		&i.FolderID,
+		&i.AudioObject,
+		&i.TranscriptObject,
+		&i.Status,
+		&i.CreatedAt,
+		&i.AudioBytes,
+		&i.TranscriptBytes,
+		&i.LinkSharingEnabled,
+		&i.FinalizeGeneration,
+	)
+	return i, err
+}
+
+const tryRecordShareLinkRequest = `-- name: TryRecordShareLinkRequest :one
+INSERT INTO share_link_requests (request_ip, created_at)
+SELECT $1, $2
+WHERE (
+    SELECT count(*) FROM share_link_requests AS recent
+    WHERE recent.request_ip = $1 AND recent.created_at >= $3
+) < $4::bigint
+RETURNING id
+`
+
+type TryRecordShareLinkRequestParams struct {
+	RequestIp    string             `json:"request_ip"`
+	RecordedAt   pgtype.Timestamptz `json:"recorded_at"`
+	Since        pgtype.Timestamptz `json:"since"`
+	RequestLimit int64              `json:"request_limit"`
+}
+
+func (q *Queries) TryRecordShareLinkRequest(ctx context.Context, arg TryRecordShareLinkRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, tryRecordShareLinkRequest,
+		arg.RequestIp,
+		arg.RecordedAt,
+		arg.Since,
+		arg.RequestLimit,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updateFolderDetails = `-- name: UpdateFolderDetails :one
@@ -483,7 +616,7 @@ UPDATE meetings SET
         ELSE COALESCE($4, folder_id)
     END
 WHERE id = $5 AND workspace_id = $6
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
 `
 
 type UpdateMeetingDetailsParams struct {
@@ -523,6 +656,8 @@ func (q *Queries) UpdateMeetingDetails(ctx context.Context, arg UpdateMeetingDet
 		&i.CreatedAt,
 		&i.AudioBytes,
 		&i.TranscriptBytes,
+		&i.LinkSharingEnabled,
+		&i.FinalizeGeneration,
 	)
 	return i, err
 }

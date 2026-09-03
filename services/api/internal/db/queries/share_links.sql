@@ -1,6 +1,6 @@
 -- name: CreateShareLink :one
-INSERT INTO share_links (meeting_id, token, permission, expires_at)
-SELECT sqlc.arg(meeting_id), sqlc.arg(token), sqlc.arg(permission), sqlc.narg(expires_at)
+INSERT INTO share_links (meeting_id, token_hash, permission, expires_at)
+SELECT sqlc.arg(meeting_id), sqlc.arg(token_hash), sqlc.arg(permission), sqlc.narg(expires_at)
 FROM meetings
 WHERE meetings.id = sqlc.arg(meeting_id) AND meetings.workspace_id = sqlc.arg(workspace_id)
 RETURNING *;
@@ -10,8 +10,8 @@ SELECT share_links.* FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
 WHERE share_links.id = sqlc.arg(id) AND meetings.workspace_id = sqlc.arg(workspace_id);
 
--- name: GetShareLinkByToken :one
-SELECT * FROM share_links WHERE token = sqlc.arg(token);
+-- name: GetShareLinkByTokenHash :one
+SELECT * FROM share_links WHERE token_hash = sqlc.arg(token_hash);
 
 -- name: ListShareLinksByWorkspace :many
 SELECT share_links.* FROM share_links

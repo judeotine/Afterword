@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/rs/zerolog"
 
 	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/db/sqlcgen"
@@ -18,38 +21,49 @@ import (
 )
 
 const (
-	DefaultUploadTTL     = 30 * time.Minute
-	DefaultDownloadTTL   = 15 * time.Minute
-	DefaultMaxAudioBytes = int64(2) << 30
-	audioContentType     = "application/octet-stream"
-	transcriptType       = "application/json"
+	DefaultUploadTTL          = 30 * time.Minute
+	DefaultDownloadTTL        = 15 * time.Minute
+	DefaultMaxAudioBytes      = int64(2) << 30
+	DefaultMaxTranscriptBytes = int64(64) << 20
+	audioContentType          = "application/octet-stream"
+	transcriptType            = "application/json"
 )
 
 type Enqueuer interface {
 	Enqueue(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*jobs.Job, error)
+	EnqueueUnique(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*jobs.Job, bool, error)
+	GetByIdempotencyKey(ctx context.Context, kind string, idempotencyKey string) (*jobs.Job, error)
 }
 
 type ServiceOptions struct {
-	Pool          *pgxpool.Pool
-	Storage       storage.Client
-	Buckets       storage.Buckets
-	Jobs          Enqueuer
-	UploadTTL     time.Duration
-	DownloadTTL   time.Duration
-	MaxAudioBytes int64
-	Clock         func() time.Time
+	Pool               *pgxpool.Pool
+	Storage            storage.Client
+	Buckets            storage.Buckets
+	Jobs               Enqueuer
+	Logger             zerolog.Logger
+	UploadTTL          time.Duration
+	DownloadTTL        time.Duration
+	MaxAudioBytes      int64
+	MaxTranscriptBytes int64
+	ShareRateWindow    time.Duration
+	ShareRateLimit     int64
+	Clock              func() time.Time
 }
 
 type Service struct {
-	pool          *pgxpool.Pool
-	queries       *sqlcgen.Queries
-	storage       storage.Client
-	buckets       storage.Buckets
-	jobs          Enqueuer
-	uploadTTL     time.Duration
-	downloadTTL   time.Duration
-	maxAudioBytes int64
-	clock         func() time.Time
+	pool               *pgxpool.Pool
+	queries            *sqlcgen.Queries
+	storage            storage.Client
+	buckets            storage.Buckets
+	jobs               Enqueuer
+	logger             zerolog.Logger
+	uploadTTL          time.Duration
+	downloadTTL        time.Duration
+	maxAudioBytes      int64
+	maxTranscriptBytes int64
+	shareWindow        time.Duration
+	shareLimit         int64
+	clock              func() time.Time
 }
 
 func NewService(options ServiceOptions) (*Service, error) {
@@ -63,15 +77,19 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}
 
 	service := &Service{
-		pool:          options.Pool,
-		queries:       sqlcgen.New(options.Pool),
-		storage:       options.Storage,
-		buckets:       options.Buckets.WithDefaults(),
-		jobs:          options.Jobs,
-		uploadTTL:     options.UploadTTL,
-		downloadTTL:   options.DownloadTTL,
-		maxAudioBytes: options.MaxAudioBytes,
-		clock:         options.Clock,
+		pool:               options.Pool,
+		queries:            sqlcgen.New(options.Pool),
+		storage:            options.Storage,
+		buckets:            options.Buckets.WithDefaults(),
+		jobs:               options.Jobs,
+		logger:             options.Logger,
+		uploadTTL:          options.UploadTTL,
+		downloadTTL:        options.DownloadTTL,
+		maxAudioBytes:      options.MaxAudioBytes,
+		maxTranscriptBytes: options.MaxTranscriptBytes,
+		shareWindow:        options.ShareRateWindow,
+		shareLimit:         options.ShareRateLimit,
+		clock:              options.Clock,
 	}
 	if service.uploadTTL <= 0 {
 		service.uploadTTL = DefaultUploadTTL
@@ -81,6 +99,15 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}
 	if service.maxAudioBytes <= 0 {
 		service.maxAudioBytes = DefaultMaxAudioBytes
+	}
+	if service.maxTranscriptBytes <= 0 {
+		service.maxTranscriptBytes = DefaultMaxTranscriptBytes
+	}
+	if service.shareWindow <= 0 {
+		service.shareWindow = DefaultShareRateWindow
+	}
+	if service.shareLimit <= 0 {
+		service.shareLimit = DefaultShareRateLimit
 	}
 	if service.clock == nil {
 		service.clock = func() time.Time { return time.Now().UTC() }
@@ -116,7 +143,16 @@ func (s *Service) Create(ctx context.Context, actor auth.Membership, params Crea
 		visibility = VisibilityPrivate
 	}
 
-	row, err := s.queries.CreateMeeting(ctx, sqlcgen.CreateMeetingParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Created{}, fmt.Errorf("begin create transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	queries := s.queries.WithTx(tx)
+	row, err := queries.CreateMeeting(ctx, sqlcgen.CreateMeetingParams{
 		WorkspaceID:  actor.WorkspaceID,
 		OwnerUserID:  &owner,
 		Title:        params.Title,
@@ -136,7 +172,7 @@ func (s *Service) Create(ctx context.Context, actor auth.Membership, params Crea
 	audioKey := storage.AudioKey(actor.WorkspaceID, row.ID, params.AudioExtension)
 	transcriptKey := storage.TranscriptKey(actor.WorkspaceID, row.ID)
 
-	updated, err := s.queries.UpdateMeeting(ctx, sqlcgen.UpdateMeetingParams{
+	updated, err := queries.UpdateMeeting(ctx, sqlcgen.UpdateMeetingParams{
 		ID:               row.ID,
 		WorkspaceID:      actor.WorkspaceID,
 		AudioObject:      &audioKey,
@@ -146,23 +182,42 @@ func (s *Service) Create(ctx context.Context, actor auth.Membership, params Crea
 		return Created{}, fmt.Errorf("record meeting objects: %w", err)
 	}
 
-	audio, err := s.storage.PresignUpload(ctx, s.buckets.Audio, audioKey, audioContentType, s.maxAudioBytes, s.uploadTTL)
+	meeting := meetingFromRow(updated)
+	upload, err := s.uploadTargets(ctx, meeting)
 	if err != nil {
-		return Created{}, fmt.Errorf("presign audio upload: %w", err)
+		return Created{}, err
 	}
-	transcript, err := s.storage.PresignUpload(ctx, s.buckets.Transcripts, transcriptKey, transcriptType, s.maxAudioBytes, s.uploadTTL)
-	if err != nil {
-		return Created{}, fmt.Errorf("presign transcript upload: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return Created{}, fmt.Errorf("commit create transaction: %w", err)
 	}
+	return Created{Meeting: meeting, Upload: upload}, nil
+}
 
-	return Created{
-		Meeting: meetingFromRow(updated),
-		Upload: UploadTargets{
-			Audio:      audio,
-			Transcript: transcript,
-			ExpiresAt:  s.clock().Add(s.uploadTTL),
-		},
-	}, nil
+func (s *Service) UploadTargets(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Created, error) {
+	meeting, err := s.manageable(ctx, actor, meetingID)
+	if err != nil {
+		return Created{}, err
+	}
+	if meeting.AudioObject == "" || meeting.TranscriptObject == "" {
+		return Created{}, ErrNoObjects
+	}
+	upload, err := s.uploadTargets(ctx, meeting)
+	if err != nil {
+		return Created{}, err
+	}
+	return Created{Meeting: meeting, Upload: upload}, nil
+}
+
+func (s *Service) uploadTargets(ctx context.Context, meeting Meeting) (UploadTargets, error) {
+	audio, err := s.storage.PresignUpload(ctx, s.buckets.Audio, meeting.AudioObject, audioContentType, s.maxAudioBytes, s.uploadTTL)
+	if err != nil {
+		return UploadTargets{}, fmt.Errorf("presign audio upload: %w", err)
+	}
+	transcript, err := s.storage.PresignUpload(ctx, s.buckets.Transcripts, meeting.TranscriptObject, transcriptType, s.maxTranscriptBytes, s.uploadTTL)
+	if err != nil {
+		return UploadTargets{}, fmt.Errorf("presign transcript upload: %w", err)
+	}
+	return UploadTargets{Audio: audio, Transcript: transcript, ExpiresAt: s.clock().Add(s.uploadTTL)}, nil
 }
 
 func (s *Service) Get(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Detail, error) {
@@ -280,6 +335,14 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 		return err
 	}
 
+	clipObjects, err := s.queries.ListClipObjectsForMeeting(ctx, sqlcgen.ListClipObjectsForMeetingParams{
+		MeetingID:   meetingID,
+		WorkspaceID: actor.WorkspaceID,
+	})
+	if err != nil {
+		return fmt.Errorf("read clip objects: %w", err)
+	}
+
 	row, err := s.queries.DeleteMeetingReturning(ctx, sqlcgen.DeleteMeetingReturningParams{
 		ID:          meetingID,
 		WorkspaceID: actor.WorkspaceID,
@@ -294,16 +357,31 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 	payload := PurgePayload{
 		WorkspaceID: actor.WorkspaceID,
 		MeetingID:   meetingID,
-		Objects:     s.objectsFor(meetingFromRow(row)),
+		Objects:     s.objectsFor(meetingFromRow(row), clipObjects),
 	}
 	if len(payload.Objects) == 0 {
 		return nil
 	}
-
-	if _, err := s.jobs.Enqueue(ctx, KindPurge, payload, time.Time{}, purgeKey(meetingID)); err != nil {
-		return PurgeObjects(ctx, s.storage, payload)
-	}
+	s.schedulePurge(ctx, payload)
 	return nil
+}
+
+func (s *Service) schedulePurge(ctx context.Context, payload PurgePayload) {
+	key := purgeKey(payload.MeetingID)
+	if _, err := s.jobs.Enqueue(ctx, KindPurge, payload, time.Time{}, key); err == nil {
+		return
+	}
+	if err := PurgeObjects(ctx, s.storage, payload); err == nil {
+		return
+	}
+	if _, err := s.jobs.Enqueue(ctx, KindPurge, payload, time.Time{}, key); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("meeting_id", payload.MeetingID.String()).
+			Str("workspace_id", payload.WorkspaceID.String()).
+			Int("objects", len(payload.Objects)).
+			Msg("meeting objects were left behind: the purge job could not be queued and the inline purge failed")
+	}
 }
 
 func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Finalized, error) {
@@ -312,43 +390,38 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 		return Finalized{}, err
 	}
 
-	var audioBytes, transcriptBytes *int64
-	if meeting.AudioObject != "" {
-		info, headErr := s.storage.Head(ctx, s.buckets.Audio, meeting.AudioObject)
-		switch {
-		case headErr == nil:
-			if info.Size > s.maxAudioBytes {
-				return Finalized{}, ErrObjectTooLarge
-			}
-			size := info.Size
-			audioBytes = &size
-		case errors.Is(headErr, storage.ErrNotFound):
-		default:
-			return Finalized{}, fmt.Errorf("head audio object: %w", headErr)
-		}
+	audioBytes, err := s.objectSize(ctx, s.buckets.Audio, meeting.AudioObject, s.maxAudioBytes)
+	if err != nil {
+		return Finalized{}, err
 	}
-	if meeting.TranscriptObject != "" {
-		info, headErr := s.storage.Head(ctx, s.buckets.Transcripts, meeting.TranscriptObject)
-		switch {
-		case headErr == nil:
-			size := info.Size
-			transcriptBytes = &size
-		case errors.Is(headErr, storage.ErrNotFound):
-		default:
-			return Finalized{}, fmt.Errorf("head transcript object: %w", headErr)
-		}
+	transcriptBytes, err := s.objectSize(ctx, s.buckets.Transcripts, meeting.TranscriptObject, s.maxTranscriptBytes)
+	if err != nil {
+		return Finalized{}, err
 	}
-
 	if audioBytes == nil && transcriptBytes == nil {
 		return Finalized{}, ErrNoObjects
 	}
 
+	kinds := make([]string, 0, 2)
+	if audioBytes != nil && transcriptBytes == nil {
+		kinds = append(kinds, KindTranscribe)
+	}
+	if transcriptBytes != nil {
+		kinds = append(kinds, KindSummarise)
+	}
+
+	generation, err := s.nextGeneration(ctx, meeting, kinds)
+	if err != nil {
+		return Finalized{}, err
+	}
+
 	row, err := s.queries.FinalizeMeetingObjects(ctx, sqlcgen.FinalizeMeetingObjectsParams{
-		ID:              meetingID,
-		WorkspaceID:     actor.WorkspaceID,
-		Status:          StatusReady,
-		AudioBytes:      audioBytes,
-		TranscriptBytes: transcriptBytes,
+		ID:                 meetingID,
+		WorkspaceID:        actor.WorkspaceID,
+		Status:             StatusReady,
+		AudioBytes:         audioBytes,
+		TranscriptBytes:    transcriptBytes,
+		FinalizeGeneration: generation,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -358,31 +431,67 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 	}
 
 	finalized := Finalized{Meeting: meetingFromRow(row), Queued: []string{}}
-	if audioBytes != nil && transcriptBytes == nil {
+	for _, kind := range kinds {
+		bucket := s.buckets.Audio
+		key := finalized.Meeting.AudioObject
+		if kind == KindSummarise {
+			bucket = s.buckets.Transcripts
+			key = finalized.Meeting.TranscriptObject
+		}
 		payload := TranscodePayload{
 			WorkspaceID: actor.WorkspaceID,
 			MeetingID:   meetingID,
-			Bucket:      s.buckets.Audio,
-			Key:         finalized.Meeting.AudioObject,
+			Bucket:      bucket,
+			Key:         key,
+			Generation:  generation,
 		}
-		if _, err := s.jobs.Enqueue(ctx, KindTranscribe, payload, time.Time{}, jobKey(KindTranscribe, meetingID)); err != nil {
-			return Finalized{}, fmt.Errorf("enqueue transcribe: %w", err)
+		_, created, err := s.jobs.EnqueueUnique(ctx, kind, payload, time.Time{}, jobKey(kind, meetingID, generation))
+		if err != nil {
+			return Finalized{}, fmt.Errorf("enqueue %s: %w", kind, err)
 		}
-		finalized.Queued = append(finalized.Queued, KindTranscribe)
-	}
-	if transcriptBytes != nil {
-		payload := TranscodePayload{
-			WorkspaceID: actor.WorkspaceID,
-			MeetingID:   meetingID,
-			Bucket:      s.buckets.Transcripts,
-			Key:         finalized.Meeting.TranscriptObject,
+		if created {
+			finalized.Queued = append(finalized.Queued, kind)
 		}
-		if _, err := s.jobs.Enqueue(ctx, KindSummarise, payload, time.Time{}, jobKey(KindSummarise, meetingID)); err != nil {
-			return Finalized{}, fmt.Errorf("enqueue summarise: %w", err)
-		}
-		finalized.Queued = append(finalized.Queued, KindSummarise)
 	}
 	return finalized, nil
+}
+
+func (s *Service) objectSize(ctx context.Context, bucket, key string, maximum int64) (*int64, error) {
+	if key == "" {
+		return nil, nil
+	}
+	info, err := s.storage.Head(ctx, bucket, key)
+	switch {
+	case err == nil:
+		if info.Size > maximum {
+			return nil, ErrObjectTooLarge
+		}
+		size := info.Size
+		return &size, nil
+	case errors.Is(err, storage.ErrNotFound):
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("head object %s/%s: %w", bucket, key, err)
+	}
+}
+
+func (s *Service) nextGeneration(ctx context.Context, meeting Meeting, kinds []string) (int32, error) {
+	if meeting.Generation <= 0 {
+		return 1, nil
+	}
+	for _, kind := range kinds {
+		job, err := s.jobs.GetByIdempotencyKey(ctx, kind, jobKey(kind, meeting.ID, meeting.Generation))
+		if err != nil {
+			if errors.Is(err, jobs.ErrNotFound) {
+				continue
+			}
+			return 0, fmt.Errorf("read %s job: %w", kind, err)
+		}
+		if job.Status == jobs.StatusPending || job.Status == jobs.StatusRunning {
+			return meeting.Generation, nil
+		}
+	}
+	return meeting.Generation + 1, nil
 }
 
 func (s *Service) meeting(ctx context.Context, workspaceID, meetingID uuid.UUID) (Meeting, error) {
@@ -405,6 +514,11 @@ func (s *Service) viewable(ctx context.Context, actor auth.Membership, meetingID
 		return Meeting{}, ErrMeetingNotFound
 	}
 	return meeting, nil
+}
+
+func (s *Service) EnsureManageable(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) error {
+	_, err := s.manageable(ctx, actor, meetingID)
+	return err
 }
 
 func (s *Service) manageable(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Meeting, error) {
@@ -437,13 +551,24 @@ func (s *Service) downloads(ctx context.Context, meeting Meeting) (DownloadTarge
 	return targets, nil
 }
 
-func (s *Service) objectsFor(meeting Meeting) []ObjectRef {
-	objects := make([]ObjectRef, 0, 2)
+func (s *Service) objectsFor(meeting Meeting, clipObjects []*string) []ObjectRef {
+	objects := make([]ObjectRef, 0, 2+len(clipObjects))
 	if meeting.AudioObject != "" {
 		objects = append(objects, ObjectRef{Bucket: s.buckets.Audio, Key: meeting.AudioObject})
 	}
 	if meeting.TranscriptObject != "" {
 		objects = append(objects, ObjectRef{Bucket: s.buckets.Transcripts, Key: meeting.TranscriptObject})
+	}
+	seen := map[string]struct{}{}
+	for _, clip := range clipObjects {
+		if clip == nil || *clip == "" {
+			continue
+		}
+		if _, exists := seen[*clip]; exists {
+			continue
+		}
+		seen[*clip] = struct{}{}
+		objects = append(objects, ObjectRef{Bucket: s.buckets.Clips, Key: *clip})
 	}
 	return objects
 }
@@ -457,10 +582,10 @@ func escapeLike(value string) string {
 	return replacer.Replace(trimmed)
 }
 
-func jobKey(kind string, meetingID uuid.UUID) string {
-	return kind + ":meeting:" + meetingID.String()
+func jobKey(kind string, meetingID uuid.UUID, generation int32) string {
+	return kind + ":meeting:" + meetingID.String() + ":g" + strconv.FormatInt(int64(generation), 10)
 }
 
 func purgeKey(meetingID uuid.UUID) string {
-	return jobKey(KindPurge, meetingID)
+	return KindPurge + ":meeting:" + meetingID.String()
 }

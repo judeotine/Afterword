@@ -1,8 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -35,7 +37,7 @@ func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	link, err := s.meetings.CreateShareLink(r.Context(), membership, meetingID, meetings.ShareParams{
+	link, meeting, err := s.meetings.CreateShareLink(r.Context(), membership, meetingID, meetings.ShareParams{
 		Permission: permission,
 		ExpiresAt:  expiresAt,
 	})
@@ -43,7 +45,10 @@ func (s *Server) handleCreateShareLink(w http.ResponseWriter, r *http.Request) {
 		s.writeLibraryError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, r, http.StatusCreated, s.newShareLinkView(link))
+	httpx.WriteJSON(w, r, http.StatusCreated, createShareView{
+		Share:   s.newShareLinkView(link),
+		Meeting: newMeetingView(meeting),
+	})
 }
 
 func (s *Server) handleListShareLinks(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +75,7 @@ func (s *Server) handleRevokeShareLinks(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := s.meetings.RevokeShareLinks(r.Context(), membership, meetingID); err != nil {
+	if _, err := s.meetings.RevokeShareLinks(r.Context(), membership, meetingID); err != nil {
 		s.writeLibraryError(w, r, err)
 		return
 	}
@@ -80,6 +85,9 @@ func (s *Server) handleRevokeShareLinks(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleSharedMeeting(w http.ResponseWriter, r *http.Request) {
 	token, ok := s.shareToken(w, r)
 	if !ok {
+		return
+	}
+	if !s.allowSharedRequest(w, r) {
 		return
 	}
 
@@ -98,6 +106,9 @@ func (s *Server) handleSharedMeeting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSharedSegments(w http.ResponseWriter, r *http.Request) {
 	token, ok := s.shareToken(w, r)
 	if !ok {
+		return
+	}
+	if !s.allowSharedRequest(w, r) {
 		return
 	}
 
@@ -127,6 +138,19 @@ func (s *Server) shareToken(w http.ResponseWriter, r *http.Request) (string, boo
 		return "", false
 	}
 	return token, true
+}
+
+func (s *Server) allowSharedRequest(w http.ResponseWriter, r *http.Request) bool {
+	err := s.meetings.AllowSharedRequest(r.Context(), requestIP(r))
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, meetings.ErrRateLimited) {
+		writeRateLimited(w, r, time.Minute, "Too many requests for that link. Try again shortly.")
+		return false
+	}
+	s.writeLibraryError(w, r, err)
+	return false
 }
 
 func (s *Server) shareURL(token string) string {

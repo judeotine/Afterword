@@ -13,16 +13,16 @@ import (
 )
 
 const createShareLink = `-- name: CreateShareLink :one
-INSERT INTO share_links (meeting_id, token, permission, expires_at)
+INSERT INTO share_links (meeting_id, token_hash, permission, expires_at)
 SELECT $1, $2, $3, $4
 FROM meetings
 WHERE meetings.id = $1 AND meetings.workspace_id = $5
-RETURNING id, meeting_id, token, permission, expires_at, created_at
+RETURNING id, meeting_id, permission, expires_at, created_at, token_hash
 `
 
 type CreateShareLinkParams struct {
 	MeetingID   uuid.UUID          `json:"meeting_id"`
-	Token       string             `json:"token"`
+	TokenHash   string             `json:"token_hash"`
 	Permission  string             `json:"permission"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	WorkspaceID uuid.UUID          `json:"workspace_id"`
@@ -31,7 +31,7 @@ type CreateShareLinkParams struct {
 func (q *Queries) CreateShareLink(ctx context.Context, arg CreateShareLinkParams) (ShareLink, error) {
 	row := q.db.QueryRow(ctx, createShareLink,
 		arg.MeetingID,
-		arg.Token,
+		arg.TokenHash,
 		arg.Permission,
 		arg.ExpiresAt,
 		arg.WorkspaceID,
@@ -40,10 +40,10 @@ func (q *Queries) CreateShareLink(ctx context.Context, arg CreateShareLinkParams
 	err := row.Scan(
 		&i.ID,
 		&i.MeetingID,
-		&i.Token,
 		&i.Permission,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.TokenHash,
 	)
 	return i, err
 }
@@ -70,7 +70,7 @@ func (q *Queries) DeleteShareLink(ctx context.Context, arg DeleteShareLinkParams
 }
 
 const getShareLink = `-- name: GetShareLink :one
-SELECT share_links.id, share_links.meeting_id, share_links.token, share_links.permission, share_links.expires_at, share_links.created_at FROM share_links
+SELECT share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
 WHERE share_links.id = $1 AND meetings.workspace_id = $2
 `
@@ -86,34 +86,34 @@ func (q *Queries) GetShareLink(ctx context.Context, arg GetShareLinkParams) (Sha
 	err := row.Scan(
 		&i.ID,
 		&i.MeetingID,
-		&i.Token,
 		&i.Permission,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.TokenHash,
 	)
 	return i, err
 }
 
-const getShareLinkByToken = `-- name: GetShareLinkByToken :one
-SELECT id, meeting_id, token, permission, expires_at, created_at FROM share_links WHERE token = $1
+const getShareLinkByTokenHash = `-- name: GetShareLinkByTokenHash :one
+SELECT id, meeting_id, permission, expires_at, created_at, token_hash FROM share_links WHERE token_hash = $1
 `
 
-func (q *Queries) GetShareLinkByToken(ctx context.Context, token string) (ShareLink, error) {
-	row := q.db.QueryRow(ctx, getShareLinkByToken, token)
+func (q *Queries) GetShareLinkByTokenHash(ctx context.Context, tokenHash string) (ShareLink, error) {
+	row := q.db.QueryRow(ctx, getShareLinkByTokenHash, tokenHash)
 	var i ShareLink
 	err := row.Scan(
 		&i.ID,
 		&i.MeetingID,
-		&i.Token,
 		&i.Permission,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.TokenHash,
 	)
 	return i, err
 }
 
 const listShareLinksByWorkspace = `-- name: ListShareLinksByWorkspace :many
-SELECT share_links.id, share_links.meeting_id, share_links.token, share_links.permission, share_links.expires_at, share_links.created_at FROM share_links
+SELECT share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
 WHERE meetings.workspace_id = $1
   AND ($2::uuid IS NULL OR share_links.meeting_id = $2::uuid)
@@ -151,10 +151,10 @@ func (q *Queries) ListShareLinksByWorkspace(ctx context.Context, arg ListShareLi
 		if err := rows.Scan(
 			&i.ID,
 			&i.MeetingID,
-			&i.Token,
 			&i.Permission,
 			&i.ExpiresAt,
 			&i.CreatedAt,
+			&i.TokenHash,
 		); err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ FROM meetings
 WHERE share_links.meeting_id = meetings.id
   AND share_links.id = $3
   AND meetings.workspace_id = $4
-RETURNING share_links.id, share_links.meeting_id, share_links.token, share_links.permission, share_links.expires_at, share_links.created_at
+RETURNING share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash
 `
 
 type UpdateShareLinkParams struct {
@@ -195,10 +195,10 @@ func (q *Queries) UpdateShareLink(ctx context.Context, arg UpdateShareLinkParams
 	err := row.Scan(
 		&i.ID,
 		&i.MeetingID,
-		&i.Token,
 		&i.Permission,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.TokenHash,
 	)
 	return i, err
 }

@@ -124,13 +124,15 @@ func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*mee
 		return nil, err
 	}
 	return meetings.NewService(meetings.ServiceOptions{
-		Pool:          pool.Pool(),
-		Storage:       client,
-		Buckets:       storageBuckets(cfg),
-		Jobs:          jobs.NewQueue(pool.Pool()),
-		UploadTTL:     cfg.S3.UploadTTL,
-		DownloadTTL:   cfg.S3.DownloadTTL,
-		MaxAudioBytes: cfg.S3.MaxAudioBytes,
+		Pool:               pool.Pool(),
+		Storage:            client,
+		Buckets:            storageBuckets(cfg),
+		Jobs:               jobs.NewQueue(pool.Pool()),
+		Logger:             logger,
+		UploadTTL:          cfg.S3.UploadTTL,
+		DownloadTTL:        cfg.S3.DownloadTTL,
+		MaxAudioBytes:      cfg.S3.MaxAudioBytes,
+		MaxTranscriptBytes: cfg.S3.MaxTranscriptBytes,
 	})
 }
 

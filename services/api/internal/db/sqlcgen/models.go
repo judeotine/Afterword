@@ -156,23 +156,25 @@ type KeywordAlert struct {
 }
 
 type Meeting struct {
-	ID               uuid.UUID          `json:"id"`
-	WorkspaceID      uuid.UUID          `json:"workspace_id"`
-	OwnerUserID      *uuid.UUID         `json:"owner_user_id"`
-	Title            string             `json:"title"`
-	Source           string             `json:"source"`
-	Platform         *string            `json:"platform"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	DurationS        int32              `json:"duration_s"`
-	ConsentState     string             `json:"consent_state"`
-	Visibility       string             `json:"visibility"`
-	FolderID         *uuid.UUID         `json:"folder_id"`
-	AudioObject      *string            `json:"audio_object"`
-	TranscriptObject *string            `json:"transcript_object"`
-	Status           string             `json:"status"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	AudioBytes       *int64             `json:"audio_bytes"`
-	TranscriptBytes  *int64             `json:"transcript_bytes"`
+	ID                 uuid.UUID          `json:"id"`
+	WorkspaceID        uuid.UUID          `json:"workspace_id"`
+	OwnerUserID        *uuid.UUID         `json:"owner_user_id"`
+	Title              string             `json:"title"`
+	Source             string             `json:"source"`
+	Platform           *string            `json:"platform"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	DurationS          int32              `json:"duration_s"`
+	ConsentState       string             `json:"consent_state"`
+	Visibility         string             `json:"visibility"`
+	FolderID           *uuid.UUID         `json:"folder_id"`
+	AudioObject        *string            `json:"audio_object"`
+	TranscriptObject   *string            `json:"transcript_object"`
+	Status             string             `json:"status"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	AudioBytes         *int64             `json:"audio_bytes"`
+	TranscriptBytes    *int64             `json:"transcript_bytes"`
+	LinkSharingEnabled bool               `json:"link_sharing_enabled"`
+	FinalizeGeneration int32              `json:"finalize_generation"`
 }
 
 type Membership struct {
@@ -222,10 +224,16 @@ type RefreshToken struct {
 type ShareLink struct {
 	ID         uuid.UUID          `json:"id"`
 	MeetingID  uuid.UUID          `json:"meeting_id"`
-	Token      string             `json:"token"`
 	Permission string             `json:"permission"`
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	TokenHash  string             `json:"token_hash"`
+}
+
+type ShareLinkRequest struct {
+	ID        uuid.UUID          `json:"id"`
+	RequestIp string             `json:"request_ip"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Summary struct {

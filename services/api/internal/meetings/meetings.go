@@ -1,6 +1,8 @@
 package meetings
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -15,7 +17,6 @@ import (
 const (
 	VisibilityPrivate   = "private"
 	VisibilityWorkspace = "workspace"
-	VisibilityLink      = "link"
 
 	SourceDesktop = "desktop"
 	SourceBot     = "bot"
@@ -45,7 +46,7 @@ const (
 )
 
 var (
-	Visibilities = []string{VisibilityPrivate, VisibilityWorkspace, VisibilityLink}
+	Visibilities = []string{VisibilityPrivate, VisibilityWorkspace}
 	Sources      = []string{SourceDesktop, SourceBot, SourceImport}
 	Platforms    = []string{"meet", "zoom", "teams"}
 	Permissions  = []string{PermissionView, PermissionComment}
@@ -63,6 +64,8 @@ var (
 	ErrDuplicateSequence = errors.New("meetings: transcript segment sequence numbers must be unique")
 	ErrShareLinkNotFound = errors.New("meetings: share link not found")
 	ErrShareLinkExpired  = errors.New("meetings: share link has expired")
+	ErrShareLinkClosed   = errors.New("meetings: link sharing is turned off for that meeting")
+	ErrRateLimited       = errors.New("meetings: too many requests for that share link")
 )
 
 type Meeting struct {
@@ -82,6 +85,8 @@ type Meeting struct {
 	AudioBytes       *int64
 	TranscriptBytes  *int64
 	Status           string
+	LinkSharing      bool
+	Generation       int32
 	CreatedAt        time.Time
 }
 
@@ -115,6 +120,11 @@ type ShareLink struct {
 	Permission string
 	ExpiresAt  *time.Time
 	CreatedAt  time.Time
+}
+
+func HashShareToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 type UploadTargets struct {
@@ -178,6 +188,7 @@ type TranscodePayload struct {
 	MeetingID   uuid.UUID `json:"meeting_id"`
 	Bucket      string    `json:"bucket"`
 	Key         string    `json:"key"`
+	Generation  int32     `json:"generation"`
 }
 
 func meetingFromRow(row sqlcgen.Meeting) Meeting {
@@ -198,6 +209,8 @@ func meetingFromRow(row sqlcgen.Meeting) Meeting {
 		AudioBytes:       row.AudioBytes,
 		TranscriptBytes:  row.TranscriptBytes,
 		Status:           row.Status,
+		LinkSharing:      row.LinkSharingEnabled,
+		Generation:       row.FinalizeGeneration,
 		CreatedAt:        moment(row.CreatedAt),
 	}
 }
@@ -216,7 +229,6 @@ func shareLinkFromRow(row sqlcgen.ShareLink) ShareLink {
 	return ShareLink{
 		ID:         row.ID,
 		MeetingID:  row.MeetingID,
-		Token:      row.Token,
 		Permission: row.Permission,
 		ExpiresAt:  optionalMoment(row.ExpiresAt),
 		CreatedAt:  moment(row.CreatedAt),
@@ -227,12 +239,10 @@ func (m Meeting) VisibleTo(actor auth.Membership) bool {
 	if m.WorkspaceID != actor.WorkspaceID {
 		return false
 	}
-	switch m.Visibility {
-	case VisibilityWorkspace, VisibilityLink:
+	if m.Visibility == VisibilityWorkspace {
 		return true
-	default:
-		return m.OwnerUserID != nil && *m.OwnerUserID == actor.UserID
 	}
+	return m.OwnerUserID != nil && *m.OwnerUserID == actor.UserID
 }
 
 func (m Meeting) ManageableBy(actor auth.Membership) bool {

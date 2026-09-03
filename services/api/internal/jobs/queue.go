@@ -129,13 +129,18 @@ func (q *Queue) MaxAttempts() int32 {
 }
 
 func (q *Queue) Enqueue(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*Job, error) {
+	job, _, err := q.EnqueueUnique(ctx, kind, payload, runAt, idempotencyKey)
+	return job, err
+}
+
+func (q *Queue) EnqueueUnique(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*Job, bool, error) {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
-		return nil, ErrKindRequired
+		return nil, false, ErrKindRequired
 	}
 	encoded, err := encodePayload(payload)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if runAt.IsZero() {
 		runAt = q.Now()
@@ -153,13 +158,14 @@ RETURNING ` + jobColumns
 	job, err := scanJob(q.pool.QueryRow(ctx, insert, kind, encoded, key, runAt, q.MaxAttempts()))
 	switch {
 	case err == nil:
-		return job, nil
+		return job, true, nil
 	case errors.Is(err, pgx.ErrNoRows) && key != nil:
-		return q.readBackConflict(ctx, kind, idempotencyKey)
+		existing, readErr := q.readBackConflict(ctx, kind, idempotencyKey)
+		return existing, false, readErr
 	case errors.Is(err, pgx.ErrNoRows):
-		return nil, fmt.Errorf("enqueue job: %w", ErrNotFound)
+		return nil, false, fmt.Errorf("enqueue job: %w", ErrNotFound)
 	default:
-		return nil, fmt.Errorf("enqueue job: %w", err)
+		return nil, false, fmt.Errorf("enqueue job: %w", err)
 	}
 }
 

@@ -243,6 +243,11 @@ func (s *Server) handleReplaceSegments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.meetings.EnsureManageable(r.Context(), membership, meetingID); err != nil {
+		s.writeLibraryError(w, r, err)
+		return
+	}
+
 	var body replaceSegmentsRequest
 	if err := decodeTranscriptJSON(w, r, &body); err != nil {
 		writeInvalidBody(w, r)
@@ -287,6 +292,23 @@ func (s *Server) handleReplaceSegments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, segmentWriteView{Stored: stored})
+}
+
+func (s *Server) handleUploadTargets(w http.ResponseWriter, r *http.Request) {
+	membership, meetingID, ok := s.libraryTarget(w, r)
+	if !ok {
+		return
+	}
+
+	created, err := s.meetings.UploadTargets(r.Context(), membership, meetingID)
+	if err != nil {
+		s.writeLibraryError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, createMeetingView{
+		Meeting: newMeetingView(created.Meeting),
+		Upload:  newUploadView(created.Upload),
+	})
 }
 
 func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {

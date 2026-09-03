@@ -17,19 +17,20 @@ import (
 type LookupFunc func(key string) (string, bool)
 
 type S3Config struct {
-	Endpoint          string
-	AccessKey         string
-	SecretKey         string
-	Region            string
-	UseSSL            bool
-	UsePathStyle      bool
-	AudioBucket       string
-	TranscriptsBucket string
-	ClipsBucket       string
-	ExportsBucket     string
-	UploadTTL         time.Duration
-	DownloadTTL       time.Duration
-	MaxAudioBytes     int64
+	Endpoint           string
+	AccessKey          string
+	SecretKey          string
+	Region             string
+	UseSSL             bool
+	UsePathStyle       bool
+	AudioBucket        string
+	TranscriptsBucket  string
+	ClipsBucket        string
+	ExportsBucket      string
+	UploadTTL          time.Duration
+	DownloadTTL        time.Duration
+	MaxAudioBytes      int64
+	MaxTranscriptBytes int64
 }
 
 type SMTPConfig struct {
@@ -93,19 +94,20 @@ func Load(lookup LookupFunc) (Config, error) {
 		APIBaseURL:       reader.baseURL("API_BASE_URL", "http://localhost:8080"),
 		LogLevel:         reader.logLevel("LOG_LEVEL", "info"),
 		S3: S3Config{
-			Endpoint:          reader.optional("S3_ENDPOINT", "http://localhost:9000"),
-			AccessKey:         reader.optional("S3_ACCESS_KEY", ""),
-			SecretKey:         reader.optional("S3_SECRET_KEY", ""),
-			Region:            reader.optional("S3_REGION", "us-east-1"),
-			UseSSL:            reader.boolean("S3_USE_SSL", false),
-			UsePathStyle:      reader.boolean("S3_USE_PATH_STYLE", true),
-			AudioBucket:       reader.bucket("S3_BUCKET_AUDIO", "audio"),
-			TranscriptsBucket: reader.bucket("S3_BUCKET_TRANSCRIPTS", "transcripts"),
-			ClipsBucket:       reader.bucket("S3_BUCKET_CLIPS", "clips"),
-			ExportsBucket:     reader.bucket("S3_BUCKET_EXPORTS", "exports"),
-			UploadTTL:         reader.duration("S3_UPLOAD_TTL", 30*time.Minute),
-			DownloadTTL:       reader.duration("S3_DOWNLOAD_TTL", 15*time.Minute),
-			MaxAudioBytes:     int64(reader.boundedInt("S3_MAX_AUDIO_MB", 2048, 1, 102400)) << 20,
+			Endpoint:           reader.optional("S3_ENDPOINT", "http://localhost:9000"),
+			AccessKey:          reader.optional("S3_ACCESS_KEY", ""),
+			SecretKey:          reader.optional("S3_SECRET_KEY", ""),
+			Region:             reader.optional("S3_REGION", "us-east-1"),
+			UseSSL:             reader.boolean("S3_USE_SSL", false),
+			UsePathStyle:       reader.boolean("S3_USE_PATH_STYLE", true),
+			AudioBucket:        reader.bucket("S3_BUCKET_AUDIO", "audio"),
+			TranscriptsBucket:  reader.bucket("S3_BUCKET_TRANSCRIPTS", "transcripts"),
+			ClipsBucket:        reader.bucket("S3_BUCKET_CLIPS", "clips"),
+			ExportsBucket:      reader.bucket("S3_BUCKET_EXPORTS", "exports"),
+			UploadTTL:          reader.duration("S3_UPLOAD_TTL", 30*time.Minute),
+			DownloadTTL:        reader.duration("S3_DOWNLOAD_TTL", 15*time.Minute),
+			MaxAudioBytes:      int64(reader.boundedInt("S3_MAX_AUDIO_MB", 2048, 1, 102400)) << 20,
+			MaxTranscriptBytes: int64(reader.boundedInt("S3_MAX_TRANSCRIPT_MB", 64, 1, 4096)) << 20,
 		},
 		Auth: AuthConfig{
 			GoogleClientID:     reader.optional("GOOGLE_CLIENT_ID", ""),

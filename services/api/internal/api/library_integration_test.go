@@ -5,6 +5,7 @@ package api_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,7 +115,6 @@ func TestVisibilityMatrix(t *testing.T) {
 	}{
 		{meetings.VisibilityPrivate, http.StatusOK, http.StatusNotFound, http.StatusForbidden, http.StatusUnauthorized},
 		{meetings.VisibilityWorkspace, http.StatusOK, http.StatusOK, http.StatusForbidden, http.StatusUnauthorized},
-		{meetings.VisibilityLink, http.StatusOK, http.StatusOK, http.StatusForbidden, http.StatusUnauthorized},
 	}
 
 	for _, testCase := range cases {
@@ -242,10 +242,10 @@ func TestFinalizeChecksTheObjectsAndQueuesTheRightWork(t *testing.T) {
 	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
 		t.Fatalf("queued %+v", result.Queued)
 	}
-	if !harness.jobExists(t, meetings.KindTranscribe, "transcribe:meeting:"+audioOnly.Meeting.ID) {
+	if !harness.jobExists(t, meetings.KindTranscribe, "transcribe:meeting:"+audioOnly.Meeting.ID+":g1") {
 		t.Fatal("no transcribe job was enqueued")
 	}
-	if harness.jobExists(t, meetings.KindSummarise, "summarise:meeting:"+audioOnly.Meeting.ID) {
+	if harness.jobExists(t, meetings.KindSummarise, "summarise:meeting:"+audioOnly.Meeting.ID+":g1") {
 		t.Fatal("a summarise job was enqueued without a transcript")
 	}
 
@@ -574,10 +574,14 @@ func TestSharedLinkGivesReadOnlyAccessWithoutAuth(t *testing.T) {
 	if shared.Status != http.StatusCreated {
 		t.Fatalf("share: status %d, body %s", shared.Status, shared.Body)
 	}
-	var link sharePayload
-	shared.decode(t, &link)
+	var issued createSharePayload
+	shared.decode(t, &issued)
+	link := issued.Share
 	if link.Token == "" || link.Permission != "view" || link.URL == "" {
 		t.Fatalf("share link %+v", link)
+	}
+	if issued.Meeting.Visibility != meetings.VisibilityPrivate || !issued.Meeting.LinkSharing {
+		t.Fatalf("sharing changed member visibility: %+v", issued.Meeting)
 	}
 
 	anonymous := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil)
@@ -628,15 +632,17 @@ func TestSharedLinkStopsWorkingOnceRevokedOrExpired(t *testing.T) {
 	if expired.Status != http.StatusCreated {
 		t.Fatalf("share: status %d, body %s", expired.Status, expired.Body)
 	}
-	var stale sharePayload
-	expired.decode(t, &stale)
+	var staleShare createSharePayload
+	expired.decode(t, &staleShare)
+	stale := staleShare.Share
 	if got := harness.call(http.MethodGet, "/v1/shared/"+stale.Token, nil); got.Status != http.StatusGone {
 		t.Fatalf("expired token: status %d, body %s", got.Status, got.Body)
 	}
 
 	live := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
-	var link sharePayload
-	live.decode(t, &link)
+	var reopened createSharePayload
+	live.decode(t, &reopened)
+	link := reopened.Share
 	if got := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil); got.Status != http.StatusOK {
 		t.Fatalf("live token: status %d, body %s", got.Status, got.Body)
 	}
@@ -646,6 +652,250 @@ func TestSharedLinkStopsWorkingOnceRevokedOrExpired(t *testing.T) {
 	}
 	if got := harness.call(http.MethodGet, "/v1/shared/"+link.Token, nil); got.Status != http.StatusNotFound {
 		t.Fatalf("revoked token: status %d, body %s", got.Status, got.Body)
+	}
+}
+
+func TestSharingIsOrthogonalToMemberVisibility(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	member := harness.join(t, owner, "member@example.com", auth.RoleMember)
+
+	private := harness.createMeeting(owner, map[string]any{"title": "Private", "source": "desktop"})
+	path := "/v1/meetings/" + private.Meeting.ID
+
+	shared := harness.call(http.MethodPost, path+"/share", nil, harness.as(owner)...)
+	if shared.Status != http.StatusCreated {
+		t.Fatalf("share: status %d, body %s", shared.Status, shared.Body)
+	}
+	var link createSharePayload
+	shared.decode(t, &link)
+
+	if got := harness.call(http.MethodGet, path, nil, harness.as(member)...); got.Status != http.StatusNotFound {
+		t.Fatalf("sharing a private meeting exposed it to a member: status %d, body %s", got.Status, got.Body)
+	}
+	listed := harness.call(http.MethodGet, "/v1/meetings", nil, harness.as(member)...)
+	var page meetingListPayload
+	listed.decode(t, &page)
+	if len(page.Meetings) != 0 {
+		t.Fatalf("a shared private meeting appeared in a member listing: %+v", page.Meetings)
+	}
+	if got := harness.call(http.MethodGet, "/v1/shared/"+link.Share.Token, nil); got.Status != http.StatusOK {
+		t.Fatalf("token holder: status %d, body %s", got.Status, got.Body)
+	}
+
+	open := harness.createMeeting(owner, map[string]any{"title": "Open", "source": "desktop", "visibility": "workspace"})
+	openPath := "/v1/meetings/" + open.Meeting.ID
+	openShare := harness.call(http.MethodPost, openPath+"/share", nil, harness.as(owner)...)
+	var openLink createSharePayload
+	openShare.decode(t, &openLink)
+
+	if got := harness.call(http.MethodDelete, openPath+"/share", nil, harness.as(owner)...); got.Status != http.StatusNoContent {
+		t.Fatalf("revoke: status %d, body %s", got.Status, got.Body)
+	}
+	after := harness.call(http.MethodGet, openPath, nil, harness.as(member)...)
+	if after.Status != http.StatusOK {
+		t.Fatalf("revoking a link hid a workspace meeting from a member: status %d, body %s", after.Status, after.Body)
+	}
+	var detail meetingDetailPayload
+	after.decode(t, &detail)
+	if detail.Meeting.Visibility != meetings.VisibilityWorkspace || detail.Meeting.LinkSharing {
+		t.Fatalf("unexpected state after revoke: %+v", detail.Meeting)
+	}
+	if got := harness.call(http.MethodGet, "/v1/shared/"+openLink.Share.Token, nil); got.Status != http.StatusNotFound {
+		t.Fatalf("revoked token still resolves: status %d, body %s", got.Status, got.Body)
+	}
+}
+
+func TestVisibilityRejectsTheRetiredLinkValue(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+
+	result := harness.call(http.MethodPost, "/v1/meetings", map[string]any{
+		"title": "Legacy", "source": "desktop", "visibility": "link",
+	}, harness.as(owner)...)
+	if result.Status != http.StatusBadRequest {
+		t.Fatalf("status %d, body %s", result.Status, result.Body)
+	}
+}
+
+func TestShareTokensAreHashedAtRest(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Hashed", "source": "desktop"})
+
+	shared := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
+	var link createSharePayload
+	shared.decode(t, &link)
+
+	var stored string
+	if err := harness.pool.QueryRow(t.Context(), `SELECT token_hash FROM share_links WHERE meeting_id = $1`, created.Meeting.ID).Scan(&stored); err != nil {
+		t.Fatalf("read token hash: %v", err)
+	}
+	if stored == link.Share.Token {
+		t.Fatal("the raw share token was stored")
+	}
+	if stored != meetings.HashShareToken(link.Share.Token) {
+		t.Fatalf("stored hash %q does not match the issued token", stored)
+	}
+
+	listed := harness.call(http.MethodGet, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
+	if strings.Contains(string(listed.Body), link.Share.Token) {
+		t.Fatalf("listing share links returned the raw token: %s", listed.Body)
+	}
+}
+
+func TestSharedReadsAreRateLimitedByAddress(t *testing.T) {
+	harness := newLibraryHarnessWithShareLimit(t, 3)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Busy", "source": "desktop"})
+
+	shared := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
+	var link createSharePayload
+	shared.decode(t, &link)
+
+	path := "/v1/shared/" + link.Share.Token
+	for attempt := range 3 {
+		if got := harness.call(http.MethodGet, path, nil, withRemoteIP("203.0.113.7")); got.Status != http.StatusOK {
+			t.Fatalf("attempt %d: status %d, body %s", attempt, got.Status, got.Body)
+		}
+	}
+	limited := harness.call(http.MethodGet, path, nil, withRemoteIP("203.0.113.7"))
+	if limited.Status != http.StatusTooManyRequests {
+		t.Fatalf("fourth read: status %d, body %s", limited.Status, limited.Body)
+	}
+	if limited.errorCode(t) != "rate_limited" {
+		t.Fatalf("code %q", limited.errorCode(t))
+	}
+	if other := harness.call(http.MethodGet, path, nil, withRemoteIP("198.51.100.4")); other.Status != http.StatusOK {
+		t.Fatalf("another address was limited: status %d, body %s", other.Status, other.Body)
+	}
+}
+
+func TestDeletePurgesClipObjectsToo(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "With clips", "source": "desktop"})
+
+	clipKey := "ws/" + owner.Workspace.ID + "/clips/" + created.Meeting.ID + "-highlight.opus"
+	if _, err := harness.pool.Exec(t.Context(),
+		`INSERT INTO clips (meeting_id, start_s, end_s, title, object) VALUES ($1, 0, 5, 'Highlight', $2)`,
+		created.Meeting.ID, clipKey,
+	); err != nil {
+		t.Fatalf("seed clip: %v", err)
+	}
+	harness.memory.Put("clips", clipKey, make([]byte, 16), "audio/opus")
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	harness.memory.Put("audio", audioKey, make([]byte, 16), "audio/opus")
+
+	if got := harness.call(http.MethodDelete, "/v1/meetings/"+created.Meeting.ID, nil, harness.as(owner)...); got.Status != http.StatusNoContent {
+		t.Fatalf("delete: status %d, body %s", got.Status, got.Body)
+	}
+
+	job, err := harness.queue.GetByIdempotencyKey(t.Context(), meetings.KindPurge, "purge:meeting:"+created.Meeting.ID)
+	if err != nil {
+		t.Fatalf("read purge job: %v", err)
+	}
+	if err := meetings.NewPurgeHandler(harness.store)(t.Context(), job); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if harness.memory.Exists("clips", clipKey) {
+		t.Fatalf("the clip object was orphaned: %v", harness.memory.Keys())
+	}
+	if harness.memory.Exists("audio", audioKey) {
+		t.Fatal("the audio object was orphaned")
+	}
+}
+
+func TestFinalizeUsesJobGenerations(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Retry", "source": "desktop"})
+	harness.memory.Put("audio", fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID), make([]byte, 32), "audio/opus")
+
+	path := "/v1/meetings/" + created.Meeting.ID + "/finalize"
+	first := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	var result finalizePayload
+	first.decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("first finalize queued %+v", result.Queued)
+	}
+
+	second := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	second.decode(t, &result)
+	if len(result.Queued) != 0 {
+		t.Fatalf("a re-finalize reported work it did not queue: %+v", result.Queued)
+	}
+
+	key := "transcribe:meeting:" + created.Meeting.ID + ":g1"
+	job, err := harness.queue.GetByIdempotencyKey(t.Context(), meetings.KindTranscribe, key)
+	if err != nil {
+		t.Fatalf("read generation 1 job: %v", err)
+	}
+	if _, err := harness.pool.Exec(t.Context(), `UPDATE jobs SET status = 'dead' WHERE id = $1`, job.ID); err != nil {
+		t.Fatalf("dead-letter the job: %v", err)
+	}
+
+	third := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	third.decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("a dead job could not be retried through finalize: %+v", result.Queued)
+	}
+	if _, err := harness.queue.GetByIdempotencyKey(t.Context(), meetings.KindTranscribe, "transcribe:meeting:"+created.Meeting.ID+":g2"); err != nil {
+		t.Fatalf("no generation 2 job was created: %v", err)
+	}
+}
+
+func TestUploadUrlsCanBeReissued(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	member := harness.join(t, owner, "member@example.com", auth.RoleMember)
+	created := harness.createMeeting(owner, map[string]any{"title": "Resumable", "source": "desktop"})
+
+	again := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/upload-urls", nil, harness.as(owner)...)
+	if again.Status != http.StatusOK {
+		t.Fatalf("reissue: status %d, body %s", again.Status, again.Body)
+	}
+	var reissued createMeetingPayload
+	again.decode(t, &reissued)
+	if reissued.Upload.AudioURL == "" || reissued.Upload.TranscriptURL == "" {
+		t.Fatalf("reissued upload %+v", reissued.Upload)
+	}
+
+	refused := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/upload-urls", nil, harness.as(member)...)
+	if refused.Status != http.StatusNotFound {
+		t.Fatalf("member reissue: status %d, body %s", refused.Status, refused.Body)
+	}
+}
+
+func TestSegmentsAreAuthorizedBeforeTheBodyIsRead(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	member := harness.join(t, owner, "member@example.com", auth.RoleMember)
+	created := harness.createMeeting(owner, map[string]any{"title": "Shared", "source": "desktop", "visibility": "workspace"})
+
+	oversized := make([]map[string]any, 4000)
+	for index := range oversized {
+		oversized[index] = map[string]any{"seq": index, "start_s": 0, "end_s": 1, "text": strings.Repeat("x", 500)}
+	}
+	refused := harness.call(http.MethodPut, "/v1/meetings/"+created.Meeting.ID+"/segments",
+		map[string]any{"segments": oversized}, harness.as(member)...)
+	if refused.Status != http.StatusForbidden {
+		t.Fatalf("member write: status %d, body %s", refused.Status, refused.Body)
+	}
+}
+
+func TestFinalizeRejectsAnOversizedTranscript(t *testing.T) {
+	harness := newLibraryHarnessWithLimits(t, 1024, 32)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Huge", "source": "desktop"})
+	harness.memory.Put("transcripts", fmt.Sprintf("ws/%s/meetings/%s/transcript.json", owner.Workspace.ID, created.Meeting.ID), make([]byte, 64), "application/json")
+
+	result := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/finalize", nil, harness.as(owner)...)
+	if result.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, body %s", result.Status, result.Body)
+	}
+	if result.errorCode(t) != "object_too_large" {
+		t.Fatalf("code %q", result.errorCode(t))
 	}
 }
 

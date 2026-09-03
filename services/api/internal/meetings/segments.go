@@ -20,6 +20,7 @@ func (s *Service) ReplaceSegments(ctx context.Context, actor auth.Membership, me
 	if _, err := s.manageable(ctx, actor, meetingID); err != nil {
 		return 0, err
 	}
+
 	seen := make(map[int32]struct{}, len(segments))
 	for _, segment := range segments {
 		if _, exists := seen[segment.Seq]; exists {

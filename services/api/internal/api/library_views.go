@@ -22,6 +22,7 @@ type meetingView struct {
 	Visibility       string     `json:"visibility"`
 	FolderID         *uuid.UUID `json:"folder_id,omitempty"`
 	Status           string     `json:"status"`
+	LinkSharing      bool       `json:"link_sharing_enabled"`
 	AudioBytes       *int64     `json:"audio_bytes,omitempty"`
 	TranscriptBytes  *int64     `json:"transcript_bytes,omitempty"`
 	AudioObject      string     `json:"audio_object,omitempty"`
@@ -115,8 +116,8 @@ type segmentWriteView struct {
 
 type shareLinkView struct {
 	ID         uuid.UUID  `json:"id"`
-	Token      string     `json:"token"`
-	URL        string     `json:"url"`
+	Token      string     `json:"token,omitempty"`
+	URL        string     `json:"url,omitempty"`
 	Permission string     `json:"permission"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -124,6 +125,11 @@ type shareLinkView struct {
 
 type shareLinkListView struct {
 	Shares []shareLinkView `json:"shares"`
+}
+
+type createShareView struct {
+	Share   shareLinkView `json:"share"`
+	Meeting meetingView   `json:"meeting"`
 }
 
 type sharedView struct {
@@ -146,6 +152,7 @@ func newMeetingView(meeting meetings.Meeting) meetingView {
 		Visibility:       meeting.Visibility,
 		FolderID:         meeting.FolderID,
 		Status:           meeting.Status,
+		LinkSharing:      meeting.LinkSharing,
 		AudioBytes:       meeting.AudioBytes,
 		TranscriptBytes:  meeting.TranscriptBytes,
 		AudioObject:      meeting.AudioObject,

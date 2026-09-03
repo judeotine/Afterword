@@ -37,6 +37,27 @@ func newLibraryHarness(t *testing.T) *libraryHarness {
 	return newLibraryHarnessWith(t, storage.NewMemory())
 }
 
+func newLibraryHarnessWithShareLimit(t *testing.T, limit int64) *libraryHarness {
+	t.Helper()
+	memory := storage.NewMemory()
+	return buildLibrary(t, dbtest.New(t), memory, memory, storage.Buckets{}.WithDefaults(), libraryLimits{ShareRateLimit: limit})
+}
+
+func newLibraryHarnessWithLimits(t *testing.T, maxAudio, maxTranscript int64) *libraryHarness {
+	t.Helper()
+	memory := storage.NewMemory()
+	return buildLibrary(t, dbtest.New(t), memory, memory, storage.Buckets{}.WithDefaults(), libraryLimits{
+		MaxAudioBytes:      maxAudio,
+		MaxTranscriptBytes: maxTranscript,
+	})
+}
+
+type libraryLimits struct {
+	MaxAudioBytes      int64
+	MaxTranscriptBytes int64
+	ShareRateLimit     int64
+}
+
 func newLibraryHarnessWith(t *testing.T, memory *storage.Memory) *libraryHarness {
 	t.Helper()
 	pool := dbtest.New(t)
@@ -45,15 +66,15 @@ func newLibraryHarnessWith(t *testing.T, memory *storage.Memory) *libraryHarness
 
 func buildLibraryHarness(t *testing.T, pool *pgxpool.Pool, client storage.Client, memory *storage.Memory) *libraryHarness {
 	t.Helper()
-	return buildLibrary(t, pool, client, memory, storage.Buckets{}.WithDefaults())
+	return buildLibrary(t, pool, client, memory, storage.Buckets{}.WithDefaults(), libraryLimits{})
 }
 
 func buildLibraryHarnessWithBuckets(t *testing.T, pool *pgxpool.Pool, client storage.Client, buckets storage.Buckets) *libraryHarness {
 	t.Helper()
-	return buildLibrary(t, pool, client, nil, buckets)
+	return buildLibrary(t, pool, client, nil, buckets, libraryLimits{})
 }
 
-func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memory *storage.Memory, buckets storage.Buckets) *libraryHarness {
+func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memory *storage.Memory, buckets storage.Buckets, limits libraryLimits) *libraryHarness {
 	t.Helper()
 
 	store, err := auth.NewStore(pool)
@@ -90,10 +111,14 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 
 	queue := jobs.NewQueue(pool)
 	library, err := meetings.NewService(meetings.ServiceOptions{
-		Pool:    pool,
-		Storage: client,
-		Buckets: buckets,
-		Jobs:    queue,
+		Pool:               pool,
+		Storage:            client,
+		Buckets:            buckets,
+		Jobs:               queue,
+		Logger:             zerolog.Nop(),
+		MaxAudioBytes:      limits.MaxAudioBytes,
+		MaxTranscriptBytes: limits.MaxTranscriptBytes,
+		ShareRateLimit:     limits.ShareRateLimit,
 	})
 	if err != nil {
 		t.Fatalf("new meetings service: %v", err)
@@ -141,6 +166,7 @@ type meetingPayload struct {
 	Platform    string  `json:"platform"`
 	DurationS   int32   `json:"duration_s"`
 	Visibility  string  `json:"visibility"`
+	LinkSharing bool    `json:"link_sharing_enabled"`
 	FolderID    string  `json:"folder_id"`
 	Status      string  `json:"status"`
 	AudioBytes  *int64  `json:"audio_bytes"`
@@ -205,6 +231,16 @@ type segmentListPayload struct {
 	Segments []segmentPayload `json:"segments"`
 	Total    int64            `json:"total"`
 	NextSeq  *int32           `json:"next_seq"`
+}
+
+type createSharePayload struct {
+	Share   sharePayload   `json:"share"`
+	Meeting meetingPayload `json:"meeting"`
+}
+
+type finalizePayload struct {
+	Meeting meetingPayload `json:"meeting"`
+	Queued  []string       `json:"queued"`
 }
 
 type sharePayload struct {

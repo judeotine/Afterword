@@ -30,9 +30,37 @@ UPDATE meetings SET
     status = sqlc.arg(status),
     audio_bytes = sqlc.narg(audio_bytes),
     transcript_bytes = sqlc.narg(transcript_bytes),
-    duration_s = COALESCE(sqlc.narg(duration_s), duration_s)
+    duration_s = COALESCE(sqlc.narg(duration_s), duration_s),
+    finalize_generation = sqlc.arg(finalize_generation)
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
 RETURNING *;
+
+-- name: SetMeetingLinkSharing :one
+UPDATE meetings SET link_sharing_enabled = sqlc.arg(link_sharing_enabled)
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
+RETURNING *;
+
+-- name: ListClipObjectsForMeeting :many
+SELECT clips.object FROM clips
+JOIN meetings ON meetings.id = clips.meeting_id
+WHERE clips.meeting_id = sqlc.arg(meeting_id)
+  AND meetings.workspace_id = sqlc.arg(workspace_id)
+  AND clips.object IS NOT NULL;
+
+-- name: TryRecordShareLinkRequest :one
+INSERT INTO share_link_requests (request_ip, created_at)
+SELECT sqlc.arg(request_ip), sqlc.arg(recorded_at)
+WHERE (
+    SELECT count(*) FROM share_link_requests AS recent
+    WHERE recent.request_ip = sqlc.arg(request_ip) AND recent.created_at >= sqlc.arg(since)
+) < sqlc.arg(request_limit)::bigint
+RETURNING id;
+
+-- name: LockShareLinkIP :exec
+SELECT pg_advisory_xact_lock(hashtext(sqlc.arg(request_ip)::text));
+
+-- name: DeleteExpiredShareLinkRequests :execrows
+DELETE FROM share_link_requests WHERE created_at < sqlc.arg(before);
 
 -- name: DeleteMeetingReturning :one
 DELETE FROM meetings
@@ -90,11 +118,11 @@ WHERE share_links.meeting_id = sqlc.arg(meeting_id)
   AND meetings.workspace_id = sqlc.arg(workspace_id)
 ORDER BY share_links.created_at DESC, share_links.id DESC;
 
--- name: GetMeetingByShareToken :one
+-- name: GetMeetingByShareTokenHash :one
 SELECT sqlc.embed(meetings), sqlc.embed(share_links)
 FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
-WHERE share_links.token = sqlc.arg(token);
+WHERE share_links.token_hash = sqlc.arg(token_hash);
 
 -- name: DeleteShareLinksForMeeting :execrows
 DELETE FROM share_links
