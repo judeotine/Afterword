@@ -11,6 +11,12 @@ rust-version = "1.77"
 [lib]
 name = "afterword_core"
 
+# Headless CLI used by the meeting-bot service (and handy for local batch runs).
+# Only the binary depends on clap/env_logger; the library stays argv-free.
+[[bin]]
+name = "afterword-transcribe"
+path = "src/bin/afterword-transcribe.rs"
+
 # Hardware acceleration features, forwarded to whisper-rs.
 # frontend/src-tauri forwards its identically named features here so that
 # `pnpm tauri:dev:cuda` and friends keep working.
@@ -40,6 +46,10 @@ dirs = "5.0.1"
 tempfile = "3.3.0"
 bytemuck = "1.16.1"
 futures-util = "0.3"
+
+# CLI-only dependencies (used by src/bin/afterword-transcribe.rs)
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json", "stream"] }
 
 # Audio processing
