@@ -72,38 +72,12 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test --workspace --no-run
 
-      - name: Set up MSVC tools (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Inspect test binary DLL imports (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $exes = Get-ChildItem target\debug\deps -Filter '*.exe' | Where-Object { $_.Name -match '^(app_lib|afterword_core)-' }
-          foreach ($exe in $exes) {
-            Write-Host "=== $($exe.Name)"
-            $deps = (& dumpbin /DEPENDENTS $exe.FullName) | Where-Object { $_ -match '\.dll$' } | ForEach-Object { $_.Trim() }
-            foreach ($d in $deps) {
-              $cmd = Get-Command $d -ErrorAction SilentlyContinue
-              if ($cmd) {
-                $v = (Get-Item $cmd.Source).VersionInfo.FileVersion
-                Write-Host ("{0,-40} {1}  [{2}]" -f $d, $cmd.Source, $v)
-              } else {
-                Write-Host ("{0,-40} NOT FOUND ON PATH" -f $d)
-              }
-            }
-          }
-          Write-Host "=== dlls in deps"; Get-ChildItem target\debug\deps -Filter '*.dll' | ForEach-Object { $_.Name }
-          Write-Host "=== dlls in target/debug"; Get-ChildItem target\debug -Filter '*.dll' | ForEach-Object { $_.Name }
-
       - name: cargo test (core crates, Windows)
         if: runner.os == 'Windows'
         run: cargo test -p afterword-core -p llama-helper
 
       - name: cargo test (desktop app lib, Windows)
         if: runner.os == 'Windows'
-        continue-on-error: true
         run: cargo test -p afterword --lib
 
       - name: cargo test
