@@ -60,6 +60,8 @@ type BotJob struct {
 	ConsentAnnouncedAt pgtype.Timestamptz `json:"consent_announced_at"`
 	Error              *string            `json:"error"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EstimatedMinutes   int32              `json:"estimated_minutes"`
+	BotName            *string            `json:"bot_name"`
 }
 
 type CalendarConnection struct {

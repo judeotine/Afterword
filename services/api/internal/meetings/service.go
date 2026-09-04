@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/db/sqlcgen"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
 	"github.com/judeotine/afterword/services/api/internal/storage"
@@ -29,6 +30,11 @@ const (
 	transcriptType            = "application/json"
 )
 
+type CreditGuard interface {
+	Require(ctx context.Context, workspaceID uuid.UUID, minutes int32) (int64, error)
+	Debit(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason credits.Reason, refID string) (*credits.Entry, error)
+}
+
 type Enqueuer interface {
 	Enqueue(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*jobs.Job, error)
 	EnqueueUnique(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*jobs.Job, bool, error)
@@ -40,6 +46,7 @@ type ServiceOptions struct {
 	Storage            storage.Client
 	Buckets            storage.Buckets
 	Jobs               Enqueuer
+	Credits            CreditGuard
 	Logger             zerolog.Logger
 	UploadTTL          time.Duration
 	DownloadTTL        time.Duration
@@ -56,6 +63,7 @@ type Service struct {
 	storage            storage.Client
 	buckets            storage.Buckets
 	jobs               Enqueuer
+	credits            CreditGuard
 	logger             zerolog.Logger
 	uploadTTL          time.Duration
 	downloadTTL        time.Duration
@@ -82,6 +90,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		storage:            options.Storage,
 		buckets:            options.Buckets.WithDefaults(),
 		jobs:               options.Jobs,
+		credits:            options.Credits,
 		logger:             options.Logger,
 		uploadTTL:          options.UploadTTL,
 		downloadTTL:        options.DownloadTTL,
@@ -442,6 +451,10 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 		return Finalized{}, err
 	}
 
+	if err := s.requireCreditsFor(ctx, actor.WorkspaceID, meetingID, kinds, generation, meeting.DurationS); err != nil {
+		return Finalized{}, err
+	}
+
 	row, err := s.queries.FinalizeMeetingObjects(ctx, sqlcgen.FinalizeMeetingObjectsParams{
 		ID:                 meetingID,
 		WorkspaceID:        actor.WorkspaceID,
@@ -474,15 +487,85 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 			Key:         key,
 			Generation:  generation,
 		}
-		_, created, err := s.jobs.EnqueueUnique(ctx, kind, payload, time.Time{}, jobKey(kind, meetingID, generation))
+
+		job, created, err := s.jobs.EnqueueUnique(ctx, kind, payload, time.Time{}, jobKey(kind, meetingID, generation))
 		if err != nil {
 			return Finalized{}, fmt.Errorf("enqueue %s: %w", kind, err)
 		}
-		if created {
-			finalized.Queued = append(finalized.Queued, kind)
+		if !created {
+			continue
 		}
+		minutes, reason := UsageFor(kind, finalized.Meeting.DurationS)
+		if err := s.debitCredits(ctx, actor.WorkspaceID, minutes, reason, job); err != nil {
+			return Finalized{}, err
+		}
+		finalized.Queued = append(finalized.Queued, kind)
 	}
 	return finalized, nil
+}
+
+func UsageFor(kind string, durationS int32) (int32, credits.Reason) {
+	if kind == KindSummarise {
+		return SummaryMinutes(durationS), credits.ReasonSummaryUsage
+	}
+	return TranscriptMinutes(durationS), credits.ReasonTranscribeUsage
+}
+
+func TranscriptMinutes(durationS int32) int32 {
+	if durationS <= 0 {
+		return 0
+	}
+	return (durationS + 59) / 60
+}
+
+func SummaryMinutes(durationS int32) int32 {
+	minutes := TranscriptMinutes(durationS)
+	if minutes <= 0 {
+		return 0
+	}
+	return (minutes + 9) / 10
+}
+
+func (s *Service) requireCreditsFor(ctx context.Context, workspaceID, meetingID uuid.UUID, kinds []string, generation, durationS int32) error {
+	if s.credits == nil {
+		return nil
+	}
+	total := int32(0)
+	for _, kind := range kinds {
+		existing, err := s.jobs.GetByIdempotencyKey(ctx, kind, jobKey(kind, meetingID, generation))
+		switch {
+		case err == nil && existing != nil:
+			continue
+		case err != nil && !errors.Is(err, jobs.ErrNotFound):
+			return fmt.Errorf("look up the %s job: %w", kind, err)
+		}
+		minutes, _ := UsageFor(kind, durationS)
+		total += minutes
+	}
+	if total <= 0 {
+		return nil
+	}
+	if _, err := s.credits.Require(ctx, workspaceID, total); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) debitCredits(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason credits.Reason, job *jobs.Job) error {
+	if s.credits == nil || minutes <= 0 {
+		return nil
+	}
+	if _, err := s.credits.Debit(ctx, workspaceID, minutes, reason, job.ID.String()); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("workspace_id", workspaceID.String()).
+			Str("job_id", job.ID.String()).
+			Str("reason", string(reason)).
+			Int32("minutes", minutes).
+			Msg("a queued job could not be charged")
+		return err
+	}
+	return nil
 }
 
 func (s *Service) objectState(ctx context.Context, bucket, key string, maximum int64) (*objectState, error) {

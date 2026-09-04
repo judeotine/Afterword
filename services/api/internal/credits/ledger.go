@@ -81,6 +81,20 @@ func (l *Ledger) Balance(ctx context.Context, workspaceID uuid.UUID) (int64, err
 	return balance, nil
 }
 
+func (l *Ledger) Require(ctx context.Context, workspaceID uuid.UUID, minutes int32) (int64, error) {
+	if minutes < 0 {
+		return 0, ErrInvalidAmount
+	}
+	balance, err := l.Balance(ctx, workspaceID)
+	if err != nil {
+		return 0, err
+	}
+	if balance < int64(minutes) {
+		return balance, fmt.Errorf("%w: balance %d, requested %d", ErrInsufficientCredits, balance, minutes)
+	}
+	return balance, nil
+}
+
 func (l *Ledger) Grant(ctx context.Context, workspaceID uuid.UUID, minutes int32, refID string) (*Entry, error) {
 	if minutes <= 0 {
 		return nil, ErrInvalidAmount

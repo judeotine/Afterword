@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
 	"github.com/judeotine/afterword/services/api/internal/meetings"
 )
@@ -40,6 +41,10 @@ var libraryErrors = []struct {
 }
 
 func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, credits.ErrInsufficientCredits) {
+		writeInsufficientCredits(w, r, topUpURLFor(err, s.topUpURL()))
+		return
+	}
 	for _, candidate := range libraryErrors {
 		if errors.Is(err, candidate.target) {
 			httpx.WriteError(w, r, candidate.result.status, candidate.result.code, candidate.result.message)

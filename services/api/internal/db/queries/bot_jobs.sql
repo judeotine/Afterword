@@ -1,7 +1,8 @@
 -- name: CreateBotJob :one
-INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status, worker_id)
+INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status, worker_id,
+                      estimated_minutes, bot_name)
 VALUES (sqlc.arg(workspace_id), sqlc.arg(meeting_url), sqlc.arg(platform), sqlc.arg(scheduled_at),
-        sqlc.arg(status), sqlc.narg(worker_id))
+        sqlc.arg(status), sqlc.narg(worker_id), sqlc.arg(estimated_minutes), sqlc.narg(bot_name))
 RETURNING *;
 
 -- name: GetBotJob :one

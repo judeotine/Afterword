@@ -11,6 +11,7 @@ import (
 
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/billing"
 	"github.com/judeotine/afterword/services/api/internal/meetings"
 )
 
@@ -92,6 +93,13 @@ func NewServer(options ServerOptions) (*Server, error) {
 		server.cookieSafe = true
 	}
 	return server, nil
+}
+
+func (s *Server) topUpURL() string {
+	if s.appBaseURL == "" {
+		return ""
+	}
+	return s.appBaseURL + billing.TopUpPath
 }
 
 func (s *Server) Routes(router chi.Router) {

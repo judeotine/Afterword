@@ -13,19 +13,22 @@ import (
 )
 
 const createBotJob = `-- name: CreateBotJob :one
-INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status, worker_id)
+INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status, worker_id,
+                      estimated_minutes, bot_name)
 VALUES ($1, $2, $3, $4,
-        $5, $6)
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at
+        $5, $6, $7, $8)
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
 `
 
 type CreateBotJobParams struct {
-	WorkspaceID uuid.UUID          `json:"workspace_id"`
-	MeetingUrl  string             `json:"meeting_url"`
-	Platform    string             `json:"platform"`
-	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
-	Status      string             `json:"status"`
-	WorkerID    *string            `json:"worker_id"`
+	WorkspaceID      uuid.UUID          `json:"workspace_id"`
+	MeetingUrl       string             `json:"meeting_url"`
+	Platform         string             `json:"platform"`
+	ScheduledAt      pgtype.Timestamptz `json:"scheduled_at"`
+	Status           string             `json:"status"`
+	WorkerID         *string            `json:"worker_id"`
+	EstimatedMinutes int32              `json:"estimated_minutes"`
+	BotName          *string            `json:"bot_name"`
 }
 
 func (q *Queries) CreateBotJob(ctx context.Context, arg CreateBotJobParams) (BotJob, error) {
@@ -36,6 +39,8 @@ func (q *Queries) CreateBotJob(ctx context.Context, arg CreateBotJobParams) (Bot
 		arg.ScheduledAt,
 		arg.Status,
 		arg.WorkerID,
+		arg.EstimatedMinutes,
+		arg.BotName,
 	)
 	var i BotJob
 	err := row.Scan(
@@ -50,6 +55,8 @@ func (q *Queries) CreateBotJob(ctx context.Context, arg CreateBotJobParams) (Bot
 		&i.ConsentAnnouncedAt,
 		&i.Error,
 		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
 	)
 	return i, err
 }
@@ -73,7 +80,7 @@ func (q *Queries) DeleteBotJob(ctx context.Context, arg DeleteBotJobParams) (int
 }
 
 const getBotJob = `-- name: GetBotJob :one
-SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at FROM bot_jobs
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -97,12 +104,14 @@ func (q *Queries) GetBotJob(ctx context.Context, arg GetBotJobParams) (BotJob, e
 		&i.ConsentAnnouncedAt,
 		&i.Error,
 		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
 	)
 	return i, err
 }
 
 const listBotJobsByWorkspace = `-- name: ListBotJobsByWorkspace :many
-SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at FROM bot_jobs
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs
 WHERE workspace_id = $1
   AND (
       $2::timestamptz IS NULL
@@ -145,6 +154,8 @@ func (q *Queries) ListBotJobsByWorkspace(ctx context.Context, arg ListBotJobsByW
 			&i.ConsentAnnouncedAt,
 			&i.Error,
 			&i.CreatedAt,
+			&i.EstimatedMinutes,
+			&i.BotName,
 		); err != nil {
 			return nil, err
 		}
@@ -164,7 +175,7 @@ UPDATE bot_jobs SET
     consent_announced_at = COALESCE($4, consent_announced_at),
     error = COALESCE($5, error)
 WHERE id = $6 AND workspace_id = $7
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
 `
 
 type UpdateBotJobParams struct {
@@ -200,6 +211,8 @@ func (q *Queries) UpdateBotJob(ctx context.Context, arg UpdateBotJobParams) (Bot
 		&i.ConsentAnnouncedAt,
 		&i.Error,
 		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
 	)
 	return i, err
 }

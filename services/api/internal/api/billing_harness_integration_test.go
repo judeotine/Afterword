@@ -18,6 +18,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/api"
 	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/billing"
+	"github.com/judeotine/afterword/services/api/internal/botjobs"
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
@@ -35,6 +36,35 @@ type billingHarness struct {
 	ledger  *credits.Ledger
 	service *billing.Service
 	fake    *payments.Fake
+}
+
+func (h *billingHarness) joinAs(owner session, email string, role auth.Role) session {
+	h.t.Helper()
+	invited := h.do(http.MethodPost, "/v1/workspaces/"+owner.Workspace.ID+"/invites",
+		map[string]string{"email": email, "role": string(role)},
+		withBearer(owner.AccessToken), withWorkspace(owner.Workspace.ID))
+	if invited.Status != http.StatusCreated {
+		h.t.Fatalf("create invite: status %d, body %s", invited.Status, invited.Body)
+	}
+	var invite struct {
+		Token string `json:"token"`
+	}
+	invited.decode(h.t, &invite)
+
+	member := h.signIn(email)
+	accepted := h.do(http.MethodPost, "/v1/invites/"+invite.Token+"/accept", nil, withBearer(member.AccessToken))
+	if accepted.Status != http.StatusOK && accepted.Status != http.StatusCreated {
+		h.t.Fatalf("accept invite: status %d, body %s", accepted.Status, accepted.Body)
+	}
+	member.Workspace.ID = owner.Workspace.ID
+	return member
+}
+
+func (h *billingHarness) grant(workspaceID uuid.UUID, minutes int32) {
+	h.t.Helper()
+	if _, err := h.ledger.Grant(h.context(), workspaceID, minutes, "test"); err != nil {
+		h.t.Fatalf("grant %d minutes: %v", minutes, err)
+	}
 }
 
 func newBillingHarness(t *testing.T) *billingHarness {
@@ -95,6 +125,15 @@ func newBillingHarness(t *testing.T) *billingHarness {
 		t.Fatalf("new billing service: %v", err)
 	}
 
+	botJobs, err := botjobs.NewService(botjobs.ServiceOptions{Pool: pool})
+	if err != nil {
+		t.Fatalf("new bot job service: %v", err)
+	}
+	entitlements, err := billing.NewEntitlements(ledger, "http://localhost:3000")
+	if err != nil {
+		t.Fatalf("new entitlements: %v", err)
+	}
+
 	server, err := api.NewServer(api.ServerOptions{
 		Accounts:   accountsService,
 		OTP:        otp,
@@ -120,6 +159,13 @@ func newBillingHarness(t *testing.T) *billingHarness {
 				AppBaseURL: "http://localhost:3000",
 			}); err != nil {
 				t.Fatalf("register billing routes: %v", err)
+			}
+			if err := api.RegisterBotJobRoutes(router, api.BotJobOptions{
+				BotJobs:      botJobs,
+				Entitlements: entitlements,
+				Middleware:   middleware,
+			}); err != nil {
+				t.Fatalf("register bot job routes: %v", err)
 			}
 		},
 	})

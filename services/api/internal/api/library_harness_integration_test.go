@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"golang.org/x/crypto/bcrypt"
@@ -16,6 +17,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/api"
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
@@ -30,6 +32,7 @@ type libraryHarness struct {
 	memory  *storage.Memory
 	buckets storage.Buckets
 	queue   *jobs.Queue
+	ledger  *credits.Ledger
 	service *meetings.Service
 }
 
@@ -121,11 +124,13 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 	}
 
 	queue := jobs.NewQueue(pool)
+	ledger := credits.NewLedger(pool)
 	library, err := meetings.NewService(meetings.ServiceOptions{
 		Pool:               pool,
 		Storage:            client,
 		Buckets:            buckets,
 		Jobs:               queue,
+		Credits:            ledger,
 		Logger:             zerolog.Nop(),
 		MaxAudioBytes:      limits.MaxAudioBytes,
 		MaxTranscriptBytes: limits.MaxTranscriptBytes,
@@ -165,6 +170,7 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		memory:  memory,
 		buckets: buckets,
 		queue:   queue,
+		ledger:  ledger,
 		service: library,
 	}
 }
@@ -318,6 +324,22 @@ func (h *libraryHarness) join(t *testing.T, owner session, email string, role au
 	}
 	member.Workspace.ID = owner.Workspace.ID
 	return member
+}
+
+func (h *libraryHarness) grant(t *testing.T, session session, minutes int32) {
+	t.Helper()
+	if _, err := h.ledger.Grant(t.Context(), uuid.MustParse(session.Workspace.ID), minutes, "test"); err != nil {
+		t.Fatalf("grant %d minutes: %v", minutes, err)
+	}
+}
+
+func (h *libraryHarness) balance(t *testing.T, session session) int64 {
+	t.Helper()
+	balance, err := h.ledger.Balance(t.Context(), uuid.MustParse(session.Workspace.ID))
+	if err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	return balance
 }
 
 func trustedProxies(t *testing.T, raw string) []netip.Prefix {
