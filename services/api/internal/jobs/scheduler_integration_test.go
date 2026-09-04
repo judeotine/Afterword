@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
 )
@@ -279,5 +281,76 @@ func TestAPanickingTaskBecomesAnErrorAndKeepsTheSchedulerRunning(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not stop with the context")
+	}
+}
+
+func TestATickIsSkippedWhenThePoolHasNoFreeConnection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	config, err := pgxpool.ParseConfig(dbtest.NewDatabaseURL(t))
+	if err != nil {
+		t.Fatalf("parse the test database url: %v", err)
+	}
+	config.MaxConns = 1
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open a single connection pool: %v", err)
+	}
+	defer pool.Close()
+
+	held, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("pin the only connection: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			held.Release()
+		}
+	}()
+
+	var runs atomic.Int32
+	scheduler := jobs.NewScheduler(pool, jobs.WithLockAcquireTimeout(200*time.Millisecond))
+	if err := scheduler.Register(jobs.ScheduledTask{
+		Name:     "starved",
+		Interval: time.Hour,
+		LockKey:  testLockKey + 6,
+		Run: func(context.Context) error {
+			runs.Add(1)
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	started := time.Now()
+	leader, err := scheduler.RunTask(ctx, "starved")
+	if !errors.Is(err, jobs.ErrLockBusy) {
+		t.Fatalf("RunTask error = %v, want ErrLockBusy", err)
+	}
+	if leader {
+		t.Fatal("RunTask claimed the leader lock without a connection")
+	}
+	if waited := time.Since(started); waited > 5*time.Second {
+		t.Fatalf("RunTask blocked for %s instead of skipping the tick", waited)
+	}
+	if got := runs.Load(); got != 0 {
+		t.Fatalf("the task ran %d times without a connection", got)
+	}
+
+	held.Release()
+	released = true
+
+	leader, err = scheduler.RunTask(ctx, "starved")
+	if err != nil {
+		t.Fatalf("RunTask after the connection was freed: %v", err)
+	}
+	if !leader {
+		t.Fatal("RunTask did not take the leader lock once a connection was free")
+	}
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("the task ran %d times, want 1", got)
 	}
 }

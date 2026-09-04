@@ -12,7 +12,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
-const DefaultScheduleInterval = time.Hour
+const (
+	DefaultScheduleInterval   = time.Hour
+	DefaultLockAcquireTimeout = 5 * time.Second
+)
 
 var (
 	ErrTaskRegistered = errors.New("jobs: scheduled task is already registered")
@@ -20,6 +23,7 @@ var (
 	ErrTaskUnknown    = errors.New("jobs: scheduled task is not registered")
 	ErrNoTasks        = errors.New("jobs: no scheduled tasks registered")
 	ErrSchedulerBusy  = errors.New("jobs: scheduler is already running")
+	ErrLockBusy       = errors.New("jobs: no pooled connection was free for the scheduler lock")
 )
 
 type ScheduledTask struct {
@@ -31,8 +35,9 @@ type ScheduledTask struct {
 }
 
 type Scheduler struct {
-	pool   *pgxpool.Pool
-	logger zerolog.Logger
+	pool           *pgxpool.Pool
+	logger         zerolog.Logger
+	acquireTimeout time.Duration
 
 	mu      sync.Mutex
 	order   []string
@@ -48,8 +53,16 @@ func WithSchedulerLogger(logger zerolog.Logger) SchedulerOption {
 	}
 }
 
+func WithLockAcquireTimeout(timeout time.Duration) SchedulerOption {
+	return func(s *Scheduler) {
+		if timeout > 0 {
+			s.acquireTimeout = timeout
+		}
+	}
+}
+
 func NewScheduler(pool *pgxpool.Pool, options ...SchedulerOption) *Scheduler {
-	scheduler := &Scheduler{pool: pool, tasks: map[string]ScheduledTask{}}
+	scheduler := &Scheduler{pool: pool, tasks: map[string]ScheduledTask{}, acquireTimeout: DefaultLockAcquireTimeout}
 	for _, apply := range options {
 		apply(scheduler)
 	}
@@ -139,6 +152,9 @@ func (s *Scheduler) tick(ctx context.Context, task ScheduledTask) {
 	switch {
 	case err != nil && errors.Is(err, context.Canceled):
 		return
+	case err != nil && errors.Is(err, ErrLockBusy):
+		s.logger.Warn().Err(err).Str("task", task.Name).
+			Msg("skipping the scheduled tick: the database pool had no free connection")
 	case err != nil:
 		s.logger.Error().Err(err).Str("task", task.Name).Msg("scheduled task failed")
 	case !leader:
@@ -158,8 +174,14 @@ func (s *Scheduler) RunTask(ctx context.Context, name string) (bool, error) {
 }
 
 func (s *Scheduler) runWithLock(ctx context.Context, task ScheduledTask) (bool, error) {
-	conn, err := s.pool.Acquire(ctx)
+	acquireCtx, cancelAcquire := context.WithTimeout(ctx, s.acquireTimeout)
+	defer cancelAcquire()
+
+	conn, err := s.pool.Acquire(acquireCtx)
 	if err != nil {
+		if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return false, fmt.Errorf("%w: %s waited %s", ErrLockBusy, task.Name, s.acquireTimeout)
+		}
 		return false, fmt.Errorf("acquire a connection for the %s lock: %w", task.Name, err)
 	}
 	defer conn.Release()

@@ -403,17 +403,17 @@ func TestStorageRejectsABadBucketName(t *testing.T) {
 
 func TestLoadRejectsAPoolBelowTheSchedulerFloor(t *testing.T) {
 	env := baseEnv()
-	env["DATABASE_MAX_CONNS"] = "4"
+	env["DATABASE_MAX_CONNS"] = "9"
 	if _, err := Load(lookupFrom(env)); err == nil {
-		t.Fatal("Load succeeded with DATABASE_MAX_CONNS=4")
+		t.Fatal("Load succeeded with DATABASE_MAX_CONNS=9")
 	}
 
-	env["DATABASE_MAX_CONNS"] = "5"
+	env["DATABASE_MAX_CONNS"] = "10"
 	cfg, err := Load(lookupFrom(env))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.DatabaseMaxConns != 5 {
-		t.Errorf("DatabaseMaxConns = %d, want 5", cfg.DatabaseMaxConns)
+	if cfg.DatabaseMaxConns != 10 {
+		t.Errorf("DatabaseMaxConns = %d, want 10", cfg.DatabaseMaxConns)
 	}
 }

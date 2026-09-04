@@ -133,7 +133,7 @@ openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 | Variable | Notes |
 |---|---|
 | `JWT_SECRET` | Minimum 32 characters. Rotating it signs every existing session out. |
-| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. The API refuses to start below 5: the scheduler pins one pooled connection per running task while it holds that task's leader lock, and four scheduled tasks plus request traffic deadlock on a smaller pool. |
+| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box, and the API refuses to start below 10. The scheduler pins one pooled connection per running task for as long as it holds that task's leader lock; with five scheduled tasks, a pool of 10 leaves half of it for request traffic and for the tasks' own queries. A scheduler tick that cannot get a connection within 5s logs a warning and is skipped rather than blocking, so an undersized pool shows up in the log instead of as a stall. |
 | `TRUSTED_PROXY_CIDRS` | `172.16.0.0/12` covers the default Docker bridge networks, so the API trusts Caddy's `X-Forwarded-For`. Without it every log line and rate limit sees Caddy's container IP. |
 | `REQUEST_TIMEOUT`, `SHUTDOWN_TIMEOUT` | `30s` and `15s`. |
 | `ABANDONED_UPLOAD_TTL` | `24h`. An hourly sweep deletes meetings still `pending` after this long and queues their audio and transcript objects for purge, so a client that asked for upload URLs and never finalized does not leave storage behind. Raise it if your users routinely upload multi-hour recordings over slow links. |
