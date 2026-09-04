@@ -153,6 +153,7 @@ type Querier interface {
 	LockAuthOTPVerifyDestination(ctx context.Context, destination string) error
 	LockAuthOTPVerifyIP(ctx context.Context, ip string) error
 	LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID) (uuid.UUID, error)
+	LockMeetingForPurge(ctx context.Context, arg LockMeetingForPurgeParams) (uuid.UUID, error)
 	LockPaymentByProviderRef(ctx context.Context, arg LockPaymentByProviderRefParams) (Payment, error)
 	LockShareLinkIP(ctx context.Context, requestIp string) error
 	MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) (int64, error)

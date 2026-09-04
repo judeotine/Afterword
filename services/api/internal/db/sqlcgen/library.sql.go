@@ -506,6 +506,24 @@ func (q *Queries) ListShareLinksForMeeting(ctx context.Context, arg ListShareLin
 	return items, nil
 }
 
+const lockMeetingForPurge = `-- name: LockMeetingForPurge :one
+SELECT id FROM meetings
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockMeetingForPurgeParams struct {
+	ID          uuid.UUID `json:"id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockMeetingForPurge(ctx context.Context, arg LockMeetingForPurgeParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockMeetingForPurge, arg.ID, arg.WorkspaceID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockShareLinkIP = `-- name: LockShareLinkIP :exec
 SELECT pg_advisory_xact_lock(hashtext('share-ip:' || $1::text))
 `

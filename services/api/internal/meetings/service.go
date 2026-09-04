@@ -356,6 +356,16 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 	}()
 
 	queries := s.queries.WithTx(tx)
+	if _, err := queries.LockMeetingForPurge(ctx, sqlcgen.LockMeetingForPurgeParams{
+		ID:          meetingID,
+		WorkspaceID: actor.WorkspaceID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrMeetingNotFound
+		}
+		return fmt.Errorf("lock meeting for delete: %w", err)
+	}
+
 	clipObjects, err := queries.ListClipObjectsForMeeting(ctx, sqlcgen.ListClipObjectsForMeetingParams{
 		MeetingID:   meetingID,
 		WorkspaceID: actor.WorkspaceID,
@@ -736,7 +746,7 @@ func (o *objectState) matches(size *int64, etag string) bool {
 	if size == nil || *size != o.Size {
 		return false
 	}
-	if etag == "" || o.ETag == "" {
+	if o.ETag == "" {
 		return true
 	}
 	return etag == o.ETag

@@ -3,6 +3,9 @@
 package api_test
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1038,4 +1041,170 @@ func TestPresignFailuresDoNotLeakInternals(t *testing.T) {
 	if len(result.Body) > 200 {
 		t.Fatalf("the error body leaked detail: %s", result.Body)
 	}
+}
+
+func TestDeletePurgesAClipCommittedDuringTheDelete(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Racing clips", "source": "desktop"})
+
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	harness.memory.Put("audio", audioKey, make([]byte, 16), "audio/opus")
+	clipKey := "ws/" + owner.Workspace.ID + "/clips/" + created.Meeting.ID + "-late.opus"
+	harness.memory.Put("clips", clipKey, make([]byte, 16), "audio/opus")
+
+	ctx := t.Context()
+	conn, err := harness.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire a second connection: %v", err)
+	}
+	defer conn.Release()
+
+	inserting, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin the clip transaction: %v", err)
+	}
+	defer func() {
+		_ = inserting.Rollback(context.Background())
+	}()
+
+	if _, err := inserting.Exec(ctx,
+		`INSERT INTO clips (meeting_id, start_s, end_s, title, object) VALUES ($1, 0, 5, 'Late highlight', $2)`,
+		created.Meeting.ID, clipKey,
+	); err != nil {
+		t.Fatalf("insert the clip: %v", err)
+	}
+
+	deleted := make(chan response, 1)
+	go func() {
+		deleted <- harness.call(http.MethodDelete, "/v1/meetings/"+created.Meeting.ID, nil, harness.as(owner)...)
+	}()
+
+	waitForBlockedLock(t, harness)
+
+	if err := inserting.Commit(ctx); err != nil {
+		t.Fatalf("commit the clip: %v", err)
+	}
+
+	var result response
+	select {
+	case result = <-deleted:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the delete never returned after the clip transaction committed")
+	}
+	if result.Status != http.StatusNoContent {
+		t.Fatalf("delete: status %d, body %s", result.Status, result.Body)
+	}
+
+	job, err := harness.queue.GetByIdempotencyKey(ctx, meetings.KindPurge, "purge:meeting:"+created.Meeting.ID)
+	if err != nil {
+		t.Fatalf("read purge job: %v", err)
+	}
+	var payload meetings.PurgePayload
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		t.Fatalf("decode purge payload %s: %v", job.Payload, err)
+	}
+	found := false
+	for _, object := range payload.Objects {
+		if object.Bucket == harness.buckets.Clips && object.Key == clipKey {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a clip committed during the delete never reached the purge payload: %+v", payload.Objects)
+	}
+
+	if err := meetings.NewPurgeHandler(harness.store)(ctx, job); err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if harness.memory.Exists(harness.buckets.Clips, clipKey) {
+		t.Fatalf("the clip object was orphaned: %v", harness.memory.Keys())
+	}
+}
+
+func TestFinalizeDetectsASameSizeRewrite(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Same size", "source": "desktop"})
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	harness.memory.Put("audio", audioKey, bytes.Repeat([]byte{'a'}, 256), "audio/opus")
+
+	path := "/v1/meetings/" + created.Meeting.ID + "/finalize"
+	var result finalizePayload
+	harness.call(http.MethodPost, path, nil, harness.as(owner)...).decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("first finalize queued %+v", result.Queued)
+	}
+
+	harness.memory.Put("audio", audioKey, bytes.Repeat([]byte{'b'}, 256), "audio/opus")
+
+	second := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	if second.Status != http.StatusOK {
+		t.Fatalf("second finalize: status %d, body %s", second.Status, second.Body)
+	}
+	second.decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("a same-size rewrite queued %+v", result.Queued)
+	}
+	if generation := harness.generation(t, created.Meeting.ID); generation != 2 {
+		t.Fatalf("a same-size rewrite left the generation at %d", generation)
+	}
+	if !harness.jobExists(t, meetings.KindTranscribe, "transcribe:meeting:"+created.Meeting.ID+":g2") {
+		t.Fatal("a same-size rewrite created no generation 2 job")
+	}
+}
+
+func TestFinalizeReprocessesAMeetingWithNoStoredEtag(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Pre migration", "source": "desktop"})
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	harness.memory.Put("audio", audioKey, bytes.Repeat([]byte{'a'}, 256), "audio/opus")
+
+	path := "/v1/meetings/" + created.Meeting.ID + "/finalize"
+	var result finalizePayload
+	harness.call(http.MethodPost, path, nil, harness.as(owner)...).decode(t, &result)
+	if len(result.Queued) != 1 {
+		t.Fatalf("first finalize queued %+v", result.Queued)
+	}
+
+	if _, err := harness.pool.Exec(t.Context(),
+		`UPDATE meetings SET audio_etag = NULL WHERE id = $1`, created.Meeting.ID); err != nil {
+		t.Fatalf("clear the stored etag: %v", err)
+	}
+
+	harness.call(http.MethodPost, path, nil, harness.as(owner)...).decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("a meeting with no stored etag was not reprocessed: %+v", result.Queued)
+	}
+	if generation := harness.generation(t, created.Meeting.ID); generation != 2 {
+		t.Fatalf("the reprocess left the generation at %d", generation)
+	}
+
+	harness.call(http.MethodPost, path, nil, harness.as(owner)...).decode(t, &result)
+	if len(result.Queued) != 0 {
+		t.Fatalf("the reprocess repeated instead of settling: %+v", result.Queued)
+	}
+	if generation := harness.generation(t, created.Meeting.ID); generation != 2 {
+		t.Fatalf("the settled generation is %d", generation)
+	}
+}
+
+func waitForBlockedLock(t *testing.T, harness *libraryHarness) {
+	t.Helper()
+	const query = `SELECT count(*) FROM pg_locks locks
+JOIN pg_stat_activity activity ON activity.pid = locks.pid
+WHERE NOT locks.granted AND activity.datname = current_database()`
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked int64
+		if err := harness.pool.QueryRow(t.Context(), query).Scan(&blocked); err != nil {
+			t.Fatalf("read blocked locks: %v", err)
+		}
+		if blocked > 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("no statement ever blocked on a lock: the delete did not take the meeting row lock")
 }

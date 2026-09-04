@@ -42,6 +42,11 @@ UPDATE meetings SET link_sharing_enabled = sqlc.arg(link_sharing_enabled)
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
 RETURNING *;
 
+-- name: LockMeetingForPurge :one
+SELECT id FROM meetings
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
+FOR UPDATE;
+
 -- name: ListClipObjectsForMeeting :many
 SELECT clips.object FROM clips
 JOIN meetings ON meetings.id = clips.meeting_id
