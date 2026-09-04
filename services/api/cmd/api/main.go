@@ -9,18 +9,27 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/api"
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/billing"
 	"github.com/judeotine/afterword/services/api/internal/config"
+	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/db"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
 	"github.com/judeotine/afterword/services/api/internal/meetings"
+	"github.com/judeotine/afterword/services/api/internal/payments"
 	"github.com/judeotine/afterword/services/api/internal/storage"
 	"github.com/judeotine/afterword/services/api/internal/version"
+)
+
+const (
+	shareSweepLockKey int64 = 0x6166777377656570
+	fakeCheckoutPath        = "/billing/fake"
 )
 
 func main() {
@@ -32,6 +41,11 @@ func main() {
 
 func run() error {
 	cfg, err := config.FromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	billingCfg, err := config.BillingFromEnvironment()
 	if err != nil {
 		return err
 	}
@@ -73,9 +87,27 @@ func run() error {
 		return err
 	}
 
-	apiServer, err := buildAPI(cfg, pool, library, logger)
+	components, err := buildAPI(cfg, pool, library, logger)
 	if err != nil {
 		return err
+	}
+
+	billingService, err := buildBilling(cfg, billingCfg, pool, logger)
+	if err != nil {
+		return err
+	}
+
+	billingServer, err := api.NewBillingServer(api.BillingOptions{
+		Billing:    billingService,
+		Middleware: components.middleware,
+		AdminToken: billingCfg.AdminToken,
+		AppBaseURL: cfg.AppBaseURL,
+	})
+	if err != nil {
+		return err
+	}
+	if !billingCfg.AdminConfigured() {
+		logger.Warn().Msg("credit adjustments are disabled: set ADMIN_TOKEN to enable them")
 	}
 
 	if library != nil {
@@ -90,6 +122,18 @@ func run() error {
 		}()
 	}
 
+	scheduler, err := buildScheduler(billingCfg, pool, components, library, logger)
+	if err != nil {
+		return err
+	}
+	if scheduler != nil {
+		go func() {
+			if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error().Err(err).Msg("scheduler stopped")
+			}
+		}()
+	}
+
 	router := httpx.NewRouter(httpx.RouterOptions{
 		Logger:         logger,
 		DB:             pool,
@@ -97,7 +141,10 @@ func run() error {
 		AllowedOrigin:  cfg.AppBaseURL,
 		TrustedProxies: cfg.TrustedProxies,
 		RequestTimeout: cfg.RequestTimeout,
-		Mount:          apiServer.Routes,
+		Mount: func(router chi.Router) {
+			components.server.Routes(router)
+			billingServer.Routes(router)
+		},
 	})
 
 	server := httpx.NewServer(httpx.ServerOptions{
@@ -167,25 +214,31 @@ func newPurgeRunner(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*j
 	return runner, nil
 }
 
-func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logger zerolog.Logger) (*api.Server, error) {
+type apiComponents struct {
+	server     *api.Server
+	middleware *auth.Middleware
+	authStore  *auth.Store
+}
+
+func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logger zerolog.Logger) (apiComponents, error) {
 	authStore, err := auth.NewStore(pool.Pool())
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	accountsService, err := accounts.NewService(pool.Pool())
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	tokens, err := auth.NewTokenIssuer([]byte(cfg.JWTSecret))
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	refresh, err := auth.NewRefreshManager(auth.RefreshManagerOptions{Store: authStore})
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	middleware, err := auth.NewMiddleware(auth.MiddlewareOptions{
@@ -193,12 +246,12 @@ func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logge
 		Memberships: accountsService,
 	})
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	emailSender, err := buildEmailSender(cfg, logger)
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	otp, err := auth.NewOTPService(auth.OTPServiceOptions{
@@ -207,7 +260,7 @@ func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logge
 		SMSSender:   buildSMSSender(cfg, logger),
 	})
 	if err != nil {
-		return nil, err
+		return apiComponents{}, err
 	}
 
 	var google *auth.GoogleAuthenticator
@@ -219,13 +272,13 @@ func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logge
 			Store:        authStore,
 		})
 		if err != nil {
-			return nil, err
+			return apiComponents{}, err
 		}
 	} else {
 		logger.Warn().Msg("google sign-in is disabled: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it")
 	}
 
-	return api.NewServer(api.ServerOptions{
+	server, err := api.NewServer(api.ServerOptions{
 		Accounts:   accountsService,
 		OTP:        otp,
 		Tokens:     tokens,
@@ -236,6 +289,131 @@ func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logge
 		Email:      emailSender,
 		AppBaseURL: cfg.AppBaseURL,
 	})
+	if err != nil {
+		return apiComponents{}, err
+	}
+	return apiComponents{server: server, middleware: middleware, authStore: authStore}, nil
+}
+
+func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.Pool, logger zerolog.Logger) (*billing.Service, error) {
+	registry := payments.NewRegistry()
+
+	if billingCfg.FakeConfigured() {
+		fake, err := payments.NewFake(payments.FakeOptions{
+			Secret:          billingCfg.FakeSecret,
+			CheckoutBaseURL: cfg.AppBaseURL + fakeCheckoutPath,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(payments.FakeProviderName, fake); err != nil {
+			return nil, err
+		}
+		logger.Warn().Msg("the fake payment provider is registered: never set FAKE_PAYMENT_SECRET in production")
+	}
+
+	if billingCfg.NylonPayConfigured() {
+		nylonpay, err := payments.NewNylonPay(payments.NylonPayOptions{
+			BaseURL:       billingCfg.NylonPay.BaseURL,
+			APIKey:        billingCfg.NylonPay.APIKey,
+			WebhookSecret: billingCfg.NylonPay.WebhookSecret,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := registry.Register(payments.NylonPayProviderName, nylonpay); err != nil {
+			return nil, err
+		}
+	}
+
+	defaultProvider := billingCfg.Provider
+	if _, err := registry.Lookup(defaultProvider); err != nil {
+		defaultProvider = ""
+		logger.Warn().Str("provider", billingCfg.Provider).
+			Msg("top-ups are disabled: the configured payment provider has no credentials")
+	}
+
+	return billing.NewService(billing.ServiceOptions{
+		Pool:             pool.Pool(),
+		Providers:        registry,
+		DefaultProvider:  defaultProvider,
+		FreeGrantMinutes: billingCfg.FreeGrantMinutes,
+		APIBaseURL:       cfg.APIBaseURL,
+		Logger:           logger,
+	})
+}
+
+func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components apiComponents, library *meetings.Service, logger zerolog.Logger) (*jobs.Scheduler, error) {
+	scheduler := jobs.NewScheduler(pool.Pool(), jobs.WithSchedulerLogger(logger))
+	registered := 0
+
+	for _, task := range auth.MaintenanceTasks(components.authStore) {
+		if err := scheduler.Register(task); err != nil {
+			return nil, err
+		}
+		registered++
+	}
+
+	if billingCfg.FreeGrantMinutes > 0 {
+		granter, err := credits.NewGranter(credits.GranterOptions{
+			Pool:    pool.Pool(),
+			Minutes: billingCfg.FreeGrantMinutes,
+			Logger:  logger,
+		})
+		if err != nil {
+			return nil, err
+		}
+		task := jobs.ScheduledTask{
+			Name:     "monthly-credit-grant",
+			Interval: billingCfg.GrantInterval,
+			LockKey:  credits.LockKeyMonthlyGrant,
+			Run: func(ctx context.Context) error {
+				run, err := granter.RunOnce(ctx)
+				if err != nil {
+					return err
+				}
+				logger.Info().
+					Time("period", run.Period).
+					Int("granted", run.Granted).
+					Int64("granted_minutes", run.GrantedMinutes).
+					Int("expired", run.Expired).
+					Int64("expired_minutes", run.ExpiredMinutes).
+					Msg("monthly credit grant complete")
+				return nil
+			},
+		}
+		if err := scheduler.Register(task); err != nil {
+			return nil, err
+		}
+		registered++
+	} else {
+		logger.Warn().Msg("monthly credit grants are disabled: FREE_GRANT_MINUTES is zero")
+	}
+
+	if library != nil {
+		task := jobs.ScheduledTask{
+			Name:     "share-link-request-sweep",
+			Interval: time.Hour,
+			LockKey:  shareSweepLockKey,
+			Run: func(ctx context.Context) error {
+				removed, err := library.SweepShareLinkRequests(ctx)
+				if err != nil {
+					return err
+				}
+				logger.Debug().Int64("removed", removed).Msg("share link request sweep complete")
+				return nil
+			},
+		}
+		if err := scheduler.Register(task); err != nil {
+			return nil, err
+		}
+		registered++
+	}
+
+	if registered == 0 {
+		return nil, nil
+	}
+	return scheduler, nil
 }
 
 func buildEmailSender(cfg config.Config, logger zerolog.Logger) (auth.EmailSender, error) {
