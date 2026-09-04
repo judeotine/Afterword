@@ -4,8 +4,10 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,13 +29,14 @@ import (
 
 type libraryHarness struct {
 	*harness
-	pool    *pgxpool.Pool
-	store   storage.Client
-	memory  *storage.Memory
-	buckets storage.Buckets
-	queue   *jobs.Queue
-	ledger  *credits.Ledger
-	service *meetings.Service
+	pool     *pgxpool.Pool
+	store    storage.Client
+	memory   *storage.Memory
+	buckets  storage.Buckets
+	queue    *jobs.Queue
+	enqueuer *flakyEnqueuer
+	ledger   *credits.Ledger
+	service  *meetings.Service
 }
 
 func newLibraryHarness(t *testing.T) *libraryHarness {
@@ -124,12 +127,13 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 	}
 
 	queue := jobs.NewQueue(pool)
+	enqueuer := &flakyEnqueuer{Queue: queue}
 	ledger := credits.NewLedger(pool)
 	library, err := meetings.NewService(meetings.ServiceOptions{
 		Pool:               pool,
 		Storage:            client,
 		Buckets:            buckets,
-		Jobs:               queue,
+		Jobs:               enqueuer,
 		Credits:            ledger,
 		Logger:             zerolog.Nop(),
 		MaxAudioBytes:      limits.MaxAudioBytes,
@@ -165,13 +169,14 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 				Mount:          server.Routes,
 			}),
 		},
-		pool:    pool,
-		store:   client,
-		memory:  memory,
-		buckets: buckets,
-		queue:   queue,
-		ledger:  ledger,
-		service: library,
+		pool:     pool,
+		store:    client,
+		memory:   memory,
+		buckets:  buckets,
+		queue:    queue,
+		enqueuer: enqueuer,
+		ledger:   ledger,
+		service:  library,
 	}
 }
 
@@ -324,6 +329,47 @@ func (h *libraryHarness) join(t *testing.T, owner session, email string, role au
 	}
 	member.Workspace.ID = owner.Workspace.ID
 	return member
+}
+
+type flakyEnqueuer struct {
+	*jobs.Queue
+
+	mu   sync.Mutex
+	fail bool
+}
+
+func (e *flakyEnqueuer) setFail(fail bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.fail = fail
+}
+
+func (e *flakyEnqueuer) EnqueueUnique(ctx context.Context, kind string, payload any, runAt time.Time, idempotencyKey string) (*jobs.Job, bool, error) {
+	e.mu.Lock()
+	fail := e.fail
+	e.mu.Unlock()
+	if fail {
+		return nil, false, errors.New("the job queue is unavailable")
+	}
+	return e.Queue.EnqueueUnique(ctx, kind, payload, runAt, idempotencyKey)
+}
+
+func (h *libraryHarness) failEnqueues(fail bool) {
+	h.enqueuer.setFail(fail)
+}
+
+const libraryTestCredits int32 = 100000
+
+func (h *libraryHarness) signIn(destination string) session {
+	h.t.Helper()
+	created := h.harness.signIn(destination)
+	h.grant(h.t, created, libraryTestCredits)
+	return created
+}
+
+func (h *libraryHarness) signInBroke(destination string) session {
+	h.t.Helper()
+	return h.harness.signIn(destination)
 }
 
 func (h *libraryHarness) grant(t *testing.T, session session, minutes int32) {

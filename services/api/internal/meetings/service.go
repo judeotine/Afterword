@@ -28,11 +28,19 @@ const (
 	DefaultMaxTranscriptBytes = int64(64) << 20
 	audioContentType          = "application/octet-stream"
 	transcriptType            = "application/json"
+
+	MaxAudioBytesPerSecond     int64 = 192000
+	SecondsPerMinute           int64 = 60
+	MaxBillableMinutes         int64 = 24 * 60
+	MaxDurationS               int64 = 24 * 60 * 60
+	TranscriptMinutesPerCredit int64 = 10
+	refundPrefix                     = "refund:"
 )
 
 type CreditGuard interface {
 	Require(ctx context.Context, workspaceID uuid.UUID, minutes int32) (int64, error)
 	Debit(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason credits.Reason, refID string) (*credits.Entry, error)
+	Adjust(ctx context.Context, workspaceID uuid.UUID, deltaMinutes int32, refID string) (*credits.Entry, error)
 }
 
 type Enqueuer interface {
@@ -461,7 +469,7 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 		return Finalized{}, err
 	}
 
-	if err := s.requireCreditsFor(ctx, actor.WorkspaceID, meetingID, kinds, generation, meeting.DurationS); err != nil {
+	if err := s.requireCreditsFor(ctx, actor.WorkspaceID, meetingID, kinds, generation, audio); err != nil {
 		return Finalized{}, err
 	}
 
@@ -498,84 +506,157 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 			Generation:  generation,
 		}
 
-		job, created, err := s.jobs.EnqueueUnique(ctx, kind, payload, time.Time{}, jobKey(kind, meetingID, generation))
+		idempotencyKey := jobKey(kind, meetingID, generation)
+		queued, err := s.jobs.GetByIdempotencyKey(ctx, kind, idempotencyKey)
+		switch {
+		case err == nil && queued != nil:
+			continue
+		case err != nil && !errors.Is(err, jobs.ErrNotFound):
+			return Finalized{}, fmt.Errorf("look up the %s job: %w", kind, err)
+		}
+
+		minutes, reason := UsageFor(kind, billableAudioBytes(audio))
+		if err := s.debitCredits(ctx, actor.WorkspaceID, minutes, reason, idempotencyKey); err != nil {
+			return Finalized{}, err
+		}
+
+		_, created, err := s.jobs.EnqueueUnique(ctx, kind, payload, time.Time{}, idempotencyKey)
 		if err != nil {
+			s.refundCredits(ctx, actor.WorkspaceID, minutes, idempotencyKey)
 			return Finalized{}, fmt.Errorf("enqueue %s: %w", kind, err)
 		}
 		if !created {
+			s.refundCredits(ctx, actor.WorkspaceID, minutes, idempotencyKey)
 			continue
-		}
-		minutes, reason := UsageFor(kind, finalized.Meeting.DurationS)
-		if err := s.debitCredits(ctx, actor.WorkspaceID, minutes, reason, job); err != nil {
-			return Finalized{}, err
 		}
 		finalized.Queued = append(finalized.Queued, kind)
 	}
 	return finalized, nil
 }
 
-func UsageFor(kind string, durationS int32) (int32, credits.Reason) {
+func UsageFor(kind string, audioBytes int64) (int32, credits.Reason) {
 	if kind == KindSummarise {
-		return SummaryMinutes(durationS), credits.ReasonSummaryUsage
+		return SummaryMinutes(audioBytes), credits.ReasonSummaryUsage
 	}
-	return TranscriptMinutes(durationS), credits.ReasonTranscribeUsage
+	return TranscribeMinutes(audioBytes), credits.ReasonTranscribeUsage
 }
 
-func TranscriptMinutes(durationS int32) int32 {
-	if durationS <= 0 {
+func TranscribeMinutes(audioBytes int64) int32 {
+	if audioBytes <= 0 {
 		return 0
 	}
-	return (durationS + 59) / 60
+	return clampMinutes(atLeastOne(ceilDiv(audioBytes, MaxAudioBytesPerSecond*SecondsPerMinute)))
 }
 
-func SummaryMinutes(durationS int32) int32 {
-	minutes := TranscriptMinutes(durationS)
-	if minutes <= 0 {
+func SummaryMinutes(audioBytes int64) int32 {
+	if audioBytes <= 0 {
+		return 1
+	}
+	transcript := ceilDiv(audioBytes, MaxAudioBytesPerSecond*SecondsPerMinute)
+	return clampMinutes(atLeastOne(ceilDiv(transcript, TranscriptMinutesPerCredit)))
+}
+
+func ceilDiv(value, divisor int64) int64 {
+	if value <= 0 || divisor <= 0 {
 		return 0
 	}
-	return (minutes + 9) / 10
+	quotient := value / divisor
+	if value%divisor != 0 {
+		quotient++
+	}
+	return quotient
 }
 
-func (s *Service) requireCreditsFor(ctx context.Context, workspaceID, meetingID uuid.UUID, kinds []string, generation, durationS int32) error {
-	if s.credits == nil {
-		return nil
+func atLeastOne(minutes int64) int64 {
+	if minutes < 1 {
+		return 1
 	}
-	total := int32(0)
+	return minutes
+}
+
+func clampMinutes(minutes int64) int32 {
+	if minutes > MaxBillableMinutes {
+		return int32(MaxBillableMinutes)
+	}
+	return int32(minutes)
+}
+
+func billableAudioBytes(audio *objectState) int64 {
+	if audio == nil {
+		return 0
+	}
+	return audio.Size
+}
+
+func (s *Service) pendingKinds(ctx context.Context, meetingID uuid.UUID, kinds []string, generation int32) ([]string, error) {
+	pending := make([]string, 0, len(kinds))
 	for _, kind := range kinds {
 		existing, err := s.jobs.GetByIdempotencyKey(ctx, kind, jobKey(kind, meetingID, generation))
 		switch {
 		case err == nil && existing != nil:
 			continue
 		case err != nil && !errors.Is(err, jobs.ErrNotFound):
-			return fmt.Errorf("look up the %s job: %w", kind, err)
+			return nil, fmt.Errorf("look up the %s job: %w", kind, err)
 		}
-		minutes, _ := UsageFor(kind, durationS)
-		total += minutes
+		pending = append(pending, kind)
+	}
+	return pending, nil
+}
+
+func (s *Service) requireCreditsFor(ctx context.Context, workspaceID, meetingID uuid.UUID, kinds []string, generation int32, audio *objectState) error {
+	if s.credits == nil {
+		return nil
+	}
+	pending, err := s.pendingKinds(ctx, meetingID, kinds, generation)
+	if err != nil {
+		return err
+	}
+	total := int64(0)
+	for _, kind := range pending {
+		minutes, _ := UsageFor(kind, billableAudioBytes(audio))
+		total += int64(minutes)
 	}
 	if total <= 0 {
 		return nil
 	}
-	if _, err := s.credits.Require(ctx, workspaceID, total); err != nil {
+	if _, err := s.credits.Require(ctx, workspaceID, clampMinutes(total)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Service) debitCredits(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason credits.Reason, job *jobs.Job) error {
+func (s *Service) debitCredits(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason credits.Reason, refID string) error {
 	if s.credits == nil || minutes <= 0 {
 		return nil
 	}
-	if _, err := s.credits.Debit(ctx, workspaceID, minutes, reason, job.ID.String()); err != nil {
+	if _, err := s.credits.Debit(ctx, workspaceID, minutes, reason, refID); err != nil {
 		s.logger.Error().
 			Err(err).
 			Str("workspace_id", workspaceID.String()).
-			Str("job_id", job.ID.String()).
+			Str("ref_id", refID).
 			Str("reason", string(reason)).
 			Int32("minutes", minutes).
-			Msg("a queued job could not be charged")
+			Msg("queued work could not be charged")
 		return err
 	}
 	return nil
+}
+
+func (s *Service) refundCredits(ctx context.Context, workspaceID uuid.UUID, minutes int32, refID string) {
+	if s.credits == nil || minutes <= 0 {
+		return
+	}
+	refundCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+
+	if _, err := s.credits.Adjust(refundCtx, workspaceID, minutes, refundPrefix+refID); err != nil {
+		s.logger.Error().
+			Err(err).
+			Str("workspace_id", workspaceID.String()).
+			Str("ref_id", refID).
+			Int32("minutes", minutes).
+			Msg("a debit could not be refunded after its job failed to queue")
+	}
 }
 
 func (s *Service) objectState(ctx context.Context, bucket, key string, maximum int64) (*objectState, error) {

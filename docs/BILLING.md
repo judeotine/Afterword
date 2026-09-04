@@ -105,17 +105,50 @@ the shortfall and a top-up link, which the API renders as
 Two paths use it today. `POST /v1/bot-jobs` requires the job's estimate
 (`estimated_minutes`, default 60) before it writes the row: the estimate is
 checked, never spent, because the bot bills the minutes it actually used when it
-leaves. `POST /v1/meetings/{id}/finalize` prices the work it is about to queue
+leaves. Scheduling a bot spends the workspace's credits, so `POST /v1/bot-jobs`
+needs the `admin` or `owner` role; `GET /v1/bot-jobs` is open to every member. `POST /v1/meetings/{id}/finalize` prices the work it is about to queue
 and requires the total before it touches the meeting, so a refused finalize
 leaves the meeting's status and generation exactly where they were and queues
 nothing.
 
 Finalize charges only work it actually queued. It asks the job queue which kinds
-already exist at this generation, prices only the rest, and writes the debit
-inside the branch that created the job, with the job's id as the ledger
-`ref_id`. A re-finalize that creates nothing charges nothing. A meeting whose
-`duration_s` is still zero is free, because there is nothing to price yet; the
-worker is what will eventually record real minutes.
+already exist at this generation, prices only the rest, and debits **before** it
+enqueues, so a job can never exist without its charge; if the enqueue then
+fails, the exact debit is refunded as a ledger `adjust` referencing the job's
+idempotency key, which is also the debit's `ref_id`. A re-finalize that creates
+nothing charges nothing.
+
+### What finalize is allowed to price
+
+`meetings.duration_s` is whatever the client said at `POST /v1/meetings`. It is
+display metadata and **nothing is ever priced from it**: a client that declares
+zero would otherwise transcribe three hours for free, and one that declares a
+huge number would overflow the arithmetic into a negative, also free. The
+column is clamped to 24 hours at the API boundary and every price is computed in
+`int64` with a ceiling helper that cannot overflow.
+
+Billable minutes are derived server-side from the audio object's size, as
+reported by the storage `HEAD` that finalize already performs:
+
+```
+bytesPerMinute      = 192000 * 60          = 11,520,000
+transcribeMinutes   = max(ceil(sizeBytes / bytesPerMinute), 1)   for any audio object
+summaryMinutes      = max(ceil(transcribeMinutes / 10), 1)       for any queued summary
+```
+
+192,000 bytes per second is 48 kHz, 16-bit, stereo PCM: the densest audio the
+upload path accepts. Dividing by the densest encoding gives the **smallest**
+duration those bytes could possibly represent, so the figure is a floor that can
+never overbill — a three-hour Opus recording at 24 kbps prices as three minutes,
+not a hundred and eighty. Both results are clamped to 24 hours' worth of
+minutes.
+
+This is deliberately a floor charge, not the price. It exists so that queueing
+cloud work is never free and never unbounded; the transcription worker knows the
+real duration and reconciles against the ledger in Phase C, where the entry
+written here — keyed by the job's idempotency key — is the row to adjust. Any
+paid transcribe costs at least one credit, and so does any hosted summary,
+including a transcript-only meeting where there is no audio to measure.
 
 ## Endpoints
 
@@ -127,7 +160,7 @@ worker is what will eventually record real minutes.
 | GET | `/v1/billing/payments` | bearer + workspace | Payment history, cursor paged |
 | POST | `/v1/billing/webhooks/{provider}` | provider signature | Settles a payment |
 | POST | `/v1/admin/workspaces/{id}/credits/adjust` | `X-Admin-Token` | `{delta_minutes, ref_id?}` → the new balance |
-| POST | `/v1/bot-jobs` | bearer + workspace | `{meeting_url, platform?, scheduled_at?, estimated_minutes?, bot_name?}` → the scheduled row |
+| POST | `/v1/bot-jobs` | bearer + workspace + admin | `{meeting_url, platform?, scheduled_at?, estimated_minutes?, bot_name?}` → the scheduled row |
 | GET | `/v1/bot-jobs` | bearer + workspace | Bot jobs, cursor paged |
 | GET | `/v1/bot-jobs/{id}` | bearer + workspace | One bot job |
 
@@ -179,7 +212,8 @@ answering 200 so the provider stops retrying:
 - a `paid` event for a row that is `failed` or `refunded` — the money may be
   real and the row says otherwise, most often because the reaper failed a
   payment the provider confirmed late;
-- a `paid` event whose amount or currency does not match the stored payment;
+- a `paid` event whose amount or currency does not match the stored payment,
+  which includes an event that reports no amount at all: silence is not a match;
 - anything else that cannot be settled safely.
 
 `needs_review` is a terminal state for the automatic paths: the reaper ignores
@@ -253,10 +287,16 @@ development is therefore:
 ```
 curl -X POST http://localhost:8080/v1/billing/webhooks/fake \
   -H 'X-Fake-Signature: <FAKE_PAYMENT_SECRET>' \
-  -d '{"payment_id":"<payment id from checkout>"}'
+  -d '{"payment_id":"<payment id from checkout>","amount_minor":15000,"currency":"UGX"}'
 ```
 
-Never set `ALLOW_FAKE_PAYMENTS` in production. When the fake provider
+`ALLOW_FAKE_PAYMENTS` registers the provider, and registering it keeps
+`POST /v1/billing/webhooks/fake` live whatever `PAYMENT_PROVIDER` says: the
+webhook route dispatches on the provider named in the path, not on the
+configured default, so anyone holding `FAKE_PAYMENT_SECRET` can mark a payment
+paid even on a deployment whose checkout runs through Nylon Pay. **Never set
+`ALLOW_FAKE_PAYMENTS` in production**, and treat `FAKE_PAYMENT_SECRET` as a
+credential that mints credits. When the fake provider
 registers, the API logs a warning at startup. `deploy/docker-compose.dev.yml`
 and CI set it; `deploy/api.env.example` sets it to false.
 

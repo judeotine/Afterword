@@ -43,7 +43,7 @@ func (s *Server) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
 		platform = v.OneOf("platform", body.Platform, meetings.Platforms, "")
 	}
 	v.Min("duration_s", body.DurationS, 0)
-	v.Max("duration_s", body.DurationS, int64(^uint32(0)>>1))
+	v.Max("duration_s", body.DurationS, meetings.MaxDurationS)
 	startedAt := optionalTime(v, "started_at", body.StartedAt)
 	var folderID *uuid.UUID
 	if body.FolderID != "" {
