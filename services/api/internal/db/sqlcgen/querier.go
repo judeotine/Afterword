@@ -49,6 +49,7 @@ type Querier interface {
 	CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error)
 	CreateWorkspaceInvite(ctx context.Context, arg CreateWorkspaceInviteParams) (WorkspaceInvite, error)
 	DeleteAPIToken(ctx context.Context, arg DeleteAPITokenParams) (int64, error)
+	DeleteAbandonedPendingMeetings(ctx context.Context, arg DeleteAbandonedPendingMeetingsParams) ([]Meeting, error)
 	DeleteAuditLogEntry(ctx context.Context, arg DeleteAuditLogEntryParams) (int64, error)
 	DeleteBotJob(ctx context.Context, arg DeleteBotJobParams) (int64, error)
 	DeleteCalendarConnection(ctx context.Context, arg DeleteCalendarConnectionParams) (int64, error)

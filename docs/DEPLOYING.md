@@ -135,6 +135,7 @@ openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 | `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. The API refuses to start below 5: the scheduler pins one pooled connection per running task while it holds that task's leader lock, and four scheduled tasks plus request traffic deadlock on a smaller pool. |
 | `TRUSTED_PROXY_CIDRS` | `172.16.0.0/12` covers the default Docker bridge networks, so the API trusts Caddy's `X-Forwarded-For`. Without it every log line and rate limit sees Caddy's container IP. |
 | `REQUEST_TIMEOUT`, `SHUTDOWN_TIMEOUT` | `30s` and `15s`. |
+| `ABANDONED_UPLOAD_TTL` | `24h`. An hourly sweep deletes meetings still `pending` after this long and queues their audio and transcript objects for purge, so a client that asked for upload URLs and never finalized does not leave storage behind. Raise it if your users routinely upload multi-hour recordings over slow links. |
 | `GOOGLE_CLIENT_ID`/`_SECRET` | Both or neither; the API refuses to start with only one. `GOOGLE_REDIRECT_URL` must equal `https://api.$DOMAIN/v1/auth/google/callback` and be registered in the Google console. |
 | `EMAIL_SENDER` | `smtp` in production. `log` writes login codes to the container log and is development only. `SMTP_HOST` and `SMTP_FROM` become required when it is `smtp`. |
 | `SMTP_FROM` | Quote it — `"Afterword <no-reply@example.com>"` — because the value contains spaces and angle brackets. Compose strips the quotes when it loads the file. |
@@ -578,6 +579,28 @@ Recover, cheapest first:
 Prevention: alert at 75% used. Audio is stored as 24 kbps Opus, so roughly
 10 MB per recorded hour — the disk should last a long time unless retention is
 never applied or images are never pruned.
+
+### Bounding what an upload URL can write
+
+A pre-signed `PUT` cannot express a size range: S3 and MinIO can pin an exact
+`Content-Length` into the signature or nothing at all, and the API does not know
+how large a recording will be when it hands out the URL. `S3_MAX_AUDIO_MB` and
+`S3_MAX_TRANSCRIPT_MB` are therefore checked at finalize, after the object has
+landed — an over-sized object is refused and left for the purge sweep, but it
+was already written to the disk once.
+
+Put a hard ceiling underneath that with a bucket quota, which MinIO enforces at
+write time:
+
+```bash
+docker compose exec minio mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+docker compose exec minio mc quota set local/audio --size 30GB
+docker compose exec minio mc quota set local/transcripts --size 2GB
+```
+
+Size the audio quota to the disk you are willing to lose, not to one upload.
+The hourly abandoned-upload sweep (`ABANDONED_UPLOAD_TTL`) reclaims whatever a
+client wrote and never finalized.
 
 ---
 

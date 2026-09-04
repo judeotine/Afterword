@@ -48,6 +48,65 @@ func (q *Queries) CountSegmentsForMeeting(ctx context.Context, arg CountSegments
 	return count, err
 }
 
+const deleteAbandonedPendingMeetings = `-- name: DeleteAbandonedPendingMeetings :many
+DELETE FROM meetings
+WHERE id IN (
+    SELECT abandoned.id FROM meetings AS abandoned
+    WHERE abandoned.status = 'pending' AND abandoned.created_at < $1
+    ORDER BY abandoned.created_at
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
+`
+
+type DeleteAbandonedPendingMeetingsParams struct {
+	OlderThan pgtype.Timestamptz `json:"older_than"`
+	RowLimit  int32              `json:"row_limit"`
+}
+
+func (q *Queries) DeleteAbandonedPendingMeetings(ctx context.Context, arg DeleteAbandonedPendingMeetingsParams) ([]Meeting, error) {
+	rows, err := q.db.Query(ctx, deleteAbandonedPendingMeetings, arg.OlderThan, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Meeting{}
+	for rows.Next() {
+		var i Meeting
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.OwnerUserID,
+			&i.Title,
+			&i.Source,
+			&i.Platform,
+			&i.StartedAt,
+			&i.DurationS,
+			&i.ConsentState,
+			&i.Visibility,
+			&i.FolderID,
+			&i.AudioObject,
+			&i.TranscriptObject,
+			&i.Status,
+			&i.CreatedAt,
+			&i.AudioBytes,
+			&i.TranscriptBytes,
+			&i.LinkSharingEnabled,
+			&i.FinalizeGeneration,
+			&i.AudioEtag,
+			&i.TranscriptEtag,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteExpiredShareLinkRequests = `-- name: DeleteExpiredShareLinkRequests :execrows
 DELETE FROM share_link_requests WHERE created_at < $1
 `

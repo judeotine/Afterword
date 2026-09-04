@@ -219,6 +219,7 @@ func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*mee
 		MaxTranscriptBytes: cfg.S3.MaxTranscriptBytes,
 		ShareRateWindow:    cfg.ShareRateWindow,
 		ShareRateLimit:     cfg.ShareRateLimit,
+		AbandonedUploadTTL: cfg.AbandonedUploadTTL,
 	})
 }
 
@@ -402,7 +403,7 @@ func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, lo
 }
 
 func startupTasks(billingCfg config.BillingConfig, authStore *auth.Store, library *meetings.Service, grantRun, reapRun func(context.Context) error) []jobs.ScheduledTask {
-	tasks := make([]jobs.ScheduledTask, 0, 4)
+	tasks := make([]jobs.ScheduledTask, 0, 5)
 	tasks = append(tasks, auth.MaintenanceTasks(authStore)...)
 	tasks = append(tasks, meetings.MaintenanceTasks(library)...)
 

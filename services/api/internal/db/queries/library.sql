@@ -137,3 +137,14 @@ USING meetings
 WHERE share_links.meeting_id = meetings.id
   AND meetings.id = sqlc.arg(meeting_id)
   AND meetings.workspace_id = sqlc.arg(workspace_id);
+
+-- name: DeleteAbandonedPendingMeetings :many
+DELETE FROM meetings
+WHERE id IN (
+    SELECT abandoned.id FROM meetings AS abandoned
+    WHERE abandoned.status = 'pending' AND abandoned.created_at < sqlc.arg(older_than)
+    ORDER BY abandoned.created_at
+    LIMIT sqlc.arg(row_limit)
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;

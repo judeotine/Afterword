@@ -52,20 +52,21 @@ type AuthConfig struct {
 }
 
 type Config struct {
-	Port             int
-	DatabaseURL      string
-	DatabaseMaxConns int32
-	JWTSecret        string
-	AppBaseURL       string
-	APIBaseURL       string
-	LogLevel         string
-	S3               S3Config
-	Auth             AuthConfig
-	TrustedProxies   []netip.Prefix
-	ShareRateWindow  time.Duration
-	ShareRateLimit   int64
-	RequestTimeout   time.Duration
-	ShutdownTimeout  time.Duration
+	Port               int
+	DatabaseURL        string
+	DatabaseMaxConns   int32
+	JWTSecret          string
+	AppBaseURL         string
+	APIBaseURL         string
+	LogLevel           string
+	S3                 S3Config
+	Auth               AuthConfig
+	TrustedProxies     []netip.Prefix
+	ShareRateWindow    time.Duration
+	ShareRateLimit     int64
+	AbandonedUploadTTL time.Duration
+	RequestTimeout     time.Duration
+	ShutdownTimeout    time.Duration
 }
 
 type Error struct {
@@ -125,11 +126,12 @@ func Load(lookup LookupFunc) (Config, error) {
 				StartTLS: reader.boolean("SMTP_STARTTLS", true),
 			},
 		},
-		TrustedProxies:  reader.trustedProxies("TRUSTED_PROXY_CIDRS"),
-		ShareRateWindow: reader.duration("SHARE_RATE_WINDOW", time.Minute),
-		ShareRateLimit:  int64(reader.boundedInt("SHARE_RATE_LIMIT", 120, 1, 100000)),
-		RequestTimeout:  reader.duration("REQUEST_TIMEOUT", 30*time.Second),
-		ShutdownTimeout: reader.duration("SHUTDOWN_TIMEOUT", 15*time.Second),
+		TrustedProxies:     reader.trustedProxies("TRUSTED_PROXY_CIDRS"),
+		ShareRateWindow:    reader.duration("SHARE_RATE_WINDOW", time.Minute),
+		ShareRateLimit:     int64(reader.boundedInt("SHARE_RATE_LIMIT", 120, 1, 100000)),
+		AbandonedUploadTTL: reader.duration("ABANDONED_UPLOAD_TTL", 24*time.Hour),
+		RequestTimeout:     reader.duration("REQUEST_TIMEOUT", 30*time.Second),
+		ShutdownTimeout:    reader.duration("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 
 	cfg.Auth.GoogleRedirectURL = reader.baseURL("GOOGLE_REDIRECT_URL", cfg.APIBaseURL+googleCallbackPath)

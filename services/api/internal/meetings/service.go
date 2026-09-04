@@ -62,6 +62,7 @@ type ServiceOptions struct {
 	MaxTranscriptBytes int64
 	ShareRateWindow    time.Duration
 	ShareRateLimit     int64
+	AbandonedUploadTTL time.Duration
 	Clock              func() time.Time
 }
 
@@ -79,6 +80,7 @@ type Service struct {
 	maxTranscriptBytes int64
 	shareWindow        time.Duration
 	shareLimit         int64
+	abandonedUploadTTL time.Duration
 	clock              func() time.Time
 }
 
@@ -106,6 +108,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		maxTranscriptBytes: options.MaxTranscriptBytes,
 		shareWindow:        options.ShareRateWindow,
 		shareLimit:         options.ShareRateLimit,
+		abandonedUploadTTL: options.AbandonedUploadTTL,
 		clock:              options.Clock,
 	}
 	if service.uploadTTL <= 0 {
@@ -125,6 +128,9 @@ func NewService(options ServiceOptions) (*Service, error) {
 	}
 	if service.shareLimit <= 0 {
 		service.shareLimit = DefaultShareRateLimit
+	}
+	if service.abandonedUploadTTL <= 0 {
+		service.abandonedUploadTTL = DefaultAbandonedUploadTTL
 	}
 	if service.clock == nil {
 		service.clock = func() time.Time { return time.Now().UTC() }

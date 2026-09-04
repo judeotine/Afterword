@@ -53,6 +53,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.DatabaseMaxConns != 10 {
 		t.Errorf("DatabaseMaxConns = %d, want 10", cfg.DatabaseMaxConns)
 	}
+	if cfg.AbandonedUploadTTL != 24*time.Hour {
+		t.Errorf("AbandonedUploadTTL = %s, want 24h", cfg.AbandonedUploadTTL)
+	}
 }
 
 func TestLoadReadsProvidedValues(t *testing.T) {
@@ -67,6 +70,7 @@ func TestLoadReadsProvidedValues(t *testing.T) {
 	env["S3_REGION"] = "eu-central-1"
 	env["S3_USE_SSL"] = "true"
 	env["DATABASE_MAX_CONNS"] = "24"
+	env["ABANDONED_UPLOAD_TTL"] = "6h"
 	env["SHUTDOWN_TIMEOUT"] = "5s"
 	env["REQUEST_TIMEOUT"] = "45s"
 
@@ -94,6 +98,9 @@ func TestLoadReadsProvidedValues(t *testing.T) {
 	}
 	if cfg.DatabaseMaxConns != 24 {
 		t.Errorf("DatabaseMaxConns = %d, want 24", cfg.DatabaseMaxConns)
+	}
+	if cfg.AbandonedUploadTTL != 6*time.Hour {
+		t.Errorf("AbandonedUploadTTL = %s, want 6h", cfg.AbandonedUploadTTL)
 	}
 	if cfg.ShutdownTimeout != 5*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 5s", cfg.ShutdownTimeout)
