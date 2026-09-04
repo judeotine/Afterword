@@ -62,6 +62,8 @@ type Config struct {
 	S3               S3Config
 	Auth             AuthConfig
 	TrustedProxies   []netip.Prefix
+	ShareRateWindow  time.Duration
+	ShareRateLimit   int64
 	RequestTimeout   time.Duration
 	ShutdownTimeout  time.Duration
 }
@@ -124,6 +126,8 @@ func Load(lookup LookupFunc) (Config, error) {
 			},
 		},
 		TrustedProxies:  reader.trustedProxies("TRUSTED_PROXY_CIDRS"),
+		ShareRateWindow: reader.duration("SHARE_RATE_WINDOW", time.Minute),
+		ShareRateLimit:  int64(reader.boundedInt("SHARE_RATE_LIMIT", 120, 1, 100000)),
 		RequestTimeout:  reader.duration("REQUEST_TIMEOUT", 30*time.Second),
 		ShutdownTimeout: reader.duration("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}

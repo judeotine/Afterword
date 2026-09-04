@@ -63,7 +63,7 @@ func (q *Queries) DeleteExpiredShareLinkRequests(ctx context.Context, before pgt
 const deleteMeetingReturning = `-- name: DeleteMeetingReturning :one
 DELETE FROM meetings
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type DeleteMeetingReturningParams struct {
@@ -94,6 +94,8 @@ func (q *Queries) DeleteMeetingReturning(ctx context.Context, arg DeleteMeetingR
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }
@@ -145,16 +147,20 @@ UPDATE meetings SET
     status = $1,
     audio_bytes = $2,
     transcript_bytes = $3,
-    duration_s = COALESCE($4, duration_s),
-    finalize_generation = $5
-WHERE id = $6 AND workspace_id = $7
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+    audio_etag = $4,
+    transcript_etag = $5,
+    duration_s = COALESCE($6, duration_s),
+    finalize_generation = $7
+WHERE id = $8 AND workspace_id = $9
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type FinalizeMeetingObjectsParams struct {
 	Status             string    `json:"status"`
 	AudioBytes         *int64    `json:"audio_bytes"`
 	TranscriptBytes    *int64    `json:"transcript_bytes"`
+	AudioEtag          *string   `json:"audio_etag"`
+	TranscriptEtag     *string   `json:"transcript_etag"`
 	DurationS          *int32    `json:"duration_s"`
 	FinalizeGeneration int32     `json:"finalize_generation"`
 	ID                 uuid.UUID `json:"id"`
@@ -166,6 +172,8 @@ func (q *Queries) FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetin
 		arg.Status,
 		arg.AudioBytes,
 		arg.TranscriptBytes,
+		arg.AudioEtag,
+		arg.TranscriptEtag,
 		arg.DurationS,
 		arg.FinalizeGeneration,
 		arg.ID,
@@ -192,12 +200,14 @@ func (q *Queries) FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetin
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }
 
 const getMeetingByShareTokenHash = `-- name: GetMeetingByShareTokenHash :one
-SELECT meetings.id, meetings.workspace_id, meetings.owner_user_id, meetings.title, meetings.source, meetings.platform, meetings.started_at, meetings.duration_s, meetings.consent_state, meetings.visibility, meetings.folder_id, meetings.audio_object, meetings.transcript_object, meetings.status, meetings.created_at, meetings.audio_bytes, meetings.transcript_bytes, meetings.link_sharing_enabled, meetings.finalize_generation, share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash
+SELECT meetings.id, meetings.workspace_id, meetings.owner_user_id, meetings.title, meetings.source, meetings.platform, meetings.started_at, meetings.duration_s, meetings.consent_state, meetings.visibility, meetings.folder_id, meetings.audio_object, meetings.transcript_object, meetings.status, meetings.created_at, meetings.audio_bytes, meetings.transcript_bytes, meetings.link_sharing_enabled, meetings.finalize_generation, meetings.audio_etag, meetings.transcript_etag, share_links.id, share_links.meeting_id, share_links.permission, share_links.expires_at, share_links.created_at, share_links.token_hash
 FROM share_links
 JOIN meetings ON meetings.id = share_links.meeting_id
 WHERE share_links.token_hash = $1
@@ -231,6 +241,8 @@ func (q *Queries) GetMeetingByShareTokenHash(ctx context.Context, tokenHash stri
 		&i.Meeting.TranscriptBytes,
 		&i.Meeting.LinkSharingEnabled,
 		&i.Meeting.FinalizeGeneration,
+		&i.Meeting.AudioEtag,
+		&i.Meeting.TranscriptEtag,
 		&i.ShareLink.ID,
 		&i.ShareLink.MeetingID,
 		&i.ShareLink.Permission,
@@ -307,7 +319,7 @@ func (q *Queries) ListFolders(ctx context.Context, workspaceID uuid.UUID) ([]Fol
 }
 
 const listMeetingsPage = `-- name: ListMeetingsPage :many
-SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation FROM meetings
+SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag FROM meetings
 WHERE workspace_id = $1
   AND (visibility <> 'private' OR owner_user_id = $2)
   AND ($3::uuid IS NULL OR folder_id = $3::uuid)
@@ -376,6 +388,8 @@ func (q *Queries) ListMeetingsPage(ctx context.Context, arg ListMeetingsPagePara
 			&i.TranscriptBytes,
 			&i.LinkSharingEnabled,
 			&i.FinalizeGeneration,
+			&i.AudioEtag,
+			&i.TranscriptEtag,
 		); err != nil {
 			return nil, err
 		}
@@ -493,7 +507,7 @@ func (q *Queries) ListShareLinksForMeeting(ctx context.Context, arg ListShareLin
 }
 
 const lockShareLinkIP = `-- name: LockShareLinkIP :exec
-SELECT pg_advisory_xact_lock(hashtext($1::text))
+SELECT pg_advisory_xact_lock(hashtext('share-ip:' || $1::text))
 `
 
 func (q *Queries) LockShareLinkIP(ctx context.Context, requestIp string) error {
@@ -504,7 +518,7 @@ func (q *Queries) LockShareLinkIP(ctx context.Context, requestIp string) error {
 const setMeetingLinkSharing = `-- name: SetMeetingLinkSharing :one
 UPDATE meetings SET link_sharing_enabled = $1
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type SetMeetingLinkSharingParams struct {
@@ -536,6 +550,8 @@ func (q *Queries) SetMeetingLinkSharing(ctx context.Context, arg SetMeetingLinkS
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }
@@ -616,7 +632,7 @@ UPDATE meetings SET
         ELSE COALESCE($4, folder_id)
     END
 WHERE id = $5 AND workspace_id = $6
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type UpdateMeetingDetailsParams struct {
@@ -658,6 +674,8 @@ func (q *Queries) UpdateMeetingDetails(ctx context.Context, arg UpdateMeetingDet
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }

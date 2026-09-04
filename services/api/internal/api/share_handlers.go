@@ -2,7 +2,9 @@ package api
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -141,7 +143,7 @@ func (s *Server) shareToken(w http.ResponseWriter, r *http.Request) (string, boo
 }
 
 func (s *Server) allowSharedRequest(w http.ResponseWriter, r *http.Request) bool {
-	err := s.meetings.AllowSharedRequest(r.Context(), requestIP(r))
+	err := s.meetings.AllowSharedRequest(r.Context(), sharedClientIP(r))
 	if err == nil {
 		return true
 	}
@@ -151,6 +153,18 @@ func (s *Server) allowSharedRequest(w http.ResponseWriter, r *http.Request) bool
 	}
 	s.writeLibraryError(w, r, err)
 	return false
+}
+
+func sharedClientIP(r *http.Request) string {
+	host := strings.TrimSpace(r.RemoteAddr)
+	if bare, _, err := net.SplitHostPort(host); err == nil {
+		host = strings.TrimSpace(bare)
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	return addr.Unmap().String()
 }
 
 func (s *Server) shareURL(token string) string {

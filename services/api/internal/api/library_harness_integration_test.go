@@ -5,6 +5,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -43,6 +44,15 @@ func newLibraryHarnessWithShareLimit(t *testing.T, limit int64) *libraryHarness 
 	return buildLibrary(t, dbtest.New(t), memory, memory, storage.Buckets{}.WithDefaults(), libraryLimits{ShareRateLimit: limit})
 }
 
+func newLibraryHarnessBehindProxy(t *testing.T, limit int64, trustedProxies string) *libraryHarness {
+	t.Helper()
+	memory := storage.NewMemory()
+	return buildLibrary(t, dbtest.New(t), memory, memory, storage.Buckets{}.WithDefaults(), libraryLimits{
+		ShareRateLimit: limit,
+		TrustedProxies: trustedProxies,
+	})
+}
+
 func newLibraryHarnessWithLimits(t *testing.T, maxAudio, maxTranscript int64) *libraryHarness {
 	t.Helper()
 	memory := storage.NewMemory()
@@ -56,6 +66,7 @@ type libraryLimits struct {
 	MaxAudioBytes      int64
 	MaxTranscriptBytes int64
 	ShareRateLimit     int64
+	TrustedProxies     string
 }
 
 func newLibraryHarnessWith(t *testing.T, memory *storage.Memory) *libraryHarness {
@@ -143,9 +154,10 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 			t:      t,
 			sender: sender,
 			handler: httpx.NewRouter(httpx.RouterOptions{
-				Logger:        zerolog.Nop(),
-				AllowedOrigin: "http://localhost:3000",
-				Mount:         server.Routes,
+				Logger:         zerolog.Nop(),
+				AllowedOrigin:  "http://localhost:3000",
+				TrustedProxies: trustedProxies(t, limits.TrustedProxies),
+				Mount:          server.Routes,
 			}),
 		},
 		pool:    pool,
@@ -306,6 +318,43 @@ func (h *libraryHarness) join(t *testing.T, owner session, email string, role au
 	}
 	member.Workspace.ID = owner.Workspace.ID
 	return member
+}
+
+func trustedProxies(t *testing.T, raw string) []netip.Prefix {
+	t.Helper()
+	if raw == "" {
+		return nil
+	}
+	prefixes, err := httpx.ParseTrustedProxies(raw)
+	if err != nil {
+		t.Fatalf("parse trusted proxies %q: %v", raw, err)
+	}
+	return prefixes
+}
+
+func withForwardedFor(ip string) func(*http.Request) {
+	return func(r *http.Request) {
+		r.Header.Set("X-Forwarded-For", ip)
+	}
+}
+
+func (h *libraryHarness) generation(t *testing.T, meetingID string) int32 {
+	t.Helper()
+	var generation int32
+	if err := h.pool.QueryRow(t.Context(),
+		`SELECT finalize_generation FROM meetings WHERE id = $1`, meetingID).Scan(&generation); err != nil {
+		t.Fatalf("read finalize generation: %v", err)
+	}
+	return generation
+}
+
+func (h *libraryHarness) jobCount(t *testing.T, kind string) int64 {
+	t.Helper()
+	var count int64
+	if err := h.pool.QueryRow(t.Context(), `SELECT count(*) FROM jobs WHERE kind = $1`, kind).Scan(&count); err != nil {
+		t.Fatalf("count %s jobs: %v", kind, err)
+	}
+	return count
 }
 
 func (h *libraryHarness) jobExists(t *testing.T, kind, key string) bool {

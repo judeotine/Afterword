@@ -60,6 +60,7 @@ var (
 	ErrNotPermitted      = errors.New("meetings: your role does not allow that action")
 	ErrNoObjects         = errors.New("meetings: neither the audio nor the transcript object was uploaded")
 	ErrObjectTooLarge    = errors.New("meetings: the uploaded object is larger than the agreed limit")
+	ErrMeetingFinalized  = errors.New("meetings: the meeting has already been finalized")
 	ErrTooManySegments   = errors.New("meetings: too many transcript segments")
 	ErrDuplicateSequence = errors.New("meetings: transcript segment sequence numbers must be unique")
 	ErrShareLinkNotFound = errors.New("meetings: share link not found")
@@ -84,6 +85,8 @@ type Meeting struct {
 	TranscriptObject string
 	AudioBytes       *int64
 	TranscriptBytes  *int64
+	AudioETag        string
+	TranscriptETag   string
 	Status           string
 	LinkSharing      bool
 	Generation       int32
@@ -208,6 +211,8 @@ func meetingFromRow(row sqlcgen.Meeting) Meeting {
 		TranscriptObject: text(row.TranscriptObject),
 		AudioBytes:       row.AudioBytes,
 		TranscriptBytes:  row.TranscriptBytes,
+		AudioETag:        text(row.AudioEtag),
+		TranscriptETag:   text(row.TranscriptEtag),
 		Status:           row.Status,
 		LinkSharing:      row.LinkSharingEnabled,
 		Generation:       row.FinalizeGeneration,

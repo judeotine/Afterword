@@ -742,6 +742,20 @@ func TestShareTokensAreHashedAtRest(t *testing.T) {
 	if strings.Contains(string(listed.Body), link.Share.Token) {
 		t.Fatalf("listing share links returned the raw token: %s", listed.Body)
 	}
+
+	var links struct {
+		Shares []sharePayload `json:"shares"`
+	}
+	listed.decode(t, &links)
+	if len(links.Shares) != 1 {
+		t.Fatalf("listed shares %+v", links.Shares)
+	}
+	if links.Shares[0].Token != "" || links.Shares[0].URL != "" {
+		t.Fatalf("the share listing carries a token or a url: %+v", links.Shares[0])
+	}
+	if link.Share.URL == "" {
+		t.Fatalf("the creation response carries no url: %+v", link.Share)
+	}
 }
 
 func TestSharedReadsAreRateLimitedByAddress(t *testing.T) {
@@ -768,6 +782,32 @@ func TestSharedReadsAreRateLimitedByAddress(t *testing.T) {
 	}
 	if other := harness.call(http.MethodGet, path, nil, withRemoteIP("198.51.100.4")); other.Status != http.StatusOK {
 		t.Fatalf("another address was limited: status %d, body %s", other.Status, other.Body)
+	}
+}
+
+func TestSharedReadsAreLimitedByTheForwardedClientAddress(t *testing.T) {
+	harness := newLibraryHarnessBehindProxy(t, 2, "192.0.2.10/32")
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Proxied", "source": "desktop"})
+
+	shared := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/share", nil, harness.as(owner)...)
+	var link createSharePayload
+	shared.decode(t, &link)
+
+	path := "/v1/shared/" + link.Share.Token
+	proxied := func(client string) response {
+		return harness.call(http.MethodGet, path, nil, withRemoteIP("192.0.2.10"), withForwardedFor(client))
+	}
+	for attempt := range 2 {
+		if got := proxied("203.0.113.20"); got.Status != http.StatusOK {
+			t.Fatalf("attempt %d: status %d, body %s", attempt, got.Status, got.Body)
+		}
+	}
+	if got := proxied("203.0.113.20"); got.Status != http.StatusTooManyRequests {
+		t.Fatalf("the forwarded client was not limited: status %d, body %s", got.Status, got.Body)
+	}
+	if got := proxied("203.0.113.21"); got.Status != http.StatusOK {
+		t.Fatalf("a second forwarded client shared the first one's budget: status %d, body %s", got.Status, got.Body)
 	}
 }
 
@@ -864,6 +904,67 @@ func TestUploadUrlsCanBeReissued(t *testing.T) {
 	refused := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/upload-urls", nil, harness.as(member)...)
 	if refused.Status != http.StatusNotFound {
 		t.Fatalf("member reissue: status %d, body %s", refused.Status, refused.Body)
+	}
+}
+
+func TestUploadUrlsAreRefusedOnceTheMeetingIsFinalized(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Done", "source": "desktop"})
+	harness.memory.Put("audio", fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID), make([]byte, 128), "audio/opus")
+
+	if got := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/finalize", nil, harness.as(owner)...); got.Status != http.StatusOK {
+		t.Fatalf("finalize: status %d, body %s", got.Status, got.Body)
+	}
+
+	refused := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/upload-urls", nil, harness.as(owner)...)
+	if refused.Status != http.StatusConflict {
+		t.Fatalf("reissue after finalize: status %d, body %s", refused.Status, refused.Body)
+	}
+	if refused.errorCode(t) != "meeting_finalized" {
+		t.Fatalf("code %q", refused.errorCode(t))
+	}
+}
+
+func TestFinalizeCreatesNothingWhenNothingChanged(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Stable", "source": "desktop"})
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	harness.memory.Put("audio", audioKey, make([]byte, 256), "audio/opus")
+
+	path := "/v1/meetings/" + created.Meeting.ID + "/finalize"
+	first := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	var result finalizePayload
+	first.decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("first finalize queued %+v", result.Queued)
+	}
+
+	second := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	if second.Status != http.StatusOK {
+		t.Fatalf("second finalize: status %d, body %s", second.Status, second.Body)
+	}
+	second.decode(t, &result)
+	if len(result.Queued) != 0 {
+		t.Fatalf("the second finalize reported work: %+v", result.Queued)
+	}
+
+	if generation := harness.generation(t, created.Meeting.ID); generation != 1 {
+		t.Fatalf("the second finalize bumped the generation to %d", generation)
+	}
+	if count := harness.jobCount(t, meetings.KindTranscribe); count != 1 {
+		t.Fatalf("%d transcribe jobs exist after two finalizes", count)
+	}
+
+	harness.memory.Put("audio", audioKey, make([]byte, 512), "audio/opus")
+	third := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	third.decode(t, &result)
+	if len(result.Queued) != 1 || result.Queued[0] != meetings.KindTranscribe {
+		t.Fatalf("a changed object did not queue new work: %+v", result.Queued)
+	}
+	if generation := harness.generation(t, created.Meeting.ID); generation != 2 {
+		t.Fatalf("a changed object left the generation at %d", generation)
 	}
 }
 

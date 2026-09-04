@@ -203,7 +203,7 @@ func (s *Service) AllowSharedRequest(ctx context.Context, requestIP string) erro
 }
 
 func (s *Service) SweepShareLinkRequests(ctx context.Context) (int64, error) {
-	before := s.clock().Add(-24 * time.Hour)
+	before := s.clock().Add(-DefaultShareLinkRequestRetention)
 	removed, err := s.queries.DeleteExpiredShareLinkRequests(ctx, optionalTimestamp(&before))
 	if err != nil {
 		return 0, fmt.Errorf("sweep share link requests: %w", err)

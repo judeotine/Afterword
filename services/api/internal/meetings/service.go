@@ -198,6 +198,9 @@ func (s *Service) UploadTargets(ctx context.Context, actor auth.Membership, meet
 	if err != nil {
 		return Created{}, err
 	}
+	if meeting.Status != StatusPending || meeting.Generation > 0 {
+		return Created{}, ErrMeetingFinalized
+	}
 	if meeting.AudioObject == "" || meeting.TranscriptObject == "" {
 		return Created{}, ErrNoObjects
 	}
@@ -335,7 +338,16 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 		return err
 	}
 
-	clipObjects, err := s.queries.ListClipObjectsForMeeting(ctx, sqlcgen.ListClipObjectsForMeetingParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+
+	queries := s.queries.WithTx(tx)
+	clipObjects, err := queries.ListClipObjectsForMeeting(ctx, sqlcgen.ListClipObjectsForMeetingParams{
 		MeetingID:   meetingID,
 		WorkspaceID: actor.WorkspaceID,
 	})
@@ -343,7 +355,7 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 		return fmt.Errorf("read clip objects: %w", err)
 	}
 
-	row, err := s.queries.DeleteMeetingReturning(ctx, sqlcgen.DeleteMeetingReturningParams{
+	row, err := queries.DeleteMeetingReturning(ctx, sqlcgen.DeleteMeetingReturningParams{
 		ID:          meetingID,
 		WorkspaceID: actor.WorkspaceID,
 	})
@@ -352,6 +364,10 @@ func (s *Service) Delete(ctx context.Context, actor auth.Membership, meetingID u
 			return ErrMeetingNotFound
 		}
 		return fmt.Errorf("delete meeting: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete transaction: %w", err)
 	}
 
 	payload := PurgePayload{
@@ -390,27 +406,38 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 		return Finalized{}, err
 	}
 
-	audioBytes, err := s.objectSize(ctx, s.buckets.Audio, meeting.AudioObject, s.maxAudioBytes)
+	audio, err := s.objectState(ctx, s.buckets.Audio, meeting.AudioObject, s.maxAudioBytes)
 	if err != nil {
 		return Finalized{}, err
 	}
-	transcriptBytes, err := s.objectSize(ctx, s.buckets.Transcripts, meeting.TranscriptObject, s.maxTranscriptBytes)
+	transcript, err := s.objectState(ctx, s.buckets.Transcripts, meeting.TranscriptObject, s.maxTranscriptBytes)
 	if err != nil {
 		return Finalized{}, err
 	}
-	if audioBytes == nil && transcriptBytes == nil {
+	if audio == nil && transcript == nil {
 		return Finalized{}, ErrNoObjects
 	}
 
 	kinds := make([]string, 0, 2)
-	if audioBytes != nil && transcriptBytes == nil {
+	if audio != nil && transcript == nil {
 		kinds = append(kinds, KindTranscribe)
 	}
-	if transcriptBytes != nil {
+	if transcript != nil {
 		kinds = append(kinds, KindSummarise)
 	}
 
-	generation, err := s.nextGeneration(ctx, meeting, kinds)
+	changed := !objectsMatch(meeting, audio, transcript)
+	if !changed && meeting.Status == StatusReady && meeting.Generation > 0 {
+		retry, err := s.workNeedsRetry(ctx, meeting, kinds)
+		if err != nil {
+			return Finalized{}, err
+		}
+		if !retry {
+			return Finalized{Meeting: meeting, Queued: []string{}}, nil
+		}
+	}
+
+	generation, err := s.nextGeneration(ctx, meeting, kinds, changed)
 	if err != nil {
 		return Finalized{}, err
 	}
@@ -419,8 +446,10 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 		ID:                 meetingID,
 		WorkspaceID:        actor.WorkspaceID,
 		Status:             StatusReady,
-		AudioBytes:         audioBytes,
-		TranscriptBytes:    transcriptBytes,
+		AudioBytes:         audio.size(),
+		TranscriptBytes:    transcript.size(),
+		AudioEtag:          audio.etag(),
+		TranscriptEtag:     transcript.etag(),
 		FinalizeGeneration: generation,
 	})
 	if err != nil {
@@ -456,7 +485,7 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 	return finalized, nil
 }
 
-func (s *Service) objectSize(ctx context.Context, bucket, key string, maximum int64) (*int64, error) {
+func (s *Service) objectState(ctx context.Context, bucket, key string, maximum int64) (*objectState, error) {
 	if key == "" {
 		return nil, nil
 	}
@@ -466,8 +495,7 @@ func (s *Service) objectSize(ctx context.Context, bucket, key string, maximum in
 		if info.Size > maximum {
 			return nil, ErrObjectTooLarge
 		}
-		size := info.Size
-		return &size, nil
+		return &objectState{Size: info.Size, ETag: info.ETag}, nil
 	case errors.Is(err, storage.ErrNotFound):
 		return nil, nil
 	default:
@@ -475,9 +503,33 @@ func (s *Service) objectSize(ctx context.Context, bucket, key string, maximum in
 	}
 }
 
-func (s *Service) nextGeneration(ctx context.Context, meeting Meeting, kinds []string) (int32, error) {
+func objectsMatch(meeting Meeting, audio, transcript *objectState) bool {
+	return audio.matches(meeting.AudioBytes, meeting.AudioETag) &&
+		transcript.matches(meeting.TranscriptBytes, meeting.TranscriptETag)
+}
+
+func (s *Service) workNeedsRetry(ctx context.Context, meeting Meeting, kinds []string) (bool, error) {
+	for _, kind := range kinds {
+		job, err := s.jobs.GetByIdempotencyKey(ctx, kind, jobKey(kind, meeting.ID, meeting.Generation))
+		if err != nil {
+			if errors.Is(err, jobs.ErrNotFound) {
+				return true, nil
+			}
+			return false, fmt.Errorf("read %s job: %w", kind, err)
+		}
+		if job.Status == jobs.StatusDead {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Service) nextGeneration(ctx context.Context, meeting Meeting, kinds []string, changed bool) (int32, error) {
 	if meeting.Generation <= 0 {
 		return 1, nil
+	}
+	if changed {
+		return meeting.Generation + 1, nil
 	}
 	for _, kind := range kinds {
 		job, err := s.jobs.GetByIdempotencyKey(ctx, kind, jobKey(kind, meeting.ID, meeting.Generation))
@@ -571,6 +623,40 @@ func (s *Service) objectsFor(meeting Meeting, clipObjects []*string) []ObjectRef
 		objects = append(objects, ObjectRef{Bucket: s.buckets.Clips, Key: *clip})
 	}
 	return objects
+}
+
+type objectState struct {
+	Size int64
+	ETag string
+}
+
+func (o *objectState) size() *int64 {
+	if o == nil {
+		return nil
+	}
+	size := o.Size
+	return &size
+}
+
+func (o *objectState) etag() *string {
+	if o == nil || o.ETag == "" {
+		return nil
+	}
+	etag := o.ETag
+	return &etag
+}
+
+func (o *objectState) matches(size *int64, etag string) bool {
+	if o == nil {
+		return size == nil
+	}
+	if size == nil || *size != o.Size {
+		return false
+	}
+	if etag == "" || o.ETag == "" {
+		return true
+	}
+	return etag == o.ETag
 }
 
 func escapeLike(value string) string {

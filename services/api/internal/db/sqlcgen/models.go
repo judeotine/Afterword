@@ -193,6 +193,8 @@ type Meeting struct {
 	TranscriptBytes    *int64             `json:"transcript_bytes"`
 	LinkSharingEnabled bool               `json:"link_sharing_enabled"`
 	FinalizeGeneration int32              `json:"finalize_generation"`
+	AudioEtag          *string            `json:"audio_etag"`
+	TranscriptEtag     *string            `json:"transcript_etag"`
 }
 
 type Membership struct {

@@ -22,7 +22,7 @@ INSERT INTO meetings (
     $9, $10, $11,
     $12, $13
 )
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type CreateMeetingParams struct {
@@ -78,6 +78,8 @@ func (q *Queries) CreateMeeting(ctx context.Context, arg CreateMeetingParams) (M
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }
@@ -101,7 +103,7 @@ func (q *Queries) DeleteMeeting(ctx context.Context, arg DeleteMeetingParams) (i
 }
 
 const getMeeting = `-- name: GetMeeting :one
-SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation FROM meetings
+SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag FROM meetings
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -133,12 +135,14 @@ func (q *Queries) GetMeeting(ctx context.Context, arg GetMeetingParams) (Meeting
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }
 
 const listMeetingsByWorkspace = `-- name: ListMeetingsByWorkspace :many
-SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation FROM meetings
+SELECT id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag FROM meetings
 WHERE workspace_id = $1
   AND (
       $2::timestamptz IS NULL
@@ -189,6 +193,8 @@ func (q *Queries) ListMeetingsByWorkspace(ctx context.Context, arg ListMeetingsB
 			&i.TranscriptBytes,
 			&i.LinkSharingEnabled,
 			&i.FinalizeGeneration,
+			&i.AudioEtag,
+			&i.TranscriptEtag,
 		); err != nil {
 			return nil, err
 		}
@@ -213,7 +219,7 @@ UPDATE meetings SET
     transcript_object = COALESCE($9, transcript_object),
     status = COALESCE($10, status)
 WHERE id = $11 AND workspace_id = $12
-RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation
+RETURNING id, workspace_id, owner_user_id, title, source, platform, started_at, duration_s, consent_state, visibility, folder_id, audio_object, transcript_object, status, created_at, audio_bytes, transcript_bytes, link_sharing_enabled, finalize_generation, audio_etag, transcript_etag
 `
 
 type UpdateMeetingParams struct {
@@ -267,6 +273,8 @@ func (q *Queries) UpdateMeeting(ctx context.Context, arg UpdateMeetingParams) (M
 		&i.TranscriptBytes,
 		&i.LinkSharingEnabled,
 		&i.FinalizeGeneration,
+		&i.AudioEtag,
+		&i.TranscriptEtag,
 	)
 	return i, err
 }

@@ -234,12 +234,15 @@ func newSegmentListView(page meetings.SegmentPage) segmentListView {
 }
 
 func (s *Server) newShareLinkView(link meetings.ShareLink) shareLinkView {
-	return shareLinkView{
+	view := shareLinkView{
 		ID:         link.ID,
 		Token:      link.Token,
-		URL:        s.shareURL(link.Token),
 		Permission: link.Permission,
 		ExpiresAt:  link.ExpiresAt,
 		CreatedAt:  link.CreatedAt,
 	}
+	if link.Token != "" {
+		view.URL = s.shareURL(link.Token)
+	}
+	return view
 }

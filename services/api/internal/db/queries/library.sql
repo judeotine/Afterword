@@ -30,6 +30,8 @@ UPDATE meetings SET
     status = sqlc.arg(status),
     audio_bytes = sqlc.narg(audio_bytes),
     transcript_bytes = sqlc.narg(transcript_bytes),
+    audio_etag = sqlc.narg(audio_etag),
+    transcript_etag = sqlc.narg(transcript_etag),
     duration_s = COALESCE(sqlc.narg(duration_s), duration_s),
     finalize_generation = sqlc.arg(finalize_generation)
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
@@ -57,7 +59,7 @@ WHERE (
 RETURNING id;
 
 -- name: LockShareLinkIP :exec
-SELECT pg_advisory_xact_lock(hashtext(sqlc.arg(request_ip)::text));
+SELECT pg_advisory_xact_lock(hashtext('share-ip:' || sqlc.arg(request_ip)::text));
 
 -- name: DeleteExpiredShareLinkRequests :execrows
 DELETE FROM share_link_requests WHERE created_at < sqlc.arg(before);
