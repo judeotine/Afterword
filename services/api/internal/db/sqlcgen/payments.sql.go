@@ -323,6 +323,37 @@ func (q *Queries) ListPaymentsByWorkspace(ctx context.Context, arg ListPaymentsB
 	return items, nil
 }
 
+const lockPaymentByID = `-- name: LockPaymentByID :one
+SELECT id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at FROM payments
+WHERE provider = $1 AND id = $2
+FOR UPDATE
+`
+
+type LockPaymentByIDParams struct {
+	Provider string    `json:"provider"`
+	ID       uuid.UUID `json:"id"`
+}
+
+func (q *Queries) LockPaymentByID(ctx context.Context, arg LockPaymentByIDParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, lockPaymentByID, arg.Provider, arg.ID)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.ProviderRef,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.Minutes,
+		&i.Status,
+		&i.Raw,
+		&i.CreatedAt,
+		&i.PackID,
+		&i.PaidAt,
+	)
+	return i, err
+}
+
 const lockPaymentByProviderRef = `-- name: LockPaymentByProviderRef :one
 SELECT id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at FROM payments
 WHERE provider = $1 AND provider_ref = $2

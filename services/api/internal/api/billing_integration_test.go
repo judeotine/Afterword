@@ -312,8 +312,8 @@ func TestWebhooksAreRefusedWithoutAValidSecretOrProvider(t *testing.T) {
 	}
 
 	unknownPayment := h.deliverFakeWebhook(uuid.NewString(), 15000)
-	if unknownPayment.Status != http.StatusNotFound {
-		t.Fatalf("webhook for an unknown payment = %d, want 404", unknownPayment.Status)
+	if unknownPayment.Status != http.StatusAccepted {
+		t.Fatalf("webhook for an unknown payment = %d, want 202", unknownPayment.Status)
 	}
 
 	if h.balance(uuid.MustParse(session.Workspace.ID)) != 0 {

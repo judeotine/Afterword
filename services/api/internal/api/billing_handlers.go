@@ -170,6 +170,10 @@ func (b *BillingServer) handleBillingWebhook(w http.ResponseWriter, r *http.Requ
 
 	result, err := b.billing.HandleWebhook(r.Context(), provider, r.Header, body)
 	if err != nil {
+		if errors.Is(err, billing.ErrWebhookUnmatched) {
+			httpx.WriteJSON(w, r, http.StatusAccepted, webhookView{Received: true})
+			return
+		}
 		b.writeBillingError(w, r, err)
 		return
 	}

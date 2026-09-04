@@ -35,6 +35,7 @@ const (
 	adminActor           = "admin-token"
 	reasonAmountMismatch = "the provider reported a different amount"
 	reasonLateSettlement = "a paid webhook arrived for a payment that was no longer pending"
+	reasonUnsettleable   = "the provider reported a status that cannot settle a pending payment"
 	webhookPathPrefix    = "/v1/billing/webhooks/"
 )
 
@@ -45,6 +46,7 @@ var (
 	ErrInvalidPhone      = errors.New("billing: phone number is not usable")
 	ErrInvalidCursor     = errors.New("billing: cursor is not valid")
 	ErrCheckoutLimited   = errors.New("billing: too many checkouts were started for this workspace")
+	ErrWebhookUnmatched  = errors.New("billing: the webhook does not name a payment we hold")
 )
 
 type ServiceOptions struct {
@@ -338,10 +340,13 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, header
 		ProviderRef: event.ProviderRef,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return WebhookResult{}, ErrPaymentNotFound
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return WebhookResult{}, fmt.Errorf("lock the payment: %w", err)
 		}
-		return WebhookResult{}, fmt.Errorf("lock the payment: %w", err)
+		row, err = s.lockPaymentByReference(ctx, queries, name, event)
+		if err != nil {
+			return WebhookResult{}, err
+		}
 	}
 
 	if row.Status != string(payments.StatusPending) {
@@ -359,6 +364,9 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, header
 	status := event.Status
 	if status == payments.StatusPending {
 		return WebhookResult{Payment: newPayment(row)}, nil
+	}
+	if status != payments.StatusPaid && status != payments.StatusFailed {
+		return s.flagForReview(ctx, tx, row, reasonUnsettleable)
 	}
 
 	if status == payments.StatusPaid && !amountMatches(event.Amount, row) {
@@ -385,6 +393,32 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, header
 	}
 
 	return WebhookResult{Payment: newPayment(updated), Credited: credited}, nil
+}
+
+func (s *Service) lockPaymentByReference(ctx context.Context, queries *sqlcgen.Queries, provider string, event payments.WebhookEvent) (sqlcgen.Payment, error) {
+	id, err := uuid.Parse(strings.TrimSpace(event.Reference))
+	if err != nil {
+		return sqlcgen.Payment{}, s.unmatched(provider, event)
+	}
+
+	row, err := queries.LockPaymentByID(ctx, sqlcgen.LockPaymentByIDParams{Provider: provider, ID: id})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sqlcgen.Payment{}, s.unmatched(provider, event)
+		}
+		return sqlcgen.Payment{}, fmt.Errorf("lock the payment by reference: %w", err)
+	}
+	return row, nil
+}
+
+func (s *Service) unmatched(provider string, event payments.WebhookEvent) error {
+	s.logger.Warn().
+		Str("provider", provider).
+		Str("provider_ref", event.ProviderRef).
+		Str("reference", event.Reference).
+		Str("status", string(event.Status)).
+		Msg("a webhook named a payment we do not hold")
+	return ErrWebhookUnmatched
 }
 
 func amountMatches(amount payments.Money, row sqlcgen.Payment) bool {

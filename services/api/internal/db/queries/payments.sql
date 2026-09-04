@@ -50,6 +50,11 @@ SELECT * FROM payments
 WHERE provider = sqlc.arg(provider) AND provider_ref = sqlc.arg(provider_ref)
 FOR UPDATE;
 
+-- name: LockPaymentByID :one
+SELECT * FROM payments
+WHERE provider = sqlc.arg(provider) AND id = sqlc.arg(id)
+FOR UPDATE;
+
 -- name: SettlePayment :one
 UPDATE payments SET
     status = sqlc.arg(status),

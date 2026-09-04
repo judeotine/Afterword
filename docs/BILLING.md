@@ -280,15 +280,19 @@ URL for a card page.
 The webhook handler verifies the provider's signature over the raw request body
 before anything else, then opens one transaction that:
 
-1. locks the `payments` row by `(provider, provider_ref)` with `FOR UPDATE`;
+1. locks the `payments` row by `(provider, provider_ref)` with `FOR UPDATE`,
+   falling back to `(provider, id)` against the event's own reference — the
+   payment id we sent the provider — when no row carries that `provider_ref`;
 2. returns 200 with `duplicate: true` if the row is no longer `pending`;
 3. writes the `purchase` ledger entry through `credits.Ledger` and stamps
    `status`, `paid_at`, and the raw provider payload on the row.
 
 Because the row lock is taken first, duplicate and concurrent deliveries of the
 same event credit the workspace exactly once. Duplicates answer 200 so the
-provider stops retrying. A body that does not match a known payment answers 404;
-a bad signature answers 401.
+provider stops retrying. A body that matches no payment at all answers 202 and
+is logged: a provider that is mid-retry should keep retrying while a lost or
+not-yet-written row is investigated, and a 404 would make it give up. A bad
+signature answers 401.
 
 Only a `paid` event on an already `paid` row is a duplicate. Three other
 outcomes move the row to `needs_review` instead, each logged at error level and
@@ -300,7 +304,9 @@ answering 200 so the provider stops retrying:
   payment the provider confirmed late;
 - a `paid` event whose amount or currency does not match the stored payment,
   which includes an event that reports no amount at all: silence is not a match;
-- anything else that cannot be settled safely.
+- any event whose status is neither `paid` nor `failed` — a `refunded` or any
+  future status cannot settle a `pending` row, so it is flagged rather than
+  pushed through a settlement query that would refuse it.
 
 `needs_review` is a terminal state for the automatic paths: the reaper ignores
 it, the settlement query refuses it, and nothing credits it. It is a queue for a

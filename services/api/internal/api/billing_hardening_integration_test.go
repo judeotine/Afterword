@@ -273,3 +273,82 @@ func TestAdminAdjustmentsAreAudited(t *testing.T) {
 		t.Fatalf("a refused adjustment was audited: %+v", entries)
 	}
 }
+
+func TestARefundedWebhookOnAPendingPaymentIsHeldForReview(t *testing.T) {
+	h := newBillingHarness(t)
+	session := h.signIn("refunded-webhook@example.com")
+	workspaceID := uuid.MustParse(session.Workspace.ID)
+	packID := h.packWithMinutes(session.AccessToken, 500)
+	created := h.checkout(session, packID, "")
+
+	refunded := h.do(http.MethodPost, fakeWebhookURL, map[string]any{
+		"payment_id":   created.PaymentID,
+		"status":       "refunded",
+		"amount_minor": 60000,
+		"currency":     "UGX",
+	}, withFakeSignature(billingFakeSecret))
+	if refunded.Status != http.StatusOK {
+		t.Fatalf("refunded webhook: status %d, body %s", refunded.Status, refunded.Body)
+	}
+
+	var payload webhookPayload
+	refunded.decode(t, &payload)
+	if !payload.NeedsReview {
+		t.Fatalf("refunded webhook = %+v, want needs_review", payload)
+	}
+	if got := h.paymentStatus(created.PaymentID); got != "needs_review" {
+		t.Fatalf("payment status = %q, want needs_review", got)
+	}
+	if got := h.balance(workspaceID); got != 0 {
+		t.Fatalf("a refunded webhook credited %d minutes", got)
+	}
+	entries := h.auditActions(workspaceID)
+	if len(entries) != 1 || !strings.Contains(entries[0], "billing.payment.needs_review") {
+		t.Fatalf("audit log = %+v", entries)
+	}
+}
+
+func TestAWebhookFallsBackToOurOwnPaymentReference(t *testing.T) {
+	h := newBillingHarness(t)
+	session := h.signIn("reference-fallback@example.com")
+	workspaceID := uuid.MustParse(session.Workspace.ID)
+	packID := h.packWithMinutes(session.AccessToken, 500)
+	created := h.checkout(session, packID, "")
+
+	if _, err := h.pool.Exec(h.context(),
+		`UPDATE payments SET provider_ref = 'provider-side-ref' WHERE id = $1`, created.PaymentID); err != nil {
+		t.Fatalf("rewrite the provider ref: %v", err)
+	}
+
+	settled := h.deliverFakeAmount(created.PaymentID, 60000, "UGX")
+	if settled.Status != http.StatusOK {
+		t.Fatalf("webhook by our own reference: status %d, body %s", settled.Status, settled.Body)
+	}
+	var payload webhookPayload
+	settled.decode(t, &payload)
+	if payload.NeedsReview || payload.Status != string(payments.StatusPaid) {
+		t.Fatalf("webhook by our own reference = %+v", payload)
+	}
+	if got := h.balance(workspaceID); got != 500 {
+		t.Fatalf("balance = %d, want 500", got)
+	}
+}
+
+func TestAWebhookForAnUnknownReferenceIsAccepted(t *testing.T) {
+	h := newBillingHarness(t)
+
+	unknown := h.deliverFakeAmount(uuid.NewString(), 60000, "UGX")
+	if unknown.Status != http.StatusAccepted {
+		t.Fatalf("unknown reference: status %d, body %s", unknown.Status, unknown.Body)
+	}
+	var payload webhookPayload
+	unknown.decode(t, &payload)
+	if !payload.Received || payload.NeedsReview || payload.Duplicate {
+		t.Fatalf("unknown reference = %+v", payload)
+	}
+
+	garbage := h.deliverFakeAmount("not-a-payment-id", 60000, "UGX")
+	if garbage.Status != http.StatusAccepted {
+		t.Fatalf("unparsable reference: status %d, body %s", garbage.Status, garbage.Body)
+	}
+}

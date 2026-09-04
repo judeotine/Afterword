@@ -156,6 +156,7 @@ type Querier interface {
 	LockAuthOTPVerifyIP(ctx context.Context, ip string) error
 	LockCreditWorkspace(ctx context.Context, workspaceID uuid.UUID) (uuid.UUID, error)
 	LockMeetingForPurge(ctx context.Context, arg LockMeetingForPurgeParams) (uuid.UUID, error)
+	LockPaymentByID(ctx context.Context, arg LockPaymentByIDParams) (Payment, error)
 	LockPaymentByProviderRef(ctx context.Context, arg LockPaymentByProviderRefParams) (Payment, error)
 	LockShareLinkIP(ctx context.Context, requestIp string) error
 	LockWorkspaceCheckouts(ctx context.Context, workspaceID string) error
