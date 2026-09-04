@@ -22,18 +22,6 @@ WHERE workspace_id = sqlc.arg(workspace_id)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(page_size);
 
--- name: UpdatePayment :one
-UPDATE payments SET
-    status = COALESCE(sqlc.narg(status), status),
-    minutes = COALESCE(sqlc.narg(minutes), minutes),
-    raw = COALESCE(sqlc.narg(raw), raw)
-WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
-RETURNING *;
-
--- name: DeletePayment :execrows
-DELETE FROM payments
-WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id);
-
 -- name: InsertPayment :one
 INSERT INTO payments (id, workspace_id, pack_id, provider, provider_ref, amount_minor, currency, minutes, status, raw)
 VALUES (sqlc.arg(id), sqlc.arg(workspace_id), sqlc.narg(pack_id), sqlc.arg(provider), sqlc.arg(provider_ref),
@@ -73,7 +61,13 @@ WHERE id = sqlc.arg(id) AND status = 'pending';
 UPDATE payments SET
     status = 'failed',
     raw = raw || sqlc.arg(reason)::jsonb
-WHERE status = 'pending' AND created_at < sqlc.arg(older_than)
+WHERE id IN (
+    SELECT stale.id FROM payments AS stale
+    WHERE stale.status = 'pending' AND stale.created_at < sqlc.arg(older_than)
+    ORDER BY stale.created_at
+    LIMIT sqlc.arg(row_limit)
+    FOR UPDATE SKIP LOCKED
+)
 RETURNING *;
 
 -- name: MarkPaymentNeedsReview :one

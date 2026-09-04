@@ -170,6 +170,9 @@ jobs:
 
   api:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: services/api
@@ -216,7 +219,7 @@ jobs:
         run: go test -race ./...
 
       - name: Integration test
-        run: go test -race -tags integration ./...
+        run: go test -race -tags integration ./... -p 1
 
       - name: Build image
         working-directory: ${{ github.workspace }}

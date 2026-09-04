@@ -76,24 +76,6 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 	return i, err
 }
 
-const deletePayment = `-- name: DeletePayment :execrows
-DELETE FROM payments
-WHERE id = $1 AND workspace_id = $2
-`
-
-type DeletePaymentParams struct {
-	ID          uuid.UUID `json:"id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) DeletePayment(ctx context.Context, arg DeletePaymentParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePayment, arg.ID, arg.WorkspaceID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const failPendingPayment = `-- name: FailPendingPayment :execrows
 UPDATE payments SET status = 'failed', raw = $1
 WHERE id = $2 AND status = 'pending'
@@ -116,17 +98,24 @@ const failStalePendingPayments = `-- name: FailStalePendingPayments :many
 UPDATE payments SET
     status = 'failed',
     raw = raw || $1::jsonb
-WHERE status = 'pending' AND created_at < $2
+WHERE id IN (
+    SELECT stale.id FROM payments AS stale
+    WHERE stale.status = 'pending' AND stale.created_at < $2
+    ORDER BY stale.created_at
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED
+)
 RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
 `
 
 type FailStalePendingPaymentsParams struct {
 	Reason    []byte             `json:"reason"`
 	OlderThan pgtype.Timestamptz `json:"older_than"`
+	RowLimit  int32              `json:"row_limit"`
 }
 
 func (q *Queries) FailStalePendingPayments(ctx context.Context, arg FailStalePendingPaymentsParams) ([]Payment, error) {
-	rows, err := q.db.Query(ctx, failStalePendingPayments, arg.Reason, arg.OlderThan)
+	rows, err := q.db.Query(ctx, failStalePendingPayments, arg.Reason, arg.OlderThan, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -482,49 +471,6 @@ func (q *Queries) SettlePayment(ctx context.Context, arg SettlePaymentParams) (P
 		arg.PaidAt,
 		arg.Raw,
 		arg.ID,
-	)
-	var i Payment
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Provider,
-		&i.ProviderRef,
-		&i.AmountMinor,
-		&i.Currency,
-		&i.Minutes,
-		&i.Status,
-		&i.Raw,
-		&i.CreatedAt,
-		&i.PackID,
-		&i.PaidAt,
-	)
-	return i, err
-}
-
-const updatePayment = `-- name: UpdatePayment :one
-UPDATE payments SET
-    status = COALESCE($1, status),
-    minutes = COALESCE($2, minutes),
-    raw = COALESCE($3, raw)
-WHERE id = $4 AND workspace_id = $5
-RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
-`
-
-type UpdatePaymentParams struct {
-	Status      *string   `json:"status"`
-	Minutes     *int32    `json:"minutes"`
-	Raw         []byte    `json:"raw"`
-	ID          uuid.UUID `json:"id"`
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) UpdatePayment(ctx context.Context, arg UpdatePaymentParams) (Payment, error) {
-	row := q.db.QueryRow(ctx, updatePayment,
-		arg.Status,
-		arg.Minutes,
-		arg.Raw,
-		arg.ID,
-		arg.WorkspaceID,
 	)
 	var i Payment
 	err := row.Scan(

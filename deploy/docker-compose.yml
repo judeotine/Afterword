@@ -93,16 +93,26 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       BUCKETS: ${S3_BUCKETS:-audio transcripts clips exports}
+      API_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required, it is the API's own MinIO key}
+      API_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required, it is the API's own MinIO secret}
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -eu
         mc alias set afterword http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        resources=""
         for bucket in $${BUCKETS}; do
           mc mb --ignore-existing "afterword/$${bucket}"
           mc anonymous set none "afterword/$${bucket}"
+          resources="$${resources}\"arn:aws:s3:::$${bucket}\",\"arn:aws:s3:::$${bucket}/*\","
         done
+        printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation","s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":[%s]}]}' "$${resources%,}" >/tmp/api-policy.json
+        if mc admin user svcacct info afterword "$${API_ACCESS_KEY}" >/dev/null 2>&1; then
+          mc admin user svcacct edit --secret-key "$${API_SECRET_KEY}" --policy /tmp/api-policy.json afterword "$${API_ACCESS_KEY}"
+        else
+          mc admin user svcacct add --access-key "$${API_ACCESS_KEY}" --secret-key "$${API_SECRET_KEY}" --policy /tmp/api-policy.json afterword "$${MINIO_ROOT_USER}"
+        fi
         mc ls afterword
     mem_limit: 128m
     cpus: 0.25
@@ -121,8 +131,8 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:?APP_BASE_URL is required}
       API_BASE_URL: ${API_BASE_URL:?API_BASE_URL is required}
       S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required, it is the API's own MinIO key}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required, it is the API's own MinIO secret}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_USE_SSL: ${S3_USE_SSL:-true}
     depends_on:

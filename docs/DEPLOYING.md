@@ -119,7 +119,8 @@ openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 | `DATABASE_URL` | `postgres://USER:PASSWORD@postgres:5432/DB?sslmode=disable`. The hostname is the compose service; traffic never leaves the host, so `sslmode=disable` is correct here. |
 | `LOG_LEVEL` | `info` in production. |
 | `APP_BASE_URL`, `API_BASE_URL` | `https://app.$DOMAIN` and `https://api.$DOMAIN`. `APP_BASE_URL` is also the only allowed CORS origin. |
-| `MINIO_ROOT_USER`/`_PASSWORD` | MinIO's admin credentials. The API and the transcribe worker receive them as `S3_ACCESS_KEY`/`S3_SECRET_KEY`, so there is only one place to change them. |
+| `MINIO_ROOT_USER`/`_PASSWORD` | MinIO's admin credentials. They go to `minio`, `minio-init`, the transcribe worker and the backup mirror, which needs every bucket. The API does not get them. |
+| `S3_ACCESS_KEY`/`S3_SECRET_KEY` | The API's own MinIO keys. `minio-init` creates a service account with exactly these credentials and a policy limited to `Get`/`Put`/`Delete`/`List` on the buckets in `S3_BUCKETS`, and the `api` service receives them instead of the root credentials. Change them here and re-run `docker compose up -d minio-init api`; the init container updates the existing account in place. |
 | `S3_ENDPOINT` | **`https://s3.$DOMAIN`, not `http://minio:9000`.** See below. |
 | `S3_REGION`, `S3_USE_SSL` | `us-east-1` and `true`, matching the endpoint above. |
 | `S3_BUCKETS` | Space-separated list used by `minio-init` and by the backup job. |
@@ -205,6 +206,14 @@ docker compose run --rm api /migrate force 9
 
 `force` sets `schema_migrations` to a version without running anything. It is
 the escape hatch for a dirty schema and nothing else — see section 6.
+
+**`down` past migration 0010 destroys every share token.** 0010 replaced the
+plaintext `share_links.token` with `token_hash`; its down path copies the hash
+back into `token`, because the plaintext is gone and cannot be recovered. Every
+share URL already handed out stops working, and the stored value is a hash
+masquerading as a token — running `up` again hashes it a second time. If you
+must roll back across 0010, restore from a backup taken before it instead, and
+tell anyone holding a share link to ask for a new one.
 
 The same binary backs `make migrate-up`, `migrate-down`, `migrate-down-all`,
 `migrate-version` and `migrate-force FORCE_VERSION=N` in `services/api`, so
@@ -360,9 +369,11 @@ secrets rather than the example placeholders:
 `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SMS_SENDER`,
 and the four `S3_BUCKET_*` names.
 
-Delete those lines from `.env`, and add the two variables the split introduced:
-`COMPOSE_PROFILES=` (empty unless you run workers) and
-`BACKUP_MAX_DELETE=1000`. Quote `SMTP_FROM` if it contains spaces. Then check
+Delete those lines from `.env`, and add the variables introduced since:
+`COMPOSE_PROFILES=` (empty unless you run workers), `BACKUP_MAX_DELETE=1000`,
+and `S3_ACCESS_KEY`/`S3_SECRET_KEY` for the API's scoped MinIO account (any
+new key and a generated secret; `minio-init` creates the account on the next
+`up`). Add `ABANDONED_UPLOAD_TTL=24h` to `api.env` while you are there. Quote `SMTP_FROM` if it contains spaces. Then check
 your work before re-running the deploy:
 
 ```bash
@@ -613,6 +624,15 @@ client wrote and never finalized.
 - Secrets live only in `deploy/.env` and `deploy/api.env` (both mode 600) and
   in GitHub Actions secrets. `api.env` goes to the API container and nowhere
   else. Nothing secret is committed.
+- The API holds a scoped MinIO service account (`S3_ACCESS_KEY`/`S3_SECRET_KEY`),
+  not the root credentials: it can read, write and delete inside the four
+  buckets and do nothing else — no admin API, no new buckets, no other keys.
+- Revoking a share link stops new reads, not reads already in flight. A
+  pre-signed download URL issued before the revocation stays valid until it
+  expires, for up to `S3_DOWNLOAD_TTL` (default 15m), because the signature is
+  checked by MinIO and never reaches the API. Treat a leaked recording as
+  leaked for that window; shorten `S3_DOWNLOAD_TTL` if that window is too long
+  for you.
 - `ufw` denies inbound except 22, 80 and 443. Harden SSH further by disabling
   password authentication in `/etc/ssh/sshd_config`.
 - fail2ban bans an IP for an hour after five failed SSH attempts.

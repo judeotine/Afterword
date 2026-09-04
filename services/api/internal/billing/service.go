@@ -29,6 +29,7 @@ const (
 	DefaultPendingTTL           = 24 * time.Hour
 	DefaultCheckoutLimit        = int64(10)
 	DefaultCheckoutWindow       = time.Hour
+	reapBatchSize         int32 = 500
 
 	actionPaymentReview  = "billing.payment.needs_review"
 	actionCreditsAdjust  = "billing.credits.adjust"
@@ -508,6 +509,7 @@ func (s *Service) ReapPendingPayments(ctx context.Context, olderThan time.Durati
 	rows, err := s.queries.FailStalePendingPayments(ctx, sqlcgen.FailStalePendingPaymentsParams{
 		Reason:    []byte(`{"afterword_reason":"expired before the provider confirmed it"}`),
 		OlderThan: pgtype.Timestamptz{Time: cutoff, Valid: true},
+		RowLimit:  reapBatchSize,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("reap stale pending payments: %w", err)

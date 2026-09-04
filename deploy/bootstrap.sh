@@ -245,7 +245,7 @@ prepare_environment() {
     done
     if [ -n "$created" ]; then
         log "fill in:$created"
-        log "deploy/.env needs DOMAIN, ACME_EMAIL, TAG, the database and MinIO passwords, PRIVACY_URL and the BACKUP_ values"
+        log "deploy/.env needs DOMAIN, ACME_EMAIL, TAG, the database and MinIO passwords, S3_ACCESS_KEY and S3_SECRET_KEY for the API, PRIVACY_URL and the BACKUP_ values"
         log "deploy/api.env needs JWT_SECRET and the SMTP credentials"
         log "then run this script again"
         exit 0
