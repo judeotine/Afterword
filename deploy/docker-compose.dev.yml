@@ -84,6 +84,9 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-afterword-dev-secret}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_USE_SSL: "false"
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-fake}
+      ALLOW_FAKE_PAYMENTS: ${ALLOW_FAKE_PAYMENTS:-true}
+      FAKE_PAYMENT_SECRET: ${FAKE_PAYMENT_SECRET:-afterword-dev-fake-payments}
     ports:
       - "${API_PORT:-8080}:8080"
     depends_on:

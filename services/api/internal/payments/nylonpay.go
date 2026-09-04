@@ -122,6 +122,9 @@ func (n *NylonPay) StartPayment(ctx context.Context, request StartPaymentRequest
 	if err != nil {
 		return StartPaymentResponse{}, fmt.Errorf("%w: reading the response failed: %v", ErrProviderFailed, err)
 	}
+	if response.StatusCode >= http.StatusBadRequest && response.StatusCode < http.StatusInternalServerError {
+		return StartPaymentResponse{}, fmt.Errorf("%w: status %d: %s", ErrProviderRejected, response.StatusCode, truncate(body))
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return StartPaymentResponse{}, fmt.Errorf("%w: status %d: %s", ErrProviderFailed, response.StatusCode, truncate(body))
 	}

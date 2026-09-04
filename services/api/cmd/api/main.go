@@ -322,7 +322,7 @@ func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.P
 		if err := registry.Register(payments.FakeProviderName, fake); err != nil {
 			return nil, err
 		}
-		logger.Warn().Msg("the fake payment provider is registered: never set FAKE_PAYMENT_SECRET in production")
+		logger.Warn().Msg("the fake payment provider is registered: never set ALLOW_FAKE_PAYMENTS in production")
 	}
 
 	if billingCfg.NylonPayConfigured() {
@@ -343,7 +343,7 @@ func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.P
 	if _, err := registry.Lookup(defaultProvider); err != nil {
 		defaultProvider = ""
 		logger.Warn().Str("provider", billingCfg.Provider).
-			Msg("top-ups are disabled: the configured payment provider has no credentials")
+			Msg("top-ups are disabled: set PAYMENT_PROVIDER and its credentials to enable them")
 	}
 
 	return billing.NewService(billing.ServiceOptions{
@@ -352,6 +352,8 @@ func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.P
 		DefaultProvider:  defaultProvider,
 		FreeGrantMinutes: billingCfg.FreeGrantMinutes,
 		APIBaseURL:       cfg.APIBaseURL,
+		CheckoutLimit:    billingCfg.CheckoutLimit,
+		CheckoutWindow:   billingCfg.CheckoutWindow,
 		Logger:           logger,
 	})
 }

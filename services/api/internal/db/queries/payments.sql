@@ -56,6 +56,8 @@ UPDATE payments SET
     paid_at = sqlc.narg(paid_at),
     raw = sqlc.arg(raw)
 WHERE id = sqlc.arg(id)
+  AND status = 'pending'
+  AND sqlc.arg(status) IN ('paid', 'failed')
 RETURNING *;
 
 -- name: FailPendingPayment :execrows
@@ -68,3 +70,17 @@ UPDATE payments SET
     raw = raw || sqlc.arg(reason)::jsonb
 WHERE status = 'pending' AND created_at < sqlc.arg(older_than)
 RETURNING *;
+
+-- name: MarkPaymentNeedsReview :one
+UPDATE payments SET
+    status = 'needs_review',
+    raw = raw || sqlc.arg(reason)::jsonb
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: LockWorkspaceCheckouts :exec
+SELECT pg_advisory_xact_lock(72101, hashtext(sqlc.arg(workspace_id)::text));
+
+-- name: CountRecentCheckouts :one
+SELECT count(*) FROM payments
+WHERE workspace_id = sqlc.arg(workspace_id) AND created_at >= sqlc.arg(since);

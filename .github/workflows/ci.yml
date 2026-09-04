@@ -190,6 +190,9 @@ jobs:
     env:
       INTEGRATION_DATABASE_URL: postgres://afterword:afterword@localhost:5432/afterword_test?sslmode=disable
       JWT_SECRET: ci-only-secret-0123456789abcdef0123
+      PAYMENT_PROVIDER: fake
+      ALLOW_FAKE_PAYMENTS: "true"
+      FAKE_PAYMENT_SECRET: ci-only-fake-payment-secret
     steps:
       - uses: actions/checkout@v4
 

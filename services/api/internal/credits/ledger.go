@@ -123,6 +123,13 @@ func (l *Ledger) Adjust(ctx context.Context, workspaceID uuid.UUID, deltaMinutes
 	return l.apply(ctx, workspaceID, deltaMinutes, ReasonAdjust, refID)
 }
 
+func (l *Ledger) AdjustTx(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, deltaMinutes int32, refID string) (*Entry, error) {
+	if deltaMinutes == 0 {
+		return nil, ErrInvalidAmount
+	}
+	return l.applyTx(ctx, tx, workspaceID, deltaMinutes, ReasonAdjust, refID)
+}
+
 func (l *Ledger) Debit(ctx context.Context, workspaceID uuid.UUID, minutes int32, reason Reason, refID string) (*Entry, error) {
 	if minutes <= 0 {
 		return nil, ErrInvalidAmount

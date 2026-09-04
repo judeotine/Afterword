@@ -55,9 +55,10 @@ type checkoutView struct {
 }
 
 type webhookView struct {
-	Received  bool   `json:"received"`
-	Status    string `json:"status"`
-	Duplicate bool   `json:"duplicate"`
+	Received    bool   `json:"received"`
+	Status      string `json:"status"`
+	Duplicate   bool   `json:"duplicate"`
+	NeedsReview bool   `json:"needs_review"`
 }
 
 func newPackView(pack billing.Pack) packView {

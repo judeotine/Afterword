@@ -21,6 +21,7 @@ type Querier interface {
 	CountChildFolders(ctx context.Context, arg CountChildFoldersParams) (int64, error)
 	CountOTPVerifyAttemptsByDestination(ctx context.Context, arg CountOTPVerifyAttemptsByDestinationParams) (int64, error)
 	CountOTPVerifyAttemptsByIP(ctx context.Context, arg CountOTPVerifyAttemptsByIPParams) (int64, error)
+	CountRecentCheckouts(ctx context.Context, arg CountRecentCheckoutsParams) (int64, error)
 	CountSegmentsForMeeting(ctx context.Context, arg CountSegmentsForMeetingParams) (int64, error)
 	CountWorkspaceOwners(ctx context.Context, workspaceID uuid.UUID) (int64, error)
 	CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) (ApiToken, error)
@@ -156,6 +157,8 @@ type Querier interface {
 	LockMeetingForPurge(ctx context.Context, arg LockMeetingForPurgeParams) (uuid.UUID, error)
 	LockPaymentByProviderRef(ctx context.Context, arg LockPaymentByProviderRefParams) (Payment, error)
 	LockShareLinkIP(ctx context.Context, requestIp string) error
+	LockWorkspaceCheckouts(ctx context.Context, workspaceID string) error
+	MarkPaymentNeedsReview(ctx context.Context, arg MarkPaymentNeedsReviewParams) (Payment, error)
 	MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) (int64, error)
 	RevokeExpiredWorkspaceInvites(ctx context.Context, arg RevokeExpiredWorkspaceInvitesParams) (int64, error)
 	RevokeRefreshFamily(ctx context.Context, arg RevokeRefreshFamilyParams) (int64, error)

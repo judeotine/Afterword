@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	maxWebhookBody       = 1 << 18
-	codeInsufficient     = "insufficient_credits"
-	codeProviderUnusable = "provider_unavailable"
-	codeSignatureInvalid = "signature_invalid"
-	maxAdjustMinutes     = 1 << 20
+	maxWebhookBody          = 1 << 18
+	codeInsufficient        = "insufficient_credits"
+	codeProviderUnusable    = "provider_unavailable"
+	codePaymentsUnavailable = "payments_unavailable"
+	codeCheckoutLimited     = "checkout_rate_limited"
+	codeSignatureInvalid    = "signature_invalid"
+	maxAdjustMinutes        = 1 << 20
 )
 
 var billingErrors = []struct {
@@ -33,12 +35,14 @@ var billingErrors = []struct {
 	{billing.ErrPaymentNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That payment does not exist."}},
 	{billing.ErrInvalidPhone, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That phone number is not usable."}},
 	{billing.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That cursor is not valid."}},
-	{billing.ErrProviderNotUsable, statusError{http.StatusServiceUnavailable, codeProviderUnusable, "Payments are not available right now."}},
+	{billing.ErrProviderNotUsable, statusError{http.StatusServiceUnavailable, codePaymentsUnavailable, "Payments are not available right now."}},
+	{billing.ErrCheckoutLimited, statusError{http.StatusTooManyRequests, codeCheckoutLimited, "Too many top-ups were started for this workspace: wait a while before trying again."}},
 	{payments.ErrProviderUnknown, statusError{http.StatusNotFound, httpx.CodeNotFound, "That payment provider is not known."}},
 	{payments.ErrInvalidSignature, statusError{http.StatusUnauthorized, codeSignatureInvalid, "That webhook signature is not valid."}},
 	{payments.ErrInvalidWebhook, statusError{http.StatusBadRequest, httpx.CodeInvalidRequest, "That webhook body could not be read."}},
 	{payments.ErrProviderFailed, statusError{http.StatusBadGateway, codeProviderUnusable, "The payment provider could not be reached."}},
-	{payments.ErrNotConfigured, statusError{http.StatusServiceUnavailable, codeNotConfigured, "Payments are not configured."}},
+	{payments.ErrProviderRejected, statusError{http.StatusBadGateway, codeProviderUnusable, "The payment provider refused that request."}},
+	{payments.ErrNotConfigured, statusError{http.StatusServiceUnavailable, codePaymentsUnavailable, "Payments are not configured."}},
 	{payments.ErrRefundUnsupported, statusError{http.StatusNotImplemented, codeNotConfigured, "Refunds are not available for that provider."}},
 	{credits.ErrInsufficientCredits, statusError{http.StatusPaymentRequired, codeInsufficient, "This workspace does not have enough credits."}},
 	{credits.ErrInvalidAmount, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That is not a usable number of minutes."}},
@@ -167,9 +171,10 @@ func (b *BillingServer) handleBillingWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, webhookView{
-		Received:  true,
-		Status:    result.Payment.Status,
-		Duplicate: result.Duplicate,
+		Received:    true,
+		Status:      result.Payment.Status,
+		Duplicate:   result.Duplicate,
+		NeedsReview: result.NeedsReview,
 	})
 }
 

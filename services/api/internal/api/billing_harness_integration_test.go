@@ -246,7 +246,8 @@ type paymentsPayload struct {
 }
 
 type webhookPayload struct {
-	Received  bool   `json:"received"`
-	Status    string `json:"status"`
-	Duplicate bool   `json:"duplicate"`
+	Received    bool   `json:"received"`
+	Status      string `json:"status"`
+	Duplicate   bool   `json:"duplicate"`
+	NeedsReview bool   `json:"needs_review"`
 }

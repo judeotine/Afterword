@@ -12,6 +12,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRecentCheckouts = `-- name: CountRecentCheckouts :one
+SELECT count(*) FROM payments
+WHERE workspace_id = $1 AND created_at >= $2
+`
+
+type CountRecentCheckoutsParams struct {
+	WorkspaceID uuid.UUID          `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+func (q *Queries) CountRecentCheckouts(ctx context.Context, arg CountRecentCheckoutsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRecentCheckouts, arg.WorkspaceID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPayment = `-- name: CreatePayment :one
 INSERT INTO payments (workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw)
 VALUES ($1, $2, $3, $4,
@@ -337,6 +354,48 @@ func (q *Queries) LockPaymentByProviderRef(ctx context.Context, arg LockPaymentB
 	return i, err
 }
 
+const lockWorkspaceCheckouts = `-- name: LockWorkspaceCheckouts :exec
+SELECT pg_advisory_xact_lock(72101, hashtext($1::text))
+`
+
+func (q *Queries) LockWorkspaceCheckouts(ctx context.Context, workspaceID string) error {
+	_, err := q.db.Exec(ctx, lockWorkspaceCheckouts, workspaceID)
+	return err
+}
+
+const markPaymentNeedsReview = `-- name: MarkPaymentNeedsReview :one
+UPDATE payments SET
+    status = 'needs_review',
+    raw = raw || $1::jsonb
+WHERE id = $2
+RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
+`
+
+type MarkPaymentNeedsReviewParams struct {
+	Reason []byte    `json:"reason"`
+	ID     uuid.UUID `json:"id"`
+}
+
+func (q *Queries) MarkPaymentNeedsReview(ctx context.Context, arg MarkPaymentNeedsReviewParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, markPaymentNeedsReview, arg.Reason, arg.ID)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.ProviderRef,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.Minutes,
+		&i.Status,
+		&i.Raw,
+		&i.CreatedAt,
+		&i.PackID,
+		&i.PaidAt,
+	)
+	return i, err
+}
+
 const setPaymentProviderRef = `-- name: SetPaymentProviderRef :one
 UPDATE payments SET provider_ref = $1
 WHERE id = $2 AND status = 'pending'
@@ -374,6 +433,8 @@ UPDATE payments SET
     paid_at = $2,
     raw = $3
 WHERE id = $4
+  AND status = 'pending'
+  AND $1 IN ('paid', 'failed')
 RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
 `
 

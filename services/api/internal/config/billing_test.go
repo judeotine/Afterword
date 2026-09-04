@@ -11,8 +11,17 @@ func TestLoadBillingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadBilling: %v", err)
 	}
-	if cfg.Provider != PaymentProviderFake {
-		t.Errorf("Provider = %q, want fake", cfg.Provider)
+	if cfg.Provider != PaymentProviderNone {
+		t.Errorf("Provider = %q, want none", cfg.Provider)
+	}
+	if cfg.AllowFake {
+		t.Error("AllowFake is true with no ALLOW_FAKE_PAYMENTS")
+	}
+	if cfg.CheckoutLimit != DefaultCheckoutRateLimit || cfg.CheckoutWindow != time.Hour {
+		t.Errorf("checkout limit = %d per %s", cfg.CheckoutLimit, cfg.CheckoutWindow)
+	}
+	if cfg.PendingTTL != 24*time.Hour {
+		t.Errorf("PendingTTL = %s, want 24h", cfg.PendingTTL)
 	}
 	if cfg.FreeGrantMinutes != DefaultFreeGrantMinutes {
 		t.Errorf("FreeGrantMinutes = %d, want %d", cfg.FreeGrantMinutes, DefaultFreeGrantMinutes)
@@ -24,13 +33,14 @@ func TestLoadBillingDefaults(t *testing.T) {
 		t.Error("AdminConfigured is true with no ADMIN_TOKEN")
 	}
 	if cfg.ProviderConfigured() {
-		t.Error("ProviderConfigured is true with no FAKE_PAYMENT_SECRET")
+		t.Error("ProviderConfigured is true with PAYMENT_PROVIDER unset")
 	}
 }
 
 func TestLoadBillingReadsEveryKey(t *testing.T) {
 	cfg, err := LoadBilling(lookupFrom(map[string]string{
 		"PAYMENT_PROVIDER":        "nylonpay",
+		"ALLOW_FAKE_PAYMENTS":     "true",
 		"FREE_GRANT_MINUTES":      "500",
 		"GRANT_INTERVAL":          "15m",
 		"ADMIN_TOKEN":             strings.Repeat("a", 32),
@@ -66,6 +76,7 @@ func TestLoadBillingRejectsWeakSecretsAndBadValues(t *testing.T) {
 		{"short fake secret", map[string]string{"FAKE_PAYMENT_SECRET": "tiny"}, "FAKE_PAYMENT_SECRET"},
 		{"short webhook secret", map[string]string{"NYLONPAY_WEBHOOK_SECRET": "tiny"}, "NYLONPAY_WEBHOOK_SECRET"},
 		{"unknown provider", map[string]string{"PAYMENT_PROVIDER": "stripe"}, "PAYMENT_PROVIDER"},
+		{"fake without the flag", map[string]string{"PAYMENT_PROVIDER": "fake", "FAKE_PAYMENT_SECRET": strings.Repeat("f", 16)}, "PAYMENT_PROVIDER"},
 		{"negative grant", map[string]string{"FREE_GRANT_MINUTES": "-1"}, "FREE_GRANT_MINUTES"},
 		{"bad interval", map[string]string{"GRANT_INTERVAL": "never"}, "GRANT_INTERVAL"},
 		{"relative base url", map[string]string{"NYLONPAY_BASE_URL": "/payments"}, "NYLONPAY_BASE_URL"},
@@ -90,5 +101,35 @@ func TestZeroFreeGrantIsAllowed(t *testing.T) {
 	}
 	if cfg.FreeGrantMinutes != 0 {
 		t.Fatalf("FreeGrantMinutes = %d, want 0", cfg.FreeGrantMinutes)
+	}
+}
+
+func TestTheFakeProviderNeedsItsFlagAndItsSecret(t *testing.T) {
+	secretOnly, err := LoadBilling(lookupFrom(map[string]string{"FAKE_PAYMENT_SECRET": strings.Repeat("f", 16)}))
+	if err != nil {
+		t.Fatalf("LoadBilling: %v", err)
+	}
+	if secretOnly.FakeConfigured() {
+		t.Error("the fake provider is configured without ALLOW_FAKE_PAYMENTS")
+	}
+
+	flagOnly, err := LoadBilling(lookupFrom(map[string]string{"ALLOW_FAKE_PAYMENTS": "true"}))
+	if err != nil {
+		t.Fatalf("LoadBilling: %v", err)
+	}
+	if flagOnly.FakeConfigured() {
+		t.Error("the fake provider is configured without a secret")
+	}
+
+	both, err := LoadBilling(lookupFrom(map[string]string{
+		"PAYMENT_PROVIDER":    "fake",
+		"ALLOW_FAKE_PAYMENTS": "true",
+		"FAKE_PAYMENT_SECRET": strings.Repeat("f", 16),
+	}))
+	if err != nil {
+		t.Fatalf("LoadBilling: %v", err)
+	}
+	if !both.FakeConfigured() || !both.ProviderConfigured() {
+		t.Error("the fake provider is not configured with both its flag and its secret")
 	}
 }

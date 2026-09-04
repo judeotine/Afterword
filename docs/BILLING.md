@@ -141,6 +141,10 @@ The admin route is not part of the member-facing API. It is guarded by the
 `ADMIN_TOKEN` environment variable, compared in constant time over SHA-256
 digests so neither the token nor its length leaks through timing. When
 `ADMIN_TOKEN` is unset the route answers 404 rather than advertising itself.
+Every adjustment writes an `audit_log` row under `billing.credits.adjust`, in
+the same transaction as the ledger entry, naming the actor as `admin-token`
+along with the delta, the ledger entry id and the caller's reference: the
+adjustment and its audit trail commit together or not at all.
 
 ### Checkout
 
@@ -166,6 +170,40 @@ Because the row lock is taken first, duplicate and concurrent deliveries of the
 same event credit the workspace exactly once. Duplicates answer 200 so the
 provider stops retrying. A body that does not match a known payment answers 404;
 a bad signature answers 401.
+
+Only a `paid` event on an already `paid` row is a duplicate. Three other
+outcomes move the row to `needs_review` instead, each logged at error level and
+recorded in `audit_log` under `billing.payment.needs_review`, and each still
+answering 200 so the provider stops retrying:
+
+- a `paid` event for a row that is `failed` or `refunded` — the money may be
+  real and the row says otherwise, most often because the reaper failed a
+  payment the provider confirmed late;
+- a `paid` event whose amount or currency does not match the stored payment;
+- anything else that cannot be settled safely.
+
+`needs_review` is a terminal state for the automatic paths: the reaper ignores
+it, the settlement query refuses it, and nothing credits it. It is a queue for a
+human, who reconciles against the provider and adjusts the ledger through the
+admin endpoint.
+
+`SettlePayment` only ever moves a row from `pending` to `paid` or `failed`. A
+refund is not a settlement and does not travel this path.
+
+A checkout that cannot reach the provider — a timeout, a connection failure, a
+5xx — leaves the payment `pending`, because the provider may still have created
+it, and the reaper will close it out if no webhook arrives. Only an explicit
+refusal (a 4xx from the provider, or a request we would not send) marks the row
+`failed` immediately.
+
+Starting a checkout is rate limited per workspace: `CHECKOUT_RATE_LIMIT`
+(default 10) in `CHECKOUT_RATE_WINDOW` (default 1h), counted and inserted under
+one advisory lock so the count cannot be raced, answering 429 beyond that. A
+mobile-money push costs the recipient's attention, and an unauthenticated
+attacker who has stolen an admin session should not be able to spray them.
+
+Phone numbers reaching checkout go through `auth.NormalizePhone`, the same
+normaliser the OTP path uses, so the provider always sees one canonical form.
 
 ### Stale pending payments
 
@@ -198,7 +236,13 @@ for the old one.
 
 ### fake
 
-For development, staging, and tests. `StartPayment` echoes the reference back as
+For development and tests only, and it will not load by accident. The provider
+registers only when `ALLOW_FAKE_PAYMENTS=true` is set explicitly alongside
+`FAKE_PAYMENT_SECRET`, and `PAYMENT_PROVIDER=fake` is rejected at startup
+without that flag. `PAYMENT_PROVIDER` itself defaults to `none`, so a
+deployment that says nothing about payments serves packs, balances and history
+and answers 503 `payments_unavailable` at checkout rather than quietly handing
+out free credits through a test provider. `StartPayment` echoes the reference back as
 the provider reference and reports a push when a phone number is present, a
 redirect URL otherwise. `VerifyWebhook` requires the shared secret
 (`FAKE_PAYMENT_SECRET`) in the `X-Fake-Signature` header, compared in constant
@@ -212,8 +256,9 @@ curl -X POST http://localhost:8080/v1/billing/webhooks/fake \
   -d '{"payment_id":"<payment id from checkout>"}'
 ```
 
-Never set `FAKE_PAYMENT_SECRET` in production. When it is set, the API logs a
-warning at startup.
+Never set `ALLOW_FAKE_PAYMENTS` in production. When the fake provider
+registers, the API logs a warning at startup. `deploy/docker-compose.dev.yml`
+and CI set it; `deploy/api.env.example` sets it to false.
 
 ### nylonpay
 
@@ -261,12 +306,15 @@ interface should need to move.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PAYMENT_PROVIDER` | `fake` | `fake` or `nylonpay`; the provider checkout uses |
+| `PAYMENT_PROVIDER` | `none` | `none`, `fake` or `nylonpay`; the provider checkout uses |
+| `ALLOW_FAKE_PAYMENTS` | `false` | Must be true before the fake provider will register |
+| `CHECKOUT_RATE_LIMIT` | `10` | Checkouts a workspace may start per window |
+| `CHECKOUT_RATE_WINDOW` | `1h` | The window that limit is counted over |
 | `FREE_GRANT_MINUTES` | `300` | Monthly grant per workspace; `0` disables grants |
 | `GRANT_INTERVAL` | `1h` | How often the leader-locked grant task ticks |
 | `ADMIN_TOKEN` | unset | Enables the admin adjust route; at least 32 characters |
 | `PAYMENT_PENDING_TTL` | `24h` | How long a `pending` payment may wait before the reaper fails it |
-| `FAKE_PAYMENT_SECRET` | unset | Enables the fake provider; at least 16 characters |
+| `FAKE_PAYMENT_SECRET` | unset | The fake provider's shared secret; at least 16 characters |
 | `NYLONPAY_BASE_URL` | unset | Absolute http(s) base URL of the Nylon Pay API |
 | `NYLONPAY_API_KEY` | unset | Nylon Pay API key |
 | `NYLONPAY_WEBHOOK_SECRET` | unset | HMAC key for webhook verification; at least 16 characters |

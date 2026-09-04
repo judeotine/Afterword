@@ -62,8 +62,10 @@ func (f *Fake) StartPayment(_ context.Context, request StartPaymentRequest) (Sta
 }
 
 type fakeWebhookBody struct {
-	PaymentID string `json:"payment_id"`
-	Status    string `json:"status"`
+	PaymentID   string `json:"payment_id"`
+	Status      string `json:"status"`
+	AmountMinor int64  `json:"amount_minor"`
+	Currency    string `json:"currency"`
 }
 
 func (f *Fake) VerifyWebhook(headers http.Header, body []byte) (WebhookEvent, error) {
@@ -93,6 +95,7 @@ func (f *Fake) VerifyWebhook(headers http.Header, body []byte) (WebhookEvent, er
 		ProviderRef: reference,
 		Reference:   reference,
 		Status:      status,
+		Amount:      Money{AmountMinor: parsed.AmountMinor, Currency: strings.ToUpper(strings.TrimSpace(parsed.Currency))},
 		Raw:         json.RawMessage(append([]byte(nil), body...)),
 	}, nil
 }

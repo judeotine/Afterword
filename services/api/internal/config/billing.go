@@ -8,15 +8,17 @@ import (
 )
 
 const (
+	PaymentProviderNone     = "none"
 	PaymentProviderFake     = "fake"
 	PaymentProviderNylonPay = "nylonpay"
 
-	DefaultFreeGrantMinutes = 300
-	MinAdminTokenLength     = 32
-	MinPaymentSecretLength  = 16
+	DefaultFreeGrantMinutes  = 300
+	DefaultCheckoutRateLimit = 10
+	MinAdminTokenLength      = 32
+	MinPaymentSecretLength   = 16
 )
 
-var paymentProviders = []string{PaymentProviderFake, PaymentProviderNylonPay}
+var paymentProviders = []string{PaymentProviderNone, PaymentProviderFake, PaymentProviderNylonPay}
 
 type NylonPayConfig struct {
 	BaseURL       string
@@ -26,6 +28,9 @@ type NylonPayConfig struct {
 
 type BillingConfig struct {
 	Provider         string
+	AllowFake        bool
+	CheckoutLimit    int64
+	CheckoutWindow   time.Duration
 	FreeGrantMinutes int32
 	GrantInterval    time.Duration
 	AdminToken       string
@@ -38,7 +43,10 @@ func LoadBilling(lookup LookupFunc) (BillingConfig, error) {
 	reader := &reader{lookup: lookup, problems: map[string]string{}}
 
 	cfg := BillingConfig{
-		Provider:         reader.choice("PAYMENT_PROVIDER", PaymentProviderFake, paymentProviders),
+		Provider:         reader.choice("PAYMENT_PROVIDER", PaymentProviderNone, paymentProviders),
+		AllowFake:        reader.boolean("ALLOW_FAKE_PAYMENTS", false),
+		CheckoutLimit:    int64(reader.boundedInt("CHECKOUT_RATE_LIMIT", DefaultCheckoutRateLimit, 1, 10000)),
+		CheckoutWindow:   reader.duration("CHECKOUT_RATE_WINDOW", time.Hour),
 		FreeGrantMinutes: int32(reader.boundedInt("FREE_GRANT_MINUTES", DefaultFreeGrantMinutes, 0, 1_000_000)),
 		GrantInterval:    reader.duration("GRANT_INTERVAL", time.Hour),
 		AdminToken:       reader.optionalSecret("ADMIN_TOKEN", MinAdminTokenLength),
@@ -51,6 +59,10 @@ func LoadBilling(lookup LookupFunc) (BillingConfig, error) {
 		},
 	}
 
+	if cfg.Provider == PaymentProviderFake && !cfg.AllowFake {
+		reader.reject("PAYMENT_PROVIDER", "may only be fake when ALLOW_FAKE_PAYMENTS is true")
+	}
+
 	if err := reader.err(); err != nil {
 		return BillingConfig{}, err
 	}
@@ -60,9 +72,11 @@ func LoadBilling(lookup LookupFunc) (BillingConfig, error) {
 func (c BillingConfig) ProviderConfigured() bool {
 	switch c.Provider {
 	case PaymentProviderNylonPay:
-		return c.NylonPay.BaseURL != "" && c.NylonPay.APIKey != "" && c.NylonPay.WebhookSecret != ""
+		return c.NylonPayConfigured()
+	case PaymentProviderFake:
+		return c.FakeConfigured()
 	default:
-		return c.FakeSecret != ""
+		return false
 	}
 }
 
@@ -71,7 +85,7 @@ func (c BillingConfig) NylonPayConfigured() bool {
 }
 
 func (c BillingConfig) FakeConfigured() bool {
-	return c.FakeSecret != ""
+	return c.AllowFake && c.FakeSecret != ""
 }
 
 func (c BillingConfig) AdminConfigured() bool {
