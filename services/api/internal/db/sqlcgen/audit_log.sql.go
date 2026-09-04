@@ -13,14 +13,15 @@ import (
 )
 
 const createAuditLogEntry = `-- name: CreateAuditLogEntry :one
-INSERT INTO audit_log (workspace_id, actor_user_id, action, target, at)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, workspace_id, actor_user_id, action, target, at, created_at
+INSERT INTO audit_log (workspace_id, actor_user_id, actor, action, target, at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, workspace_id, actor_user_id, action, target, at, created_at, actor
 `
 
 type CreateAuditLogEntryParams struct {
 	WorkspaceID uuid.UUID          `json:"workspace_id"`
 	ActorUserID *uuid.UUID         `json:"actor_user_id"`
+	Actor       string             `json:"actor"`
 	Action      string             `json:"action"`
 	Target      string             `json:"target"`
 	At          pgtype.Timestamptz `json:"at"`
@@ -30,6 +31,7 @@ func (q *Queries) CreateAuditLogEntry(ctx context.Context, arg CreateAuditLogEnt
 	row := q.db.QueryRow(ctx, createAuditLogEntry,
 		arg.WorkspaceID,
 		arg.ActorUserID,
+		arg.Actor,
 		arg.Action,
 		arg.Target,
 		arg.At,
@@ -43,6 +45,7 @@ func (q *Queries) CreateAuditLogEntry(ctx context.Context, arg CreateAuditLogEnt
 		&i.Target,
 		&i.At,
 		&i.CreatedAt,
+		&i.Actor,
 	)
 	return i, err
 }
@@ -66,7 +69,7 @@ func (q *Queries) DeleteAuditLogEntry(ctx context.Context, arg DeleteAuditLogEnt
 }
 
 const getAuditLogEntry = `-- name: GetAuditLogEntry :one
-SELECT id, workspace_id, actor_user_id, action, target, at, created_at FROM audit_log
+SELECT id, workspace_id, actor_user_id, action, target, at, created_at, actor FROM audit_log
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -86,12 +89,13 @@ func (q *Queries) GetAuditLogEntry(ctx context.Context, arg GetAuditLogEntryPara
 		&i.Target,
 		&i.At,
 		&i.CreatedAt,
+		&i.Actor,
 	)
 	return i, err
 }
 
 const listAuditLogByWorkspace = `-- name: ListAuditLogByWorkspace :many
-SELECT id, workspace_id, actor_user_id, action, target, at, created_at FROM audit_log
+SELECT id, workspace_id, actor_user_id, action, target, at, created_at, actor FROM audit_log
 WHERE workspace_id = $1
   AND (
       $2::timestamptz IS NULL
@@ -130,6 +134,7 @@ func (q *Queries) ListAuditLogByWorkspace(ctx context.Context, arg ListAuditLogB
 			&i.Target,
 			&i.At,
 			&i.CreatedAt,
+			&i.Actor,
 		); err != nil {
 			return nil, err
 		}
@@ -144,7 +149,7 @@ func (q *Queries) ListAuditLogByWorkspace(ctx context.Context, arg ListAuditLogB
 const updateAuditLogEntry = `-- name: UpdateAuditLogEntry :one
 UPDATE audit_log SET target = COALESCE($1, target)
 WHERE id = $2 AND workspace_id = $3
-RETURNING id, workspace_id, actor_user_id, action, target, at, created_at
+RETURNING id, workspace_id, actor_user_id, action, target, at, created_at, actor
 `
 
 type UpdateAuditLogEntryParams struct {
@@ -164,6 +169,7 @@ func (q *Queries) UpdateAuditLogEntry(ctx context.Context, arg UpdateAuditLogEnt
 		&i.Target,
 		&i.At,
 		&i.CreatedAt,
+		&i.Actor,
 	)
 	return i, err
 }

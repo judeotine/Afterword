@@ -22,7 +22,6 @@ const (
 	codeInsufficient        = "insufficient_credits"
 	codeProviderUnusable    = "provider_unavailable"
 	codePaymentsUnavailable = "payments_unavailable"
-	codeCheckoutLimited     = "checkout_rate_limited"
 	codeSignatureInvalid    = "signature_invalid"
 	maxAdjustMinutes        = 1 << 20
 )
@@ -36,7 +35,6 @@ var billingErrors = []struct {
 	{billing.ErrInvalidPhone, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That phone number is not usable."}},
 	{billing.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That cursor is not valid."}},
 	{billing.ErrProviderNotUsable, statusError{http.StatusServiceUnavailable, codePaymentsUnavailable, "Payments are not available right now."}},
-	{billing.ErrCheckoutLimited, statusError{http.StatusTooManyRequests, codeCheckoutLimited, "Too many top-ups were started for this workspace: wait a while before trying again."}},
 	{payments.ErrProviderUnknown, statusError{http.StatusNotFound, httpx.CodeNotFound, "That payment provider is not known."}},
 	{payments.ErrInvalidSignature, statusError{http.StatusUnauthorized, codeSignatureInvalid, "That webhook signature is not valid."}},
 	{payments.ErrInvalidWebhook, statusError{http.StatusBadRequest, httpx.CodeInvalidRequest, "That webhook body could not be read."}},
@@ -51,6 +49,11 @@ var billingErrors = []struct {
 }
 
 func (b *BillingServer) writeBillingError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, billing.ErrCheckoutLimited) {
+		writeRateLimited(w, r, b.billing.CheckoutWindow(),
+			"Too many top-ups were started for this workspace: wait a while before trying again.")
+		return
+	}
 	for _, candidate := range billingErrors {
 		if errors.Is(err, candidate.target) {
 			httpx.WriteError(w, r, candidate.result.status, candidate.result.code, candidate.result.message)

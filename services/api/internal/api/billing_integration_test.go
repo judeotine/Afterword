@@ -78,10 +78,13 @@ func (h *billingHarness) checkout(session session, packID, phone string) checkou
 	return payload
 }
 
-func (h *billingHarness) deliverFakeWebhook(paymentID string) response {
+func (h *billingHarness) deliverFakeWebhook(paymentID string, amountMinor int64) response {
 	h.t.Helper()
-	return h.do(http.MethodPost, fakeWebhookURL,
-		map[string]string{"payment_id": paymentID}, withFakeSignature(billingFakeSecret))
+	return h.do(http.MethodPost, fakeWebhookURL, map[string]any{
+		"payment_id":   paymentID,
+		"amount_minor": amountMinor,
+		"currency":     "UGX",
+	}, withFakeSignature(billingFakeSecret))
 }
 
 func TestSeededPacksAreListedCheapestFirst(t *testing.T) {
@@ -182,7 +185,7 @@ func TestCheckoutThenTheFakeWebhookCreditsTheWorkspaceExactlyOnce(t *testing.T) 
 		t.Fatalf("balance before the webhook = %d, want 0", h.balance(workspaceID))
 	}
 
-	first := h.deliverFakeWebhook(created.PaymentID)
+	first := h.deliverFakeWebhook(created.PaymentID, 60000)
 	if first.Status != http.StatusOK {
 		t.Fatalf("first webhook: status %d, body %s", first.Status, first.Body)
 	}
@@ -195,7 +198,7 @@ func TestCheckoutThenTheFakeWebhookCreditsTheWorkspaceExactlyOnce(t *testing.T) 
 		t.Fatalf("balance after the first webhook = %d, want 500", got)
 	}
 
-	second := h.deliverFakeWebhook(created.PaymentID)
+	second := h.deliverFakeWebhook(created.PaymentID, 60000)
 	if second.Status != http.StatusOK {
 		t.Fatalf("second webhook: status %d, body %s", second.Status, second.Body)
 	}
@@ -241,7 +244,7 @@ func TestConcurrentWebhookDeliveriesCreditTheWorkspaceOnce(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			results[i] = h.deliverFakeWebhook(created.PaymentID)
+			results[i] = h.deliverFakeWebhook(created.PaymentID, 15000)
 		}()
 	}
 	wait.Wait()
@@ -308,7 +311,7 @@ func TestWebhooksAreRefusedWithoutAValidSecretOrProvider(t *testing.T) {
 		t.Fatalf("webhook for an unregistered provider = %d, want 404", unknownProvider.Status)
 	}
 
-	unknownPayment := h.deliverFakeWebhook(uuid.NewString())
+	unknownPayment := h.deliverFakeWebhook(uuid.NewString(), 15000)
 	if unknownPayment.Status != http.StatusNotFound {
 		t.Fatalf("webhook for an unknown payment = %d, want 404", unknownPayment.Status)
 	}

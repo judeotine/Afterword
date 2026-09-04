@@ -123,6 +123,7 @@ func newHarness(t *testing.T) *harness {
 type response struct {
 	Status  int
 	Body    []byte
+	Header  http.Header
 	Cookies []*http.Cookie
 }
 
@@ -180,7 +181,12 @@ func (h *harness) do(method, path string, body any, decorate ...func(*http.Reque
 		_ = result.Body.Close()
 	}()
 
-	return response{Status: recorder.Code, Body: recorder.Body.Bytes(), Cookies: result.Cookies()}
+	return response{
+		Status:  recorder.Code,
+		Body:    recorder.Body.Bytes(),
+		Header:  recorder.Header().Clone(),
+		Cookies: result.Cookies(),
+	}
 }
 
 func withBearer(token string) func(*http.Request) {

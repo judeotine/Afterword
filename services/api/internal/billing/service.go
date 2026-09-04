@@ -216,7 +216,7 @@ func (s *Service) Adjust(ctx context.Context, workspaceID uuid.UUID, deltaMinute
 	if err != nil {
 		return Balance{}, err
 	}
-	if err := s.audit(ctx, tx, workspaceID, actionCreditsAdjust, adjustTarget(entry.ID, deltaMinutes, refID)); err != nil {
+	if err := s.audit(ctx, tx, workspaceID, adminActor, actionCreditsAdjust, adjustTarget(entry.ID, deltaMinutes, refID)); err != nil {
 		return Balance{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -226,16 +226,17 @@ func (s *Service) Adjust(ctx context.Context, workspaceID uuid.UUID, deltaMinute
 }
 
 func adjustTarget(entryID uuid.UUID, deltaMinutes int32, refID string) string {
-	target := adminActor + " " + strconv.FormatInt(int64(deltaMinutes), 10) + " minutes entry:" + entryID.String()
+	target := strconv.FormatInt(int64(deltaMinutes), 10) + " minutes entry:" + entryID.String()
 	if strings.TrimSpace(refID) != "" {
 		target += " ref:" + refID
 	}
 	return target
 }
 
-func (s *Service) audit(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, action, target string) error {
+func (s *Service) audit(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, actor, action, target string) error {
 	if _, err := s.queries.WithTx(tx).CreateAuditLogEntry(ctx, sqlcgen.CreateAuditLogEntryParams{
 		WorkspaceID: workspaceID,
+		Actor:       actor,
 		Action:      action,
 		Target:      target,
 		At:          pgtype.Timestamptz{Time: s.clock().UTC(), Valid: true},
@@ -387,9 +388,6 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, header
 }
 
 func amountMatches(amount payments.Money, row sqlcgen.Payment) bool {
-	if amount.AmountMinor == 0 && strings.TrimSpace(amount.Currency) == "" {
-		return true
-	}
 	if amount.AmountMinor != row.AmountMinor {
 		return false
 	}
@@ -412,9 +410,12 @@ func (s *Service) flagForReview(ctx context.Context, tx pgx.Tx, row sqlcgen.Paym
 	}
 	updated, err := queries.MarkPaymentNeedsReview(ctx, sqlcgen.MarkPaymentNeedsReviewParams{Reason: raw, ID: row.ID})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return WebhookResult{Payment: newPayment(row), Duplicate: true}, nil
+		}
 		return WebhookResult{}, fmt.Errorf("flag the payment for review: %w", err)
 	}
-	if err := s.audit(ctx, tx, row.WorkspaceID, actionPaymentReview, reviewTarget(row, reason)); err != nil {
+	if err := s.audit(ctx, tx, row.WorkspaceID, row.Provider, actionPaymentReview, reviewTarget(row, reason)); err != nil {
 		return WebhookResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -485,6 +486,10 @@ func (s *Service) ReapPendingPayments(ctx context.Context, olderThan time.Durati
 			Msg("a pending payment expired without a provider webhook")
 	}
 	return len(rows), nil
+}
+
+func (s *Service) CheckoutWindow() time.Duration {
+	return s.checkoutWindow
 }
 
 func (s *Service) provider(name string) (string, payments.PaymentProvider, error) {

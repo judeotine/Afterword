@@ -27,6 +27,7 @@ type AuditLog struct {
 	Target      string             `json:"target"`
 	At          pgtype.Timestamptz `json:"at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Actor       string             `json:"actor"`
 }
 
 type AuthOtp struct {

@@ -51,9 +51,13 @@ func (b *BotJobServer) Routes(router chi.Router) {
 	router.Group(func(r chi.Router) {
 		r.Use(b.middleware.RequireAuth)
 		r.Use(b.middleware.RequireWorkspace)
-		r.Post(botJobsPath, b.handleCreateBotJob)
 		r.Get(botJobsPath, b.handleListBotJobs)
 		r.Get(botJobPath, b.handleGetBotJob)
+
+		r.Group(func(r chi.Router) {
+			r.Use(b.middleware.RequireRole(auth.RoleAdmin))
+			r.Post(botJobsPath, b.handleCreateBotJob)
+		})
 	})
 }
 
@@ -75,6 +79,7 @@ var botJobErrors = []struct {
 	{botjobs.ErrUnknownPlatform, statusError{http.StatusBadRequest, codeBadJobURL, "That meeting link is not a Google Meet, Zoom or Teams link."}},
 	{botjobs.ErrPlatformMismatch, statusError{http.StatusBadRequest, codeBadJobURL, "That meeting link does not belong to the platform you named."}},
 	{botjobs.ErrScheduleTooFar, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "A bot cannot be scheduled more than ninety days ahead."}},
+	{botjobs.ErrScheduleInPast, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "A bot cannot be scheduled in the past."}},
 	{botjobs.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That page cursor is not valid."}},
 	{billing.ErrInvalidEstimate, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That is not a usable estimate in minutes."}},
 }

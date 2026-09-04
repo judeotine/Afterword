@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/botjobs"
 )
 
@@ -133,6 +134,11 @@ func TestBotJobCreateValidatesTheMeetingLink(t *testing.T) {
 		{"not a url", map[string]any{"meeting_url": "not a url"}, http.StatusBadRequest},
 		{"unknown host", map[string]any{"meeting_url": "https://example.com/room/1"}, http.StatusBadRequest},
 		{"platform mismatch", map[string]any{"meeting_url": "https://meet.google.com/abc", "platform": "zoom"}, http.StatusBadRequest},
+		{"unknown host named as zoom", map[string]any{"meeting_url": "http://169.254.169.254/latest/meta-data/", "platform": "zoom"}, http.StatusBadRequest},
+		{"link local host over https", map[string]any{"meeting_url": "https://169.254.169.254/latest/meta-data/", "platform": "zoom"}, http.StatusBadRequest},
+		{"plain http meet link", map[string]any{"meeting_url": "http://meet.google.com/abc-defg-hij"}, http.StatusBadRequest},
+		{"scheduled in the past", map[string]any{"meeting_url": "https://meet.google.com/abc", "scheduled_at": "2020-01-01T00:00:00Z"}, http.StatusBadRequest},
+		{"scheduled beyond the horizon", map[string]any{"meeting_url": "https://meet.google.com/abc", "scheduled_at": "2099-01-01T00:00:00Z"}, http.StatusBadRequest},
 		{"unknown platform", map[string]any{"meeting_url": "https://meet.google.com/abc", "platform": "webex"}, http.StatusBadRequest},
 		{"zero estimate", map[string]any{"meeting_url": "https://meet.google.com/abc", "estimated_minutes": 0}, http.StatusBadRequest},
 		{"absurd estimate", map[string]any{"meeting_url": "https://meet.google.com/abc", "estimated_minutes": 100000}, http.StatusBadRequest},
@@ -223,5 +229,39 @@ func TestBotJobsAreListedAndFetchedWithinTheWorkspace(t *testing.T) {
 	anonymous := h.do(http.MethodGet, botJobsURL, nil)
 	if anonymous.Status != http.StatusUnauthorized {
 		t.Fatalf("list without a token = %d, want 401", anonymous.Status)
+	}
+}
+
+func TestSchedulingABotIsAnAdminAct(t *testing.T) {
+	h := newBillingHarness(t)
+	owner := h.signIn("bot-owner@example.com")
+	member := h.joinAs(owner, "bot-member@example.com", auth.RoleMember)
+	admin := h.joinAs(owner, "bot-admin@example.com", auth.RoleAdmin)
+	h.grant(uuid.MustParse(owner.Workspace.ID), 600)
+
+	body := map[string]any{"meeting_url": "https://meet.google.com/mmm-nnnn-ooo"}
+
+	refused := h.createBotJob(member, body)
+	if refused.Status != http.StatusForbidden {
+		t.Fatalf("member bot job = %d, want 403", refused.Status)
+	}
+
+	allowed := h.createBotJob(admin, body)
+	if allowed.Status != http.StatusCreated {
+		t.Fatalf("admin bot job: status %d, body %s", allowed.Status, allowed.Body)
+	}
+	var created botJobPayload
+	allowed.decode(t, &created)
+
+	listed := h.do(http.MethodGet, botJobsURL, nil,
+		withBearer(member.AccessToken), withWorkspace(member.Workspace.ID))
+	if listed.Status != http.StatusOK {
+		t.Fatalf("member list = %d, want 200", listed.Status)
+	}
+
+	fetched := h.do(http.MethodGet, botJobsURL+"/"+created.ID, nil,
+		withBearer(member.AccessToken), withWorkspace(member.Workspace.ID))
+	if fetched.Status != http.StatusOK {
+		t.Fatalf("member get = %d, want 200", fetched.Status)
 	}
 }

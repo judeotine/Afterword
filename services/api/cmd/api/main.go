@@ -375,24 +375,33 @@ func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, lo
 	})
 }
 
+func startupTasks(billingCfg config.BillingConfig, authStore *auth.Store, library *meetings.Service, grantRun, reapRun func(context.Context) error) []jobs.ScheduledTask {
+	tasks := make([]jobs.ScheduledTask, 0, 4)
+	tasks = append(tasks, auth.MaintenanceTasks(authStore)...)
+	tasks = append(tasks, meetings.MaintenanceTasks(library)...)
+
+	if billingCfg.FreeGrantMinutes > 0 && grantRun != nil {
+		tasks = append(tasks, jobs.ScheduledTask{
+			Name:     taskMonthlyCreditGrant,
+			Interval: billingCfg.GrantInterval,
+			LockKey:  credits.LockKeyMonthlyGrant,
+			Run:      grantRun,
+		})
+	}
+
+	if reapRun != nil {
+		tasks = append(tasks, jobs.ScheduledTask{
+			Name:     taskPendingPaymentReaper,
+			Interval: pendingPaymentReaperInterval,
+			LockKey:  lockKeyPendingPaymentReaper,
+			Run:      reapRun,
+		})
+	}
+	return tasks
+}
+
 func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components apiComponents, library *meetings.Service, billingService *billing.Service, logger zerolog.Logger) (*jobs.Scheduler, error) {
-	scheduler := jobs.NewScheduler(pool.Pool(), jobs.WithSchedulerLogger(logger))
-	registered := 0
-
-	for _, task := range auth.MaintenanceTasks(components.authStore) {
-		if err := scheduler.Register(task); err != nil {
-			return nil, err
-		}
-		registered++
-	}
-
-	for _, task := range meetings.MaintenanceTasks(library) {
-		if err := scheduler.Register(task); err != nil {
-			return nil, err
-		}
-		registered++
-	}
-
+	var grantRun func(context.Context) error
 	if billingCfg.FreeGrantMinutes > 0 {
 		granter, err := credits.NewGranter(credits.GranterOptions{
 			Pool:    pool.Pool(),
@@ -402,57 +411,48 @@ func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components a
 		if err != nil {
 			return nil, err
 		}
-		task := jobs.ScheduledTask{
-			Name:     taskMonthlyCreditGrant,
-			Interval: billingCfg.GrantInterval,
-			LockKey:  credits.LockKeyMonthlyGrant,
-			Run: func(ctx context.Context) error {
-				run, err := granter.RunOnce(ctx)
-				if err != nil {
-					return err
-				}
-				logger.Info().
-					Time("period", run.Period).
-					Int("granted", run.Granted).
-					Int64("granted_minutes", run.GrantedMinutes).
-					Int("expired", run.Expired).
-					Int64("expired_minutes", run.ExpiredMinutes).
-					Msg("monthly credit grant complete")
-				return nil
-			},
+		grantRun = func(ctx context.Context) error {
+			run, err := granter.RunOnce(ctx)
+			if err != nil {
+				return err
+			}
+			logger.Info().
+				Time("period", run.Period).
+				Int("granted", run.Granted).
+				Int64("granted_minutes", run.GrantedMinutes).
+				Int("expired", run.Expired).
+				Int64("expired_minutes", run.ExpiredMinutes).
+				Msg("monthly credit grant complete")
+			return nil
 		}
-		if err := scheduler.Register(task); err != nil {
-			return nil, err
-		}
-		registered++
 	} else {
 		logger.Warn().Msg("monthly credit grants are disabled: FREE_GRANT_MINUTES is zero")
 	}
 
+	var reapRun func(context.Context) error
 	if billingService != nil {
-		task := jobs.ScheduledTask{
-			Name:     taskPendingPaymentReaper,
-			Interval: pendingPaymentReaperInterval,
-			LockKey:  lockKeyPendingPaymentReaper,
-			Run: func(ctx context.Context) error {
-				reaped, err := billingService.ReapPendingPayments(ctx, billingCfg.PendingTTL)
-				if err != nil {
-					return err
-				}
-				if reaped > 0 {
-					logger.Info().Int("payments", reaped).Msg("stale pending payments were failed")
-				}
-				return nil
-			},
+		reapRun = func(ctx context.Context) error {
+			reaped, err := billingService.ReapPendingPayments(ctx, billingCfg.PendingTTL)
+			if err != nil {
+				return err
+			}
+			if reaped > 0 {
+				logger.Info().Int("payments", reaped).Msg("stale pending payments were failed")
+			}
+			return nil
 		}
+	}
+
+	tasks := startupTasks(billingCfg, components.authStore, library, grantRun, reapRun)
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+
+	scheduler := jobs.NewScheduler(pool.Pool(), jobs.WithSchedulerLogger(logger))
+	for _, task := range tasks {
 		if err := scheduler.Register(task); err != nil {
 			return nil, err
 		}
-		registered++
-	}
-
-	if registered == 0 {
-		return nil, nil
 	}
 	return scheduler, nil
 }

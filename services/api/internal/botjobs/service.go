@@ -28,6 +28,7 @@ const (
 	MaxURLLength           = 2048
 	MaxBotNameLength       = 80
 	MaxLeadTime            = 90 * 24 * time.Hour
+	ScheduleGrace          = 5 * time.Minute
 )
 
 var (
@@ -36,6 +37,7 @@ var (
 	ErrUnknownPlatform  = errors.New("botjobs: the meeting platform could not be determined")
 	ErrPlatformMismatch = errors.New("botjobs: the meeting url does not match the platform")
 	ErrScheduleTooFar   = errors.New("botjobs: the meeting is scheduled too far ahead")
+	ErrScheduleInPast   = errors.New("botjobs: the meeting is scheduled in the past")
 	ErrInvalidCursor    = errors.New("botjobs: cursor is not valid")
 )
 
@@ -89,7 +91,7 @@ func PlatformFor(meetingURL string) (string, error) {
 	if err != nil || parsed.Host == "" {
 		return "", ErrInvalidURL
 	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+	if parsed.Scheme != "https" {
 		return "", ErrInvalidURL
 	}
 	host := strings.ToLower(parsed.Hostname())
@@ -114,21 +116,27 @@ func (s *Service) Resolve(params CreateParams) (CreateParams, error) {
 	detected, err := PlatformFor(meetingURL)
 	requested := strings.ToLower(strings.TrimSpace(params.Platform))
 	switch {
-	case requested == "" && err != nil:
+	case errors.Is(err, ErrInvalidURL):
 		return CreateParams{}, err
+	case err != nil && requested == "":
+		return CreateParams{}, err
+	case err != nil:
+		return CreateParams{}, ErrUnknownPlatform
 	case requested == "":
 		requested = detected
-	case err == nil && detected != requested:
+	case detected != requested:
 		return CreateParams{}, ErrPlatformMismatch
-	case err != nil && errors.Is(err, ErrInvalidURL):
-		return CreateParams{}, err
 	}
 
-	scheduledAt := s.clock().UTC()
+	now := s.clock().UTC()
+	scheduledAt := now
 	if params.ScheduledAt != nil {
 		scheduledAt = params.ScheduledAt.UTC()
-		if scheduledAt.After(s.clock().UTC().Add(MaxLeadTime)) {
+		switch {
+		case scheduledAt.After(now.Add(MaxLeadTime)):
 			return CreateParams{}, ErrScheduleTooFar
+		case scheduledAt.Before(now.Add(-ScheduleGrace)):
+			return CreateParams{}, ErrScheduleInPast
 		}
 	}
 

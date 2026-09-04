@@ -75,7 +75,7 @@ RETURNING *;
 UPDATE payments SET
     status = 'needs_review',
     raw = raw || sqlc.arg(reason)::jsonb
-WHERE id = sqlc.arg(id)
+WHERE id = sqlc.arg(id) AND status <> 'paid'
 RETURNING *;
 
 -- name: LockWorkspaceCheckouts :exec

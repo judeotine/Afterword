@@ -367,7 +367,7 @@ const markPaymentNeedsReview = `-- name: MarkPaymentNeedsReview :one
 UPDATE payments SET
     status = 'needs_review',
     raw = raw || $1::jsonb
-WHERE id = $2
+WHERE id = $2 AND status <> 'paid'
 RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
 `
 

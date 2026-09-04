@@ -1,6 +1,6 @@
 -- name: CreateAuditLogEntry :one
-INSERT INTO audit_log (workspace_id, actor_user_id, action, target, at)
-VALUES (sqlc.arg(workspace_id), sqlc.narg(actor_user_id), sqlc.arg(action), sqlc.arg(target), sqlc.arg(at))
+INSERT INTO audit_log (workspace_id, actor_user_id, actor, action, target, at)
+VALUES (sqlc.arg(workspace_id), sqlc.narg(actor_user_id), sqlc.arg(actor), sqlc.arg(action), sqlc.arg(target), sqlc.arg(at))
 RETURNING *;
 
 -- name: GetAuditLogEntry :one
