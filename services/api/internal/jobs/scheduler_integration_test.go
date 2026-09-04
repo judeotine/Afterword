@@ -5,6 +5,7 @@ package jobs_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -212,6 +213,62 @@ func TestSchedulerRunsEveryTaskOnStartAndStopsWithTheContext(t *testing.T) {
 	case <-done:
 	case <-ctx.Done():
 		t.Fatal("the task did not run on start")
+	}
+
+	stop()
+	select {
+	case err := <-stopped:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop with the context")
+	}
+}
+
+func TestAPanickingTaskBecomesAnErrorAndKeepsTheSchedulerRunning(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var runs atomic.Int32
+	scheduler := jobs.NewScheduler(pool)
+	if err := scheduler.Register(jobs.ScheduledTask{
+		Name:     "panics",
+		Interval: 50 * time.Millisecond,
+		LockKey:  testLockKey + 5,
+		Run: func(context.Context) error {
+			runs.Add(1)
+			panic("the scheduled task exploded")
+		},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	_, err := scheduler.RunTask(ctx, "panics")
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("RunTask error = %v, want a panic error", err)
+	}
+
+	ok, err := scheduler.RunTask(ctx, "panics")
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("second RunTask error = %v, want a panic error", err)
+	}
+	if !ok {
+		t.Fatal("the leader lock was not released after a panicking task")
+	}
+
+	runCtx, stop := context.WithCancel(ctx)
+	stopped := make(chan error, 1)
+	go func() { stopped <- scheduler.Run(runCtx) }()
+
+	deadline := time.After(10 * time.Second)
+	for runs.Load() < 4 {
+		select {
+		case <-deadline:
+			t.Fatalf("the scheduler stopped ticking after a panic: %d runs", runs.Load())
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 
 	stop()

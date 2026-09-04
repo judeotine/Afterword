@@ -179,10 +179,19 @@ func (s *Scheduler) runWithLock(ctx context.Context, task ScheduledTask) (bool, 
 		}
 	}()
 
-	if err := task.Run(ctx); err != nil {
+	if err := s.invoke(ctx, task); err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+func (s *Scheduler) invoke(ctx context.Context, task ScheduledTask) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("jobs: scheduled task %s panicked: %v", task.Name, recovered)
+		}
+	}()
+	return task.Run(ctx)
 }
 
 func (s *Scheduler) task(name string) ScheduledTask {

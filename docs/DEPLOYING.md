@@ -132,7 +132,7 @@ openssl rand -base64 32 | tr -d '\n=/+'        # MINIO_ROOT_PASSWORD
 | Variable | Notes |
 |---|---|
 | `JWT_SECRET` | Minimum 32 characters. Rotating it signs every existing session out. |
-| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. |
+| `DATABASE_MAX_CONNS` | 20 is right for a 4 GB box. The API refuses to start below 5: the scheduler pins one pooled connection per running task while it holds that task's leader lock, and four scheduled tasks plus request traffic deadlock on a smaller pool. |
 | `TRUSTED_PROXY_CIDRS` | `172.16.0.0/12` covers the default Docker bridge networks, so the API trusts Caddy's `X-Forwarded-For`. Without it every log line and rate limit sees Caddy's container IP. |
 | `REQUEST_TIMEOUT`, `SHUTDOWN_TIMEOUT` | `30s` and `15s`. |
 | `GOOGLE_CLIENT_ID`/`_SECRET` | Both or neither; the API refuses to start with only one. `GOOGLE_REDIRECT_URL` must equal `https://api.$DOMAIN/v1/auth/google/callback` and be registered in the Google console. |

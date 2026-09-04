@@ -90,7 +90,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	cfg := Config{
 		Port:             reader.port("PORT", 8080),
 		DatabaseURL:      reader.databaseURL("DATABASE_URL"),
-		DatabaseMaxConns: int32(reader.boundedInt("DATABASE_MAX_CONNS", 10, 1, 500)),
+		DatabaseMaxConns: int32(reader.boundedInt("DATABASE_MAX_CONNS", 10, 5, 500)),
 		JWTSecret:        reader.secret("JWT_SECRET", 32),
 		AppBaseURL:       reader.baseURL("APP_BASE_URL", "http://localhost:3000"),
 		APIBaseURL:       reader.baseURL("API_BASE_URL", "http://localhost:8080"),

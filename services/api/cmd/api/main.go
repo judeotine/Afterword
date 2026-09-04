@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ const (
 	taskPendingPaymentReaper           = "pending-payment-reaper"
 	lockKeyPendingPaymentReaper  int64 = 0x616677726561706d
 	pendingPaymentReaperInterval       = time.Hour
+	backgroundStopGrace                = 30 * time.Second
 	fakeCheckoutPath                   = "/billing/fake"
 )
 
@@ -119,12 +121,16 @@ func run() error {
 		return err
 	}
 
+	var background sync.WaitGroup
+
 	if library != nil {
 		runner, runnerErr := newPurgeRunner(cfg, pool, logger)
 		if runnerErr != nil {
 			return runnerErr
 		}
+		background.Add(1)
 		go func() {
+			defer background.Done()
 			if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error().Err(err).Msg("job runner stopped")
 			}
@@ -136,7 +142,9 @@ func run() error {
 		return err
 	}
 	if scheduler != nil {
+		background.Add(1)
 		go func() {
+			defer background.Done()
 			if err := scheduler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error().Err(err).Msg("scheduler stopped")
 			}
@@ -163,11 +171,29 @@ func run() error {
 	})
 
 	logger.Info().Str("address", cfg.Address()).Msg("listening")
-	if err := httpx.Serve(ctx, server, cfg.ShutdownTimeout); err != nil {
-		return err
+	serveErr := httpx.Serve(ctx, server, cfg.ShutdownTimeout)
+	awaitBackground(&background, backgroundStopGrace, logger)
+	if serveErr != nil {
+		return serveErr
 	}
 	logger.Info().Msg("shutdown complete")
 	return nil
+}
+
+func awaitBackground(background *sync.WaitGroup, grace time.Duration, logger zerolog.Logger) {
+	stopped := make(chan struct{})
+	go func() {
+		background.Wait()
+		close(stopped)
+	}()
+
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-stopped:
+	case <-timer.C:
+		logger.Warn().Dur("grace", grace).Msg("background tasks did not stop before the grace period ended")
+	}
 }
 
 func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*meetings.Service, error) {

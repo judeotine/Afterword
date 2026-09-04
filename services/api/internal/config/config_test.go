@@ -393,3 +393,20 @@ func TestStorageRejectsABadBucketName(t *testing.T) {
 		t.Fatalf("error %v does not name the variable", err)
 	}
 }
+
+func TestLoadRejectsAPoolBelowTheSchedulerFloor(t *testing.T) {
+	env := baseEnv()
+	env["DATABASE_MAX_CONNS"] = "4"
+	if _, err := Load(lookupFrom(env)); err == nil {
+		t.Fatal("Load succeeded with DATABASE_MAX_CONNS=4")
+	}
+
+	env["DATABASE_MAX_CONNS"] = "5"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DatabaseMaxConns != 5 {
+		t.Errorf("DatabaseMaxConns = %d, want 5", cfg.DatabaseMaxConns)
+	}
+}
