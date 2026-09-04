@@ -61,3 +61,10 @@ RETURNING *;
 -- name: FailPendingPayment :execrows
 UPDATE payments SET status = 'failed', raw = sqlc.arg(raw)
 WHERE id = sqlc.arg(id) AND status = 'pending';
+
+-- name: FailStalePendingPayments :many
+UPDATE payments SET
+    status = 'failed',
+    raw = raw || sqlc.arg(reason)::jsonb
+WHERE status = 'pending' AND created_at < sqlc.arg(older_than)
+RETURNING *;

@@ -76,6 +76,7 @@ type Querier interface {
 	DeleteWorkspace(ctx context.Context, id uuid.UUID) (int64, error)
 	EnsureCreditLock(ctx context.Context, workspaceID uuid.UUID) error
 	FailPendingPayment(ctx context.Context, arg FailPendingPaymentParams) (int64, error)
+	FailStalePendingPayments(ctx context.Context, arg FailStalePendingPaymentsParams) ([]Payment, error)
 	FinalizeMeetingObjects(ctx context.Context, arg FinalizeMeetingObjectsParams) (Meeting, error)
 	GetAPIToken(ctx context.Context, arg GetAPITokenParams) (ApiToken, error)
 	GetAPITokenByHash(ctx context.Context, hash string) (ApiToken, error)

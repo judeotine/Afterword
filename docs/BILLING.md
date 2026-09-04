@@ -67,6 +67,14 @@ single `adjust` ledger entry with a negative delta, referenced as
 `grant_expiry:<grant_id>`, written in the same transaction that stamps
 `expired_at` and `expired_minutes` on the grant row.
 
+`usage_since_the_grant` counts every `*_usage` debit recorded after the grant
+row was written, whichever balance actually paid for it. A workspace that had
+purchased credits when the grant landed therefore has some of that spend
+attributed to the grant, which shrinks the claw-back in the customer's favour.
+That is deliberate: the alternative, tracking which entry drew on which bucket,
+means a lot-based ledger, and this rule can never take more than the customer
+has or more than the grant was worth.
+
 Skipped months are safe. If the API is down for two months, the next run expires
 every due grant it finds, oldest first, and then grants the current month.
 
@@ -82,6 +90,33 @@ idempotent, so running it more often changes nothing.
 The share-link request sweep from `internal/meetings` is registered on the same
 scheduler, hourly, under its own lock key.
 
+## Entitlements
+
+`billing.Entitlements.RequireCredits(ctx, workspace, estimateMinutes)` is the one
+gate. It reads the balance, and when it falls short it returns an error carrying
+the shortfall and a top-up link, which the API renders as
+
+```
+402 {"error": {"code": "insufficient_credits",
+               "message": "...",
+               "top_up_url": "{APP_BASE_URL}/billing/top-up"}}
+```
+
+Two paths use it today. `POST /v1/bot-jobs` requires the job's estimate
+(`estimated_minutes`, default 60) before it writes the row: the estimate is
+checked, never spent, because the bot bills the minutes it actually used when it
+leaves. `POST /v1/meetings/{id}/finalize` prices the work it is about to queue
+and requires the total before it touches the meeting, so a refused finalize
+leaves the meeting's status and generation exactly where they were and queues
+nothing.
+
+Finalize charges only work it actually queued. It asks the job queue which kinds
+already exist at this generation, prices only the rest, and writes the debit
+inside the branch that created the job, with the job's id as the ledger
+`ref_id`. A re-finalize that creates nothing charges nothing. A meeting whose
+`duration_s` is still zero is free, because there is nothing to price yet; the
+worker is what will eventually record real minutes.
+
 ## Endpoints
 
 | Method | Path | Auth | Purpose |
@@ -92,6 +127,15 @@ scheduler, hourly, under its own lock key.
 | GET | `/v1/billing/payments` | bearer + workspace | Payment history, cursor paged |
 | POST | `/v1/billing/webhooks/{provider}` | provider signature | Settles a payment |
 | POST | `/v1/admin/workspaces/{id}/credits/adjust` | `X-Admin-Token` | `{delta_minutes, ref_id?}` → the new balance |
+| POST | `/v1/bot-jobs` | bearer + workspace | `{meeting_url, platform?, scheduled_at?, estimated_minutes?, bot_name?}` → the scheduled row |
+| GET | `/v1/bot-jobs` | bearer + workspace | Bot jobs, cursor paged |
+| GET | `/v1/bot-jobs/{id}` | bearer + workspace | One bot job |
+
+Spending money is an admin act: `POST /v1/billing/checkout` and
+`GET /v1/billing/payments` require the `admin` or `owner` role, while
+`GET /v1/billing/balance` and `GET /v1/billing/packs` are open to every member,
+so a member can see what the workspace has without being able to spend or to
+read its payment history.
 
 The admin route is not part of the member-facing API. It is guarded by the
 `ADMIN_TOKEN` environment variable, compared in constant time over SHA-256
@@ -122,6 +166,18 @@ Because the row lock is taken first, duplicate and concurrent deliveries of the
 same event credit the workspace exactly once. Duplicates answer 200 so the
 provider stops retrying. A body that does not match a known payment answers 404;
 a bad signature answers 401.
+
+### Stale pending payments
+
+A checkout writes a `pending` row before it calls the provider. If the provider
+never confirms — the push was ignored, the card page was abandoned, the webhook
+was lost — that row would sit `pending` forever. An hourly leader-locked task
+marks every `pending` payment older than `PAYMENT_PENDING_TTL` (default 24h) as
+`failed`, recording the reason in the row's `raw` payload and logging each one.
+It never touches the ledger: a payment that was never credited has nothing to
+reverse, and a payment that was credited is no longer `pending`. If a provider
+confirms after the reaper has been through, the webhook finds a non-pending row
+and is handled by the settlement rules above rather than crediting twice.
 
 ## Providers
 
@@ -209,6 +265,7 @@ interface should need to move.
 | `FREE_GRANT_MINUTES` | `300` | Monthly grant per workspace; `0` disables grants |
 | `GRANT_INTERVAL` | `1h` | How often the leader-locked grant task ticks |
 | `ADMIN_TOKEN` | unset | Enables the admin adjust route; at least 32 characters |
+| `PAYMENT_PENDING_TTL` | `24h` | How long a `pending` payment may wait before the reaper fails it |
 | `FAKE_PAYMENT_SECRET` | unset | Enables the fake provider; at least 16 characters |
 | `NYLONPAY_BASE_URL` | unset | Absolute http(s) base URL of the Nylon Pay API |
 | `NYLONPAY_API_KEY` | unset | Nylon Pay API key |

@@ -29,6 +29,7 @@ type BillingConfig struct {
 	FreeGrantMinutes int32
 	GrantInterval    time.Duration
 	AdminToken       string
+	PendingTTL       time.Duration
 	FakeSecret       string
 	NylonPay         NylonPayConfig
 }
@@ -41,6 +42,7 @@ func LoadBilling(lookup LookupFunc) (BillingConfig, error) {
 		FreeGrantMinutes: int32(reader.boundedInt("FREE_GRANT_MINUTES", DefaultFreeGrantMinutes, 0, 1_000_000)),
 		GrantInterval:    reader.duration("GRANT_INTERVAL", time.Hour),
 		AdminToken:       reader.optionalSecret("ADMIN_TOKEN", MinAdminTokenLength),
+		PendingTTL:       reader.duration("PAYMENT_PENDING_TTL", 24*time.Hour),
 		FakeSecret:       reader.optionalSecret("FAKE_PAYMENT_SECRET", MinPaymentSecretLength),
 		NylonPay: NylonPayConfig{
 			BaseURL:       reader.optionalBaseURL("NYLONPAY_BASE_URL"),

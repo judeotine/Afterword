@@ -95,6 +95,52 @@ func (q *Queries) FailPendingPayment(ctx context.Context, arg FailPendingPayment
 	return result.RowsAffected(), nil
 }
 
+const failStalePendingPayments = `-- name: FailStalePendingPayments :many
+UPDATE payments SET
+    status = 'failed',
+    raw = raw || $1::jsonb
+WHERE status = 'pending' AND created_at < $2
+RETURNING id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at
+`
+
+type FailStalePendingPaymentsParams struct {
+	Reason    []byte             `json:"reason"`
+	OlderThan pgtype.Timestamptz `json:"older_than"`
+}
+
+func (q *Queries) FailStalePendingPayments(ctx context.Context, arg FailStalePendingPaymentsParams) ([]Payment, error) {
+	rows, err := q.db.Query(ctx, failStalePendingPayments, arg.Reason, arg.OlderThan)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Payment{}
+	for rows.Next() {
+		var i Payment
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Provider,
+			&i.ProviderRef,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.Minutes,
+			&i.Status,
+			&i.Raw,
+			&i.CreatedAt,
+			&i.PackID,
+			&i.PaidAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPayment = `-- name: GetPayment :one
 SELECT id, workspace_id, provider, provider_ref, amount_minor, currency, minutes, status, raw, created_at, pack_id, paid_at FROM payments
 WHERE id = $1 AND workspace_id = $2

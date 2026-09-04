@@ -24,6 +24,7 @@ const (
 	DefaultPageSize   int32 = 25
 	MaxPageSize       int32 = 100
 	MaxPhoneLength          = 32
+	DefaultPendingTTL       = 24 * time.Hour
 	webhookPathPrefix       = "/v1/billing/webhooks/"
 )
 
@@ -351,6 +352,29 @@ func (s *Service) ListPayments(ctx context.Context, workspaceID uuid.UUID, curso
 		result = append(result, newPayment(row))
 	}
 	return result, next, nil
+}
+
+func (s *Service) ReapPendingPayments(ctx context.Context, olderThan time.Duration) (int, error) {
+	if olderThan <= 0 {
+		olderThan = DefaultPendingTTL
+	}
+	cutoff := s.clock().UTC().Add(-olderThan)
+
+	rows, err := s.queries.FailStalePendingPayments(ctx, sqlcgen.FailStalePendingPaymentsParams{
+		Reason:    []byte(`{"afterword_reason":"expired before the provider confirmed it"}`),
+		OlderThan: pgtype.Timestamptz{Time: cutoff, Valid: true},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("reap stale pending payments: %w", err)
+	}
+	for _, row := range rows {
+		s.logger.Warn().
+			Str("payment_id", row.ID.String()).
+			Str("provider", row.Provider).
+			Str("provider_ref", row.ProviderRef).
+			Msg("a pending payment expired without a provider webhook")
+	}
+	return len(rows), nil
 }
 
 func (s *Service) provider(name string) (string, payments.PaymentProvider, error) {

@@ -71,8 +71,12 @@ func (b *BillingServer) Routes(router chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(b.middleware.RequireWorkspace)
 			r.Get(billingBalancePath, b.handleBillingBalance)
-			r.Post(billingCheckoutPath, b.handleCheckout)
-			r.Get(billingPaymentsPath, b.handleListPayments)
+
+			r.Group(func(r chi.Router) {
+				r.Use(b.middleware.RequireRole(auth.RoleAdmin))
+				r.Post(billingCheckoutPath, b.handleCheckout)
+				r.Get(billingPaymentsPath, b.handleListPayments)
+			})
 		})
 	})
 }

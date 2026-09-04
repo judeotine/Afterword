@@ -16,6 +16,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/api"
 	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/billing"
+	"github.com/judeotine/afterword/services/api/internal/botjobs"
 	"github.com/judeotine/afterword/services/api/internal/config"
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/db"
@@ -28,8 +29,11 @@ import (
 )
 
 const (
-	shareSweepLockKey int64 = 0x6166777377656570
-	fakeCheckoutPath        = "/billing/fake"
+	taskMonthlyCreditGrant             = "monthly-credit-grant"
+	taskPendingPaymentReaper           = "pending-payment-reaper"
+	lockKeyPendingPaymentReaper  int64 = 0x616677726561706d
+	pendingPaymentReaperInterval       = time.Hour
+	fakeCheckoutPath                   = "/billing/fake"
 )
 
 func main() {
@@ -110,6 +114,11 @@ func run() error {
 		logger.Warn().Msg("credit adjustments are disabled: set ADMIN_TOKEN to enable them")
 	}
 
+	botJobServer, err := buildBotJobs(cfg, pool, components, logger)
+	if err != nil {
+		return err
+	}
+
 	if library != nil {
 		runner, runnerErr := newPurgeRunner(cfg, pool, logger)
 		if runnerErr != nil {
@@ -122,7 +131,7 @@ func run() error {
 		}()
 	}
 
-	scheduler, err := buildScheduler(billingCfg, pool, components, library, logger)
+	scheduler, err := buildScheduler(billingCfg, pool, components, library, billingService, logger)
 	if err != nil {
 		return err
 	}
@@ -144,6 +153,7 @@ func run() error {
 		Mount: func(router chi.Router) {
 			components.server.Routes(router)
 			billingServer.Routes(router)
+			botJobServer.Routes(router)
 		},
 	})
 
@@ -175,11 +185,14 @@ func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*mee
 		Storage:            client,
 		Buckets:            storageBuckets(cfg),
 		Jobs:               jobs.NewQueue(pool.Pool()),
+		Credits:            credits.NewLedger(pool.Pool()),
 		Logger:             logger,
 		UploadTTL:          cfg.S3.UploadTTL,
 		DownloadTTL:        cfg.S3.DownloadTTL,
 		MaxAudioBytes:      cfg.S3.MaxAudioBytes,
 		MaxTranscriptBytes: cfg.S3.MaxTranscriptBytes,
+		ShareRateWindow:    cfg.ShareRateWindow,
+		ShareRateLimit:     cfg.ShareRateLimit,
 	})
 }
 
@@ -343,11 +356,35 @@ func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.P
 	})
 }
 
-func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components apiComponents, library *meetings.Service, logger zerolog.Logger) (*jobs.Scheduler, error) {
+func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, logger zerolog.Logger) (*api.BotJobServer, error) {
+	service, err := botjobs.NewService(botjobs.ServiceOptions{Pool: pool.Pool()})
+	if err != nil {
+		return nil, err
+	}
+	entitlements, err := billing.NewEntitlements(credits.NewLedger(pool.Pool()), cfg.AppBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	logger.Debug().Str("top_up_url", entitlements.TopUpURL()).Msg("credit entitlements ready")
+	return api.NewBotJobServer(api.BotJobOptions{
+		BotJobs:      service,
+		Entitlements: entitlements,
+		Middleware:   components.middleware,
+	})
+}
+
+func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components apiComponents, library *meetings.Service, billingService *billing.Service, logger zerolog.Logger) (*jobs.Scheduler, error) {
 	scheduler := jobs.NewScheduler(pool.Pool(), jobs.WithSchedulerLogger(logger))
 	registered := 0
 
 	for _, task := range auth.MaintenanceTasks(components.authStore) {
+		if err := scheduler.Register(task); err != nil {
+			return nil, err
+		}
+		registered++
+	}
+
+	for _, task := range meetings.MaintenanceTasks(library) {
 		if err := scheduler.Register(task); err != nil {
 			return nil, err
 		}
@@ -364,7 +401,7 @@ func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components a
 			return nil, err
 		}
 		task := jobs.ScheduledTask{
-			Name:     "monthly-credit-grant",
+			Name:     taskMonthlyCreditGrant,
 			Interval: billingCfg.GrantInterval,
 			LockKey:  credits.LockKeyMonthlyGrant,
 			Run: func(ctx context.Context) error {
@@ -390,17 +427,19 @@ func buildScheduler(billingCfg config.BillingConfig, pool *db.Pool, components a
 		logger.Warn().Msg("monthly credit grants are disabled: FREE_GRANT_MINUTES is zero")
 	}
 
-	if library != nil {
+	if billingService != nil {
 		task := jobs.ScheduledTask{
-			Name:     "share-link-request-sweep",
-			Interval: time.Hour,
-			LockKey:  shareSweepLockKey,
+			Name:     taskPendingPaymentReaper,
+			Interval: pendingPaymentReaperInterval,
+			LockKey:  lockKeyPendingPaymentReaper,
 			Run: func(ctx context.Context) error {
-				removed, err := library.SweepShareLinkRequests(ctx)
+				reaped, err := billingService.ReapPendingPayments(ctx, billingCfg.PendingTTL)
 				if err != nil {
 					return err
 				}
-				logger.Debug().Int64("removed", removed).Msg("share link request sweep complete")
+				if reaped > 0 {
+					logger.Info().Int("payments", reaped).Msg("stale pending payments were failed")
+				}
 				return nil
 			},
 		}

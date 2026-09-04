@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/payments"
 )
@@ -429,5 +431,96 @@ func TestPaymentHistoryPagesWithACursor(t *testing.T) {
 		withBearer(session.AccessToken), withWorkspace(session.Workspace.ID))
 	if badCursor.Status != http.StatusBadRequest {
 		t.Fatalf("unusable cursor = %d, want 400", badCursor.Status)
+	}
+}
+
+func TestCheckoutAndPaymentHistoryNeedAnAdminRole(t *testing.T) {
+	h := newBillingHarness(t)
+	owner := h.signIn("billing-owner@example.com")
+	member := h.joinAs(owner, "billing-member@example.com", auth.RoleMember)
+	admin := h.joinAs(owner, "billing-admin@example.com", auth.RoleAdmin)
+	packID := h.packWithMinutes(owner.AccessToken, 100)
+
+	memberCheckout := h.do(http.MethodPost, checkoutURL, map[string]string{"pack_id": packID},
+		withBearer(member.AccessToken), withWorkspace(member.Workspace.ID))
+	if memberCheckout.Status != http.StatusForbidden {
+		t.Fatalf("member checkout = %d, want 403", memberCheckout.Status)
+	}
+
+	memberHistory := h.do(http.MethodGet, paymentsURL, nil,
+		withBearer(member.AccessToken), withWorkspace(member.Workspace.ID))
+	if memberHistory.Status != http.StatusForbidden {
+		t.Fatalf("member payment history = %d, want 403", memberHistory.Status)
+	}
+
+	memberBalance := h.do(http.MethodGet, balanceURL, nil,
+		withBearer(member.AccessToken), withWorkspace(member.Workspace.ID))
+	if memberBalance.Status != http.StatusOK {
+		t.Fatalf("member balance = %d, want 200", memberBalance.Status)
+	}
+
+	memberPacks := h.do(http.MethodGet, packsURL, nil, withBearer(member.AccessToken))
+	if memberPacks.Status != http.StatusOK {
+		t.Fatalf("member packs = %d, want 200", memberPacks.Status)
+	}
+
+	adminCheckout := h.do(http.MethodPost, checkoutURL, map[string]string{"pack_id": packID},
+		withBearer(admin.AccessToken), withWorkspace(admin.Workspace.ID))
+	if adminCheckout.Status != http.StatusCreated {
+		t.Fatalf("admin checkout: status %d, body %s", adminCheckout.Status, adminCheckout.Body)
+	}
+
+	adminHistory := h.do(http.MethodGet, paymentsURL, nil,
+		withBearer(admin.AccessToken), withWorkspace(admin.Workspace.ID))
+	if adminHistory.Status != http.StatusOK {
+		t.Fatalf("admin payment history: status %d, body %s", adminHistory.Status, adminHistory.Body)
+	}
+}
+
+func TestStalePendingPaymentsAreReaped(t *testing.T) {
+	h := newBillingHarness(t)
+	session := h.signIn("reaper@example.com")
+	packID := h.packWithMinutes(session.AccessToken, 100)
+	created := h.checkout(session, packID, "")
+
+	reaped, err := h.service.ReapPendingPayments(h.context(), 24*time.Hour)
+	if err != nil {
+		t.Fatalf("reap a fresh payment: %v", err)
+	}
+	if reaped != 0 {
+		t.Fatalf("a fresh pending payment was reaped: %d", reaped)
+	}
+
+	if _, err := h.pool.Exec(h.context(),
+		`UPDATE payments SET created_at = now() - interval '48 hours' WHERE id = $1`, created.PaymentID); err != nil {
+		t.Fatalf("age the payment: %v", err)
+	}
+
+	reaped, err = h.service.ReapPendingPayments(h.context(), 24*time.Hour)
+	if err != nil {
+		t.Fatalf("reap a stale payment: %v", err)
+	}
+	if reaped != 1 {
+		t.Fatalf("reaped %d payments, want 1", reaped)
+	}
+
+	history := h.do(http.MethodGet, paymentsURL, nil,
+		withBearer(session.AccessToken), withWorkspace(session.Workspace.ID))
+	var listed paymentsPayload
+	history.decode(t, &listed)
+	if len(listed.Payments) != 1 || listed.Payments[0].Status != string(payments.StatusFailed) {
+		t.Fatalf("payment history = %+v, want one failed row", listed.Payments)
+	}
+
+	repeat, err := h.service.ReapPendingPayments(h.context(), 24*time.Hour)
+	if err != nil {
+		t.Fatalf("second reap: %v", err)
+	}
+	if repeat != 0 {
+		t.Fatalf("a failed payment was reaped again: %d", repeat)
+	}
+
+	if h.balance(uuid.MustParse(session.Workspace.ID)) != 0 {
+		t.Fatal("reaping a payment moved the balance")
 	}
 }
