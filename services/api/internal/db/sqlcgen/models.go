@@ -91,6 +91,17 @@ type Comment struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type CreditGrant struct {
+	ID             uuid.UUID          `json:"id"`
+	WorkspaceID    uuid.UUID          `json:"workspace_id"`
+	Period         pgtype.Date        `json:"period"`
+	Minutes        int32              `json:"minutes"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	ExpiredAt      pgtype.Timestamptz `json:"expired_at"`
+	ExpiredMinutes int32              `json:"expired_minutes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type CreditLedger struct {
 	ID           uuid.UUID          `json:"id"`
 	WorkspaceID  uuid.UUID          `json:"workspace_id"`
@@ -214,6 +225,8 @@ type Payment struct {
 	Status      string             `json:"status"`
 	Raw         []byte             `json:"raw"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	PackID      *uuid.UUID         `json:"pack_id"`
+	PaidAt      pgtype.Timestamptz `json:"paid_at"`
 }
 
 type RefreshToken struct {

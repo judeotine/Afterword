@@ -28,3 +28,12 @@ RETURNING *;
 
 -- name: DeleteCreditPack :execrows
 DELETE FROM credit_packs WHERE id = sqlc.arg(id);
+
+-- name: ListActiveCreditPacks :many
+SELECT * FROM credit_packs
+WHERE active
+ORDER BY minutes, id;
+
+-- name: GetActiveCreditPack :one
+SELECT * FROM credit_packs
+WHERE id = sqlc.arg(id) AND active;

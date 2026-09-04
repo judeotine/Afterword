@@ -33,3 +33,31 @@ RETURNING *;
 -- name: DeletePayment :execrows
 DELETE FROM payments
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id);
+
+-- name: InsertPayment :one
+INSERT INTO payments (id, workspace_id, pack_id, provider, provider_ref, amount_minor, currency, minutes, status, raw)
+VALUES (sqlc.arg(id), sqlc.arg(workspace_id), sqlc.narg(pack_id), sqlc.arg(provider), sqlc.arg(provider_ref),
+        sqlc.arg(amount_minor), sqlc.arg(currency), sqlc.arg(minutes), 'pending', sqlc.arg(raw))
+RETURNING *;
+
+-- name: SetPaymentProviderRef :one
+UPDATE payments SET provider_ref = sqlc.arg(provider_ref)
+WHERE id = sqlc.arg(id) AND status = 'pending'
+RETURNING *;
+
+-- name: LockPaymentByProviderRef :one
+SELECT * FROM payments
+WHERE provider = sqlc.arg(provider) AND provider_ref = sqlc.arg(provider_ref)
+FOR UPDATE;
+
+-- name: SettlePayment :one
+UPDATE payments SET
+    status = sqlc.arg(status),
+    paid_at = sqlc.narg(paid_at),
+    raw = sqlc.arg(raw)
+WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: FailPendingPayment :execrows
+UPDATE payments SET status = 'failed', raw = sqlc.arg(raw)
+WHERE id = sqlc.arg(id) AND status = 'pending';

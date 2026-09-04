@@ -119,11 +119,14 @@ func (l *Ledger) Debit(ctx context.Context, workspaceID uuid.UUID, minutes int32
 	return l.apply(ctx, workspaceID, -minutes, reason, refID)
 }
 
-func (l *Ledger) apply(ctx context.Context, workspaceID uuid.UUID, deltaMinutes int32, reason Reason, refID string) (*Entry, error) {
-	if !reason.Valid() {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidReason, reason)
+func (l *Ledger) PurchaseTx(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, minutes int32, refID string) (*Entry, error) {
+	if minutes <= 0 {
+		return nil, ErrInvalidAmount
 	}
+	return l.applyTx(ctx, tx, workspaceID, minutes, ReasonPurchase, refID)
+}
 
+func (l *Ledger) apply(ctx context.Context, workspaceID uuid.UUID, deltaMinutes int32, reason Reason, refID string) (*Entry, error) {
 	tx, err := l.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin credit transaction: %w", err)
@@ -132,6 +135,21 @@ func (l *Ledger) apply(ctx context.Context, workspaceID uuid.UUID, deltaMinutes 
 		_ = tx.Rollback(ctx)
 	}()
 
+	entry, err := l.applyTx(ctx, tx, workspaceID, deltaMinutes, reason, refID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit credit transaction: %w", err)
+	}
+	return entry, nil
+}
+
+func (l *Ledger) applyTx(ctx context.Context, tx pgx.Tx, workspaceID uuid.UUID, deltaMinutes int32, reason Reason, refID string) (*Entry, error) {
+	if !reason.Valid() {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidReason, reason)
+	}
 	if err := lockWorkspace(ctx, tx, workspaceID); err != nil {
 		return nil, err
 	}
@@ -153,10 +171,6 @@ RETURNING id, workspace_id, delta_minutes, reason, ref_id, created_at`
 			return nil, insufficientCredits(ctx, tx, workspaceID, deltaMinutes)
 		}
 		return nil, fmt.Errorf("write credit ledger entry: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit credit transaction: %w", err)
 	}
 	return entry, nil
 }

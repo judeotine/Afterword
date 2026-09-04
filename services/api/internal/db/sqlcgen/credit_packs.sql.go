@@ -59,6 +59,26 @@ func (q *Queries) DeleteCreditPack(ctx context.Context, id uuid.UUID) (int64, er
 	return result.RowsAffected(), nil
 }
 
+const getActiveCreditPack = `-- name: GetActiveCreditPack :one
+SELECT id, name, minutes, price_minor, currency, active, created_at FROM credit_packs
+WHERE id = $1 AND active
+`
+
+func (q *Queries) GetActiveCreditPack(ctx context.Context, id uuid.UUID) (CreditPack, error) {
+	row := q.db.QueryRow(ctx, getActiveCreditPack, id)
+	var i CreditPack
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Minutes,
+		&i.PriceMinor,
+		&i.Currency,
+		&i.Active,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getCreditPack = `-- name: GetCreditPack :one
 SELECT id, name, minutes, price_minor, currency, active, created_at FROM credit_packs WHERE id = $1
 `
@@ -76,6 +96,40 @@ func (q *Queries) GetCreditPack(ctx context.Context, id uuid.UUID) (CreditPack, 
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listActiveCreditPacks = `-- name: ListActiveCreditPacks :many
+SELECT id, name, minutes, price_minor, currency, active, created_at FROM credit_packs
+WHERE active
+ORDER BY minutes, id
+`
+
+func (q *Queries) ListActiveCreditPacks(ctx context.Context) ([]CreditPack, error) {
+	rows, err := q.db.Query(ctx, listActiveCreditPacks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CreditPack{}
+	for rows.Next() {
+		var i CreditPack
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Minutes,
+			&i.PriceMinor,
+			&i.Currency,
+			&i.Active,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCreditPacks = `-- name: ListCreditPacks :many
