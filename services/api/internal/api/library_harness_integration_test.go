@@ -203,6 +203,7 @@ type uploadPayload struct {
 	TranscriptURL     string            `json:"transcript_url"`
 	ExpiresAt         time.Time         `json:"expires_at"`
 	MaxBytes          int64             `json:"max_bytes"`
+	SizeBytes         int64             `json:"size_bytes"`
 	AudioHeaders      map[string]string `json:"audio_headers"`
 	TranscriptHeaders map[string]string `json:"transcript_headers"`
 }

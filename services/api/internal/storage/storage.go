@@ -21,6 +21,7 @@ var (
 	ErrNotFound       = errors.New("storage: object not found")
 	ErrBucketRequired = errors.New("storage: a bucket is required")
 	ErrKeyRequired    = errors.New("storage: an object key is required")
+	ErrSizeMismatch   = errors.New("storage: the upload does not match the signed content length")
 )
 
 var audioExtensions = map[string]struct{}{
@@ -41,11 +42,21 @@ type PresignedRequest struct {
 	URL       string            `json:"url"`
 	Headers   map[string]string `json:"headers,omitempty"`
 	MaxBytes  int64             `json:"max_bytes,omitempty"`
+	SizeBytes int64             `json:"size_bytes,omitempty"`
 	ExpiresAt time.Time         `json:"expires_at"`
 }
 
+type UploadRequest struct {
+	Bucket      string
+	Key         string
+	ContentType string
+	MaxBytes    int64
+	SizeBytes   int64
+	TTL         time.Duration
+}
+
 type Client interface {
-	PresignUpload(ctx context.Context, bucket, key, contentType string, maxBytes int64, ttl time.Duration) (PresignedRequest, error)
+	PresignUpload(ctx context.Context, request UploadRequest) (PresignedRequest, error)
 	PresignDownload(ctx context.Context, bucket, key string, ttl time.Duration) (PresignedRequest, error)
 	Delete(ctx context.Context, bucket, key string) error
 	Head(ctx context.Context, bucket, key string) (ObjectInfo, error)

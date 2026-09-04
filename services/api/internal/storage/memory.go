@@ -38,6 +38,7 @@ type PresignRecord struct {
 	Method      string
 	ContentType string
 	MaxBytes    int64
+	SizeBytes   int64
 	TTL         time.Duration
 }
 
@@ -98,32 +99,60 @@ func (m *Memory) Deletes() []ObjectRef {
 	return append([]ObjectRef(nil), m.deletes...)
 }
 
-func (m *Memory) PresignUpload(_ context.Context, bucket, key, contentType string, maxBytes int64, ttl time.Duration) (PresignedRequest, error) {
-	if err := validate(bucket, key); err != nil {
+func (m *Memory) PresignUpload(_ context.Context, upload UploadRequest) (PresignedRequest, error) {
+	if err := validate(upload.Bucket, upload.Key); err != nil {
 		return PresignedRequest{}, err
 	}
-	window := normalizeTTL(ttl)
+	window := normalizeTTL(upload.TTL)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.presigns = append(m.presigns, PresignRecord{
-		ObjectRef:   ObjectRef{Bucket: bucket, Key: key},
+		ObjectRef:   ObjectRef{Bucket: upload.Bucket, Key: upload.Key},
 		Method:      "PUT",
-		ContentType: contentType,
-		MaxBytes:    maxBytes,
+		ContentType: upload.ContentType,
+		MaxBytes:    upload.MaxBytes,
+		SizeBytes:   upload.SizeBytes,
 		TTL:         window,
 	})
 
 	request := PresignedRequest{
 		Method:    "PUT",
-		URL:       m.signedURL(bucket, key, "PUT", window),
-		MaxBytes:  maxBytes,
+		URL:       m.signedURL(upload.Bucket, upload.Key, "PUT", window),
+		MaxBytes:  upload.MaxBytes,
+		SizeBytes: upload.SizeBytes,
 		ExpiresAt: m.clock().Add(window),
 	}
-	if trimmed := strings.TrimSpace(contentType); trimmed != "" {
+	if trimmed := strings.TrimSpace(upload.ContentType); trimmed != "" {
 		request.Headers = map[string]string{"Content-Type": trimmed}
 	}
 	return request, nil
+}
+
+func (m *Memory) PutSigned(bucket, key string, data []byte, contentType string) error {
+	if err := validate(bucket, key); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	signed := int64(0)
+	for i := len(m.presigns) - 1; i >= 0; i-- {
+		record := m.presigns[i]
+		if record.Method == "PUT" && record.Bucket == bucket && record.Key == key {
+			signed = record.SizeBytes
+			break
+		}
+	}
+	if signed > 0 && int64(len(data)) != signed {
+		return fmt.Errorf("%w: %s/%s was signed for %d bytes and the upload carried %d",
+			ErrSizeMismatch, bucket, key, signed, len(data))
+	}
+
+	stored := make([]byte, len(data))
+	copy(stored, data)
+	m.objects[reference(bucket, key)] = memoryObject{data: stored, contentType: contentType, lastModified: m.clock()}
+	return nil
 }
 
 func (m *Memory) PresignDownload(_ context.Context, bucket, key string, ttl time.Duration) (PresignedRequest, error) {
@@ -213,7 +242,7 @@ func NewFailing(err error) Client {
 	return &failingClient{Client: NewMemory(), err: err}
 }
 
-func (f *failingClient) PresignUpload(context.Context, string, string, string, int64, time.Duration) (PresignedRequest, error) {
+func (f *failingClient) PresignUpload(context.Context, UploadRequest) (PresignedRequest, error) {
 	return PresignedRequest{}, f.err
 }
 

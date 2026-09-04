@@ -59,6 +59,7 @@ type uploadView struct {
 	TranscriptURL     string            `json:"transcript_url"`
 	ExpiresAt         time.Time         `json:"expires_at"`
 	MaxBytes          int64             `json:"max_bytes,omitempty"`
+	SizeBytes         int64             `json:"size_bytes,omitempty"`
 	AudioHeaders      map[string]string `json:"audio_headers,omitempty"`
 	TranscriptHeaders map[string]string `json:"transcript_headers,omitempty"`
 }
@@ -210,6 +211,7 @@ func newUploadView(targets meetings.UploadTargets) uploadView {
 		TranscriptURL:     targets.Transcript.URL,
 		ExpiresAt:         targets.ExpiresAt,
 		MaxBytes:          targets.Audio.MaxBytes,
+		SizeBytes:         targets.Audio.SizeBytes,
 		AudioHeaders:      targets.Audio.Headers,
 		TranscriptHeaders: targets.Transcript.Headers,
 	}

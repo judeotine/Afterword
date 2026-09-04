@@ -36,6 +36,7 @@ var libraryErrors = []struct {
 	{meetings.ErrFolderHasChildren, statusError{http.StatusConflict, codeFolderNotEmpty, "Delete the folders inside this one first."}},
 	{meetings.ErrFolderCycle, statusError{http.StatusConflict, codeFolderCycle, "A folder cannot be moved inside itself."}},
 	{meetings.ErrObjectTooLarge, statusError{http.StatusRequestEntityTooLarge, codeObjectTooLarge, "The uploaded file is larger than the agreed limit."}},
+	{meetings.ErrDeclaredSize, statusError{http.StatusRequestEntityTooLarge, codeObjectTooLarge, "That upload size is larger than the agreed limit."}},
 	{meetings.ErrEmptyObject, statusError{http.StatusUnprocessableEntity, codeEmptyObject, "The uploaded audio file is empty: upload it again before finalising the meeting."}},
 	{meetings.ErrTooManySegments, statusError{http.StatusRequestEntityTooLarge, codeTooManySegments, "A transcript may hold at most 20000 segments."}},
 	{meetings.ErrDuplicateSequence, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "Transcript segment sequence numbers must be unique."}},

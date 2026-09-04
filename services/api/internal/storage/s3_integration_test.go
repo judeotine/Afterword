@@ -25,7 +25,13 @@ func TestS3ClientRoundTripsAgainstMinIO(t *testing.T) {
 	key := storage.AudioKey(workspace, meeting, "opus")
 	body := bytes.Repeat([]byte("afterword"), 512)
 
-	upload, err := client.PresignUpload(ctx, buckets.Audio, key, "audio/opus", int64(len(body)), 5*time.Minute)
+	upload, err := client.PresignUpload(ctx, storage.UploadRequest{
+		Bucket:      buckets.Audio,
+		Key:         key,
+		ContentType: "audio/opus",
+		MaxBytes:    int64(len(body)),
+		TTL:         5 * time.Minute,
+	})
 	if err != nil {
 		t.Fatalf("presign upload: %v", err)
 	}
@@ -93,10 +99,70 @@ func TestS3CopyReportsAMissingSource(t *testing.T) {
 	}
 }
 
+func TestS3SignedUploadSizeRefusesAnotherLength(t *testing.T) {
+	client, buckets := storagetest.New(t)
+	ctx := t.Context()
+
+	key := storage.AudioKey(uuid.New(), uuid.New(), "opus")
+	body := bytes.Repeat([]byte("a"), 512)
+
+	upload, err := client.PresignUpload(ctx, storage.UploadRequest{
+		Bucket:      buckets.Audio,
+		Key:         key,
+		ContentType: "audio/opus",
+		MaxBytes:    1 << 20,
+		SizeBytes:   int64(len(body)),
+		TTL:         5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("presign a sized upload: %v", err)
+	}
+	if upload.SizeBytes != int64(len(body)) {
+		t.Fatalf("SizeBytes = %d, want %d", upload.SizeBytes, len(body))
+	}
+
+	request, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, bytes.NewReader(body[:256]))
+	if err != nil {
+		t.Fatalf("build the short upload: %v", err)
+	}
+	for name, value := range upload.Headers {
+		request.Header.Set(name, value)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send the short upload: %v", err)
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	if response.StatusCode < 400 {
+		t.Fatalf("a %d byte upload was accepted against a %d byte signature with status %d",
+			256, len(body), response.StatusCode)
+	}
+	if _, err := client.Head(ctx, buckets.Audio, key); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("head after the refused upload = %v, want ErrNotFound", err)
+	}
+
+	put(t, upload, body)
+	info, err := client.Head(ctx, buckets.Audio, key)
+	if err != nil {
+		t.Fatalf("head after the exact upload: %v", err)
+	}
+	if info.Size != int64(len(body)) {
+		t.Fatalf("stored size %d, want %d", info.Size, len(body))
+	}
+}
+
 func TestS3PresignedUploadExpires(t *testing.T) {
 	client, buckets := storagetest.New(t)
 
-	upload, err := client.PresignUpload(t.Context(), buckets.Transcripts, "ws/expiry/transcript.json", "application/json", 16, time.Second)
+	upload, err := client.PresignUpload(t.Context(), storage.UploadRequest{
+		Bucket:      buckets.Transcripts,
+		Key:         "ws/expiry/transcript.json",
+		ContentType: "application/json",
+		MaxBytes:    16,
+		TTL:         time.Second,
+	})
 	if err != nil {
 		t.Fatalf("presign upload: %v", err)
 	}

@@ -3,11 +3,13 @@
 package api_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/judeotine/afterword/services/api/internal/meetings"
+	"github.com/judeotine/afterword/services/api/internal/storage"
 )
 
 func TestAbandonedPendingUploadsArePurgedAndReadyMeetingsAreNot(t *testing.T) {
@@ -92,5 +94,110 @@ func TestAbandonedUploadSweepHonoursTheConfiguredTTL(t *testing.T) {
 	}
 	if got := harness.call(http.MethodGet, "/v1/meetings/"+meeting.Meeting.ID, nil, harness.as(owner)...); got.Status != http.StatusOK {
 		t.Fatalf("a two hour old pending meeting was swept: status %d", got.Status)
+	}
+}
+
+func TestADeclaredUploadSizeIsSignedIntoThePutUrl(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+
+	created := harness.createMeeting(owner, map[string]any{
+		"title":      "Declared size",
+		"source":     "desktop",
+		"size_bytes": 2048,
+	})
+	if created.Upload.SizeBytes != 2048 {
+		t.Fatalf("size_bytes = %d, want 2048", created.Upload.SizeBytes)
+	}
+	if created.Upload.MaxBytes == 0 {
+		t.Fatal("max_bytes is no longer advertised alongside a declared size")
+	}
+
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	if err := harness.memory.PutSigned("audio", audioKey, make([]byte, 1024), "audio/opus"); !errors.Is(err, storage.ErrSizeMismatch) {
+		t.Fatalf("a short upload against a signed size = %v, want ErrSizeMismatch", err)
+	}
+	if harness.memory.Exists("audio", audioKey) {
+		t.Fatal("the refused upload was stored")
+	}
+	if err := harness.memory.PutSigned("audio", audioKey, make([]byte, 2048), "audio/opus"); err != nil {
+		t.Fatalf("the exact upload was refused: %v", err)
+	}
+
+	finalized := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/finalize", nil, harness.as(owner)...)
+	if finalized.Status != http.StatusOK {
+		t.Fatalf("finalize: status %d, body %s", finalized.Status, finalized.Body)
+	}
+}
+
+func TestAnOmittedSizeKeepsTheUnboundedUpload(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+
+	created := harness.createMeeting(owner, map[string]any{"title": "No size", "source": "desktop"})
+	if created.Upload.SizeBytes != 0 {
+		t.Fatalf("size_bytes = %d, want it absent", created.Upload.SizeBytes)
+	}
+	if created.Upload.MaxBytes == 0 {
+		t.Fatal("max_bytes was not advertised")
+	}
+
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	if err := harness.memory.PutSigned("audio", audioKey, make([]byte, 4096), "audio/opus"); err != nil {
+		t.Fatalf("an unsigned upload was refused: %v", err)
+	}
+	if !harness.memory.Exists("audio", audioKey) {
+		t.Fatal("the unsigned upload was not stored")
+	}
+}
+
+func TestADeclaredSizeAboveTheCeilingIsRefused(t *testing.T) {
+	harness := newLibraryHarnessWithLimits(t, 4096, 4096)
+	owner := harness.signIn("owner@example.com")
+
+	refused := harness.call(http.MethodPost, "/v1/meetings", map[string]any{
+		"title":      "Too big",
+		"source":     "desktop",
+		"size_bytes": 8192,
+	}, harness.as(owner)...)
+	if refused.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized declaration: status %d, body %s", refused.Status, refused.Body)
+	}
+	if code := refused.errorCode(t); code != "object_too_large" {
+		t.Fatalf("code %q, want object_too_large", code)
+	}
+
+	negative := harness.call(http.MethodPost, "/v1/meetings", map[string]any{
+		"title":      "Negative",
+		"source":     "desktop",
+		"size_bytes": -1,
+	}, harness.as(owner)...)
+	if negative.Status != http.StatusBadRequest {
+		t.Fatalf("negative declaration: status %d, body %s", negative.Status, negative.Body)
+	}
+}
+
+func TestReissuedUploadUrlsTakeANewDeclaredSize(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("owner@example.com")
+	created := harness.createMeeting(owner, map[string]any{"title": "Resized", "source": "desktop"})
+
+	again := harness.call(http.MethodPost, "/v1/meetings/"+created.Meeting.ID+"/upload-urls",
+		map[string]any{"size_bytes": 512}, harness.as(owner)...)
+	if again.Status != http.StatusOK {
+		t.Fatalf("reissue: status %d, body %s", again.Status, again.Body)
+	}
+	var reissued createMeetingPayload
+	again.decode(t, &reissued)
+	if reissued.Upload.SizeBytes != 512 {
+		t.Fatalf("reissued size_bytes = %d, want 512", reissued.Upload.SizeBytes)
+	}
+
+	audioKey := fmt.Sprintf("ws/%s/meetings/%s/audio.opus", owner.Workspace.ID, created.Meeting.ID)
+	if err := harness.memory.PutSigned("audio", audioKey, make([]byte, 256), "audio/opus"); !errors.Is(err, storage.ErrSizeMismatch) {
+		t.Fatalf("a short upload against the reissued size = %v, want ErrSizeMismatch", err)
+	}
+	if err := harness.memory.PutSigned("audio", audioKey, make([]byte, 512), "audio/opus"); err != nil {
+		t.Fatalf("the exact upload was refused: %v", err)
 	}
 }

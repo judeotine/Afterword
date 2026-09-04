@@ -58,15 +58,19 @@ func NewS3Client(opts Options) (*S3Client, error) {
 	return &S3Client{api: api, presign: s3.NewPresignClient(api)}, nil
 }
 
-func (c *S3Client) PresignUpload(ctx context.Context, bucket, key, contentType string, maxBytes int64, ttl time.Duration) (PresignedRequest, error) {
-	if err := validate(bucket, key); err != nil {
+func (c *S3Client) PresignUpload(ctx context.Context, request UploadRequest) (PresignedRequest, error) {
+	if err := validate(request.Bucket, request.Key); err != nil {
 		return PresignedRequest{}, err
 	}
-	window := normalizeTTL(ttl)
+	window := normalizeTTL(request.TTL)
 
-	input := &s3.PutObjectInput{Bucket: &bucket, Key: &key}
-	if trimmed := strings.TrimSpace(contentType); trimmed != "" {
+	input := &s3.PutObjectInput{Bucket: &request.Bucket, Key: &request.Key}
+	if trimmed := strings.TrimSpace(request.ContentType); trimmed != "" {
 		input.ContentType = &trimmed
+	}
+	if request.SizeBytes > 0 {
+		size := request.SizeBytes
+		input.ContentLength = &size
 	}
 
 	signed, err := c.presign.PresignPutObject(ctx, input, s3.WithPresignExpires(window))
@@ -77,7 +81,8 @@ func (c *S3Client) PresignUpload(ctx context.Context, bucket, key, contentType s
 		Method:    signed.Method,
 		URL:       signed.URL,
 		Headers:   signedHeaders(signed.SignedHeader),
-		MaxBytes:  maxBytes,
+		MaxBytes:  request.MaxBytes,
+		SizeBytes: request.SizeBytes,
 		ExpiresAt: time.Now().UTC().Add(window),
 	}, nil
 }

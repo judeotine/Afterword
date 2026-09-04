@@ -60,6 +60,7 @@ var (
 	ErrNotPermitted      = errors.New("meetings: your role does not allow that action")
 	ErrNoObjects         = errors.New("meetings: neither the audio nor the transcript object was uploaded")
 	ErrObjectTooLarge    = errors.New("meetings: the uploaded object is larger than the agreed limit")
+	ErrDeclaredSize      = errors.New("meetings: the declared upload size is larger than the agreed limit")
 	ErrEmptyObject       = errors.New("meetings: the uploaded audio object is empty")
 	ErrMeetingFinalized  = errors.New("meetings: the meeting has already been finalized")
 	ErrTooManySegments   = errors.New("meetings: too many transcript segments")

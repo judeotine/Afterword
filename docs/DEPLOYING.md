@@ -593,14 +593,21 @@ never applied or images are never pruned.
 
 ### Bounding what an upload URL can write
 
-A pre-signed `PUT` cannot express a size range: S3 and MinIO can pin an exact
-`Content-Length` into the signature or nothing at all, and the API does not know
-how large a recording will be when it hands out the URL. `S3_MAX_AUDIO_MB` and
-`S3_MAX_TRANSCRIPT_MB` are therefore checked at finalize, after the object has
+A pre-signed `PUT` cannot express a size *range*: S3 and MinIO can pin an exact
+`Content-Length` into the signature or nothing at all. So the size has to come
+from the client. `POST /v1/meetings` and `POST /v1/meetings/{id}/upload-urls`
+take an optional `size_bytes`; when it is present the API validates it against
+`S3_MAX_AUDIO_MB`, signs exactly that length into the audio `PUT`, and echoes it
+back as `upload.size_bytes` so the client knows the contract. An upload of any
+other length is then refused by MinIO before a byte is stored.
+
+When `size_bytes` is omitted the old behaviour stands: the URL is unbounded,
+`upload.max_bytes` advertises the ceiling as advice, and `S3_MAX_AUDIO_MB` and
+`S3_MAX_TRANSCRIPT_MB` are only checked at finalize, after the object has
 landed — an over-sized object is refused and left for the purge sweep, but it
 was already written to the disk once.
 
-Put a hard ceiling underneath that with a bucket quota, which MinIO enforces at
+For those clients, a bucket quota is the ceiling, and MinIO enforces it at
 write time:
 
 ```bash
@@ -611,7 +618,7 @@ docker compose exec minio mc quota set local/transcripts --size 2GB
 
 Size the audio quota to the disk you are willing to lose, not to one upload.
 The hourly abandoned-upload sweep (`ABANDONED_UPLOAD_TTL`) reclaims whatever a
-client wrote and never finalized.
+client wrote and never finalized, whether or not it declared a size.
 
 ---
 

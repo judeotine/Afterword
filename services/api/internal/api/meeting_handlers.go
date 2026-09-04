@@ -20,6 +20,11 @@ type createMeetingRequest struct {
 	Visibility     string `json:"visibility"`
 	FolderID       string `json:"folder_id"`
 	AudioExtension string `json:"audio_extension"`
+	SizeBytes      int64  `json:"size_bytes"`
+}
+
+type uploadTargetsRequest struct {
+	SizeBytes int64 `json:"size_bytes"`
 }
 
 func (s *Server) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +49,7 @@ func (s *Server) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	v.Min("duration_s", body.DurationS, 0)
 	v.Max("duration_s", body.DurationS, meetings.MaxDurationS)
+	v.Min("size_bytes", body.SizeBytes, 0)
 	startedAt := optionalTime(v, "started_at", body.StartedAt)
 	var folderID *uuid.UUID
 	if body.FolderID != "" {
@@ -65,6 +71,7 @@ func (s *Server) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
 		Visibility:     visibility,
 		FolderID:       folderID,
 		AudioExtension: body.AudioExtension,
+		AudioSizeBytes: body.SizeBytes,
 	})
 	if err != nil {
 		s.writeLibraryError(w, r, err)
@@ -300,7 +307,19 @@ func (s *Server) handleUploadTargets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := s.meetings.UploadTargets(r.Context(), membership, meetingID)
+	var body uploadTargetsRequest
+	if err := decodeOptionalJSON(w, r, &body); err != nil {
+		writeInvalidBody(w, r)
+		return
+	}
+
+	v := validation.New()
+	v.Min("size_bytes", body.SizeBytes, 0)
+	if v.Write(w, r) {
+		return
+	}
+
+	created, err := s.meetings.UploadTargets(r.Context(), membership, meetingID, body.SizeBytes)
 	if err != nil {
 		s.writeLibraryError(w, r, err)
 		return

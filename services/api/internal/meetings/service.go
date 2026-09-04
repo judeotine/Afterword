@@ -151,6 +151,7 @@ type CreateParams struct {
 	Visibility     string
 	FolderID       *uuid.UUID
 	AudioExtension string
+	AudioSizeBytes int64
 }
 
 func (s *Service) Create(ctx context.Context, actor auth.Membership, params CreateParams) (Created, error) {
@@ -206,7 +207,7 @@ func (s *Service) Create(ctx context.Context, actor auth.Membership, params Crea
 	}
 
 	meeting := meetingFromRow(updated)
-	upload, err := s.uploadTargets(ctx, meeting)
+	upload, err := s.uploadTargets(ctx, meeting, params.AudioSizeBytes)
 	if err != nil {
 		return Created{}, err
 	}
@@ -216,7 +217,7 @@ func (s *Service) Create(ctx context.Context, actor auth.Membership, params Crea
 	return Created{Meeting: meeting, Upload: upload}, nil
 }
 
-func (s *Service) UploadTargets(ctx context.Context, actor auth.Membership, meetingID uuid.UUID) (Created, error) {
+func (s *Service) UploadTargets(ctx context.Context, actor auth.Membership, meetingID uuid.UUID, audioSizeBytes int64) (Created, error) {
 	meeting, err := s.manageable(ctx, actor, meetingID)
 	if err != nil {
 		return Created{}, err
@@ -227,19 +228,36 @@ func (s *Service) UploadTargets(ctx context.Context, actor auth.Membership, meet
 	if meeting.AudioObject == "" || meeting.TranscriptObject == "" {
 		return Created{}, ErrNoObjects
 	}
-	upload, err := s.uploadTargets(ctx, meeting)
+	upload, err := s.uploadTargets(ctx, meeting, audioSizeBytes)
 	if err != nil {
 		return Created{}, err
 	}
 	return Created{Meeting: meeting, Upload: upload}, nil
 }
 
-func (s *Service) uploadTargets(ctx context.Context, meeting Meeting) (UploadTargets, error) {
-	audio, err := s.storage.PresignUpload(ctx, s.buckets.Audio, meeting.AudioObject, audioContentType, s.maxAudioBytes, s.uploadTTL)
+func (s *Service) uploadTargets(ctx context.Context, meeting Meeting, audioSizeBytes int64) (UploadTargets, error) {
+	if audioSizeBytes < 0 || audioSizeBytes > s.maxAudioBytes {
+		return UploadTargets{}, ErrDeclaredSize
+	}
+
+	audio, err := s.storage.PresignUpload(ctx, storage.UploadRequest{
+		Bucket:      s.buckets.Audio,
+		Key:         meeting.AudioObject,
+		ContentType: audioContentType,
+		MaxBytes:    s.maxAudioBytes,
+		SizeBytes:   audioSizeBytes,
+		TTL:         s.uploadTTL,
+	})
 	if err != nil {
 		return UploadTargets{}, fmt.Errorf("presign audio upload: %w", err)
 	}
-	transcript, err := s.storage.PresignUpload(ctx, s.buckets.Transcripts, meeting.TranscriptObject, transcriptType, s.maxTranscriptBytes, s.uploadTTL)
+	transcript, err := s.storage.PresignUpload(ctx, storage.UploadRequest{
+		Bucket:      s.buckets.Transcripts,
+		Key:         meeting.TranscriptObject,
+		ContentType: transcriptType,
+		MaxBytes:    s.maxTranscriptBytes,
+		TTL:         s.uploadTTL,
+	})
 	if err != nil {
 		return UploadTargets{}, fmt.Errorf("presign transcript upload: %w", err)
 	}
