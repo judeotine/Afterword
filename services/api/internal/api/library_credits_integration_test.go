@@ -199,3 +199,40 @@ func TestNothingIsChargedWhenTheEnqueueFails(t *testing.T) {
 		t.Fatalf("balance after the retry = %d, want 3: two minutes charged once", got)
 	}
 }
+
+func TestAnEmptyAudioObjectIsRefusedRatherThanQueuedForFree(t *testing.T) {
+	harness := newLibraryHarness(t)
+	owner := harness.signIn("empty-audio@example.com")
+
+	created := harness.createMeeting(owner, map[string]any{"title": "Nothing recorded", "source": "desktop"})
+	harness.memory.Put("audio", audioKey(owner.Workspace.ID, created.Meeting.ID), []byte{}, "audio/opus")
+
+	before := harness.balance(t, owner)
+	path := "/v1/meetings/" + created.Meeting.ID + "/finalize"
+
+	refused := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	if refused.Status != http.StatusUnprocessableEntity {
+		t.Fatalf("finalize with an empty audio object: status %d, body %s", refused.Status, refused.Body)
+	}
+	if code := refused.errorCode(t); code != "empty_object" {
+		t.Fatalf("error code = %q, want empty_object", code)
+	}
+	if harness.jobExists(t, meetings.KindTranscribe, "transcribe:meeting:"+created.Meeting.ID+":g1") {
+		t.Fatal("an empty audio object was queued for transcription")
+	}
+	if got := harness.balance(t, owner); got != before {
+		t.Fatalf("balance moved from %d to %d for an empty object", before, got)
+	}
+	if got := harness.generation(t, created.Meeting.ID); got != 0 {
+		t.Fatalf("a refused finalize moved the generation to %d", got)
+	}
+
+	harness.memory.Put("audio", audioKey(owner.Workspace.ID, created.Meeting.ID), make([]byte, 2048), "audio/opus")
+	accepted := harness.call(http.MethodPost, path, nil, harness.as(owner)...)
+	if accepted.Status != http.StatusOK {
+		t.Fatalf("finalize once the audio is real: status %d, body %s", accepted.Status, accepted.Body)
+	}
+	if got := harness.balance(t, owner); got != before-1 {
+		t.Fatalf("balance = %d, want %d: a real object costs one credit", got, before-1)
+	}
+}

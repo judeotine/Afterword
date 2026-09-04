@@ -12,14 +12,58 @@ transaction, so concurrent debits can never overdraw.
 
 ## Metering
 
-| Activity | Cost |
-|---|---|
-| Meeting-bot minute | 1 credit |
-| Cloud transcription minute of uploaded audio | 1 credit |
-| Desktop on-device transcription | 0 |
-| Hosted summary | 0.1 credit per transcript minute, rounded up per meeting |
-| Bring-your-own-key summary | 0 |
-| Ask query | 1 credit |
+The intended price list, which is what the founder signed off in section 5 of
+the implementation plan:
+
+| Activity | Intended cost | Charged today |
+|---|---|---|
+| Meeting-bot minute | 1 credit | nothing yet — Phase E bills on leave; the estimate is only checked at booking |
+| Cloud transcription minute of uploaded audio | 1 credit | **an interim size floor, not the minute count — see below** |
+| Desktop on-device transcription | 0 | 0 |
+| Hosted summary | 0.1 credit per transcript minute, rounded up per meeting | **the same floor, divided by ten, minimum 1** |
+| Bring-your-own-key summary | 0 | 0 |
+| Ask query | 1 credit | nothing yet — C4 is unbuilt |
+
+### The interim transcription charge, and what it is not
+
+The API cannot know a recording's duration at finalize. It has the object's byte
+count from a storage `HEAD` and nothing else: the client's declared `duration_s`
+is untrusted input and is never priced from (see *What finalize is allowed to
+price*). So finalize charges a floor derived from the size:
+
+```
+bytesPerMinute    = 192000 * 60 = 11,520,000     (48 kHz, 16-bit, stereo PCM)
+transcribeMinutes = max(ceil(sizeBytes / bytesPerMinute), 1)
+summaryMinutes    = max(ceil(transcribeMinutes / 10), 1)
+```
+
+Dividing by the densest audio the upload path accepts yields the shortest
+recording those bytes could be, so the charge can never exceed the true minutes.
+**It is an admission gate, not the price.** It exists so that queueing cloud work
+is never free and never unbounded.
+
+**The exposure, stated plainly so it can be decided rather than discovered.**
+Real uploads are not raw PCM. Opus at 24 kbps is roughly 1/64th the density the
+formula assumes, so an hour of typical audio is charged about 1 credit instead of
+60. A 300-credit monthly grant therefore admits on the order of 300 hours of
+cloud transcription per workspace per month rather than 5. Until the gap is
+closed, the free tier is effectively uncapped for anyone who notices, and paid
+top-ups are barely consumed by transcription.
+
+Two things close it, and both are outside this round's scope:
+
+1. **Duration probing at finalize.** Read the container header (or run
+   `ffprobe` in the API) to get real seconds, and charge from that. This makes
+   the charge correct at admission and removes the floor entirely.
+2. **Phase C reconciliation.** The transcription worker already decodes the
+   audio and knows the exact duration. It settles the difference against the
+   floor already debited — the mechanism, which C1 **must** implement, is
+   specified in *Phase C reconciliation* below.
+
+Option 2 is the plan of record because the worker has the number for free.
+Option 1 is worth doing as well if the founder wants the balance to be honest
+before the worker runs, since between finalize and the worker completing, a
+workspace's displayed balance understates what it owes.
 
 Ledger reasons: `grant`, `purchase`, `bot_usage`, `transcribe_usage`,
 `summary_usage`, `ask_usage`, `refund`, `adjust`. The four `*_usage` reasons are
@@ -145,10 +189,52 @@ minutes.
 
 This is deliberately a floor charge, not the price. It exists so that queueing
 cloud work is never free and never unbounded; the transcription worker knows the
-real duration and reconciles against the ledger in Phase C, where the entry
-written here — keyed by the job's idempotency key — is the row to adjust. Any
+real duration and settles the difference, under the rules in *Phase C
+reconciliation* below. Any
 paid transcribe costs at least one credit, and so does any hosted summary,
 including a transcript-only meeting where there is no audio to measure.
+
+An audio object that exists but is zero bytes is refused: finalize answers 422
+`empty_object`, queues nothing and charges nothing, because an empty file cannot
+be transcribed and would otherwise have slipped past the "at least one credit"
+rule with no gate at all.
+
+### Phase C reconciliation — read this before writing the transcribe worker
+
+**The charge finalize writes is a floor, not the price. A worker that debits the
+full duration on top of it double-bills every cloud transcription.**
+
+When the transcription worker finishes a job it knows the recording's real
+duration. It must settle the difference, not the total:
+
+```
+actualMinutes = ceil(realDurationSeconds / 60)
+alreadyDebited = the minutes finalize charged for this job
+owed = actualMinutes - alreadyDebited
+```
+
+- `owed > 0` — debit `owed` with reason `transcribe_usage` (or `summary_usage`
+  for the summariser) and `ref_id = <kind>:meeting:<meeting id>:g<generation>`,
+  the same `ref_id` finalize used. Reusing the key is what makes the pair
+  auditable as one charge and lets a re-run recognise its own earlier work.
+- `owed <= 0` — **do nothing.** No refund is issued when the actual duration
+  comes in under the floor. The floor is at most one credit above the true cost
+  in the only case that produces it (a file under one minute), refunding would
+  need its own idempotency story to avoid repaying a retried job, and a workspace
+  is never charged more than a credit it did not use. This is a deliberate
+  choice, not an oversight; revisit it if duration probing lands at finalize and
+  the floor grows teeth.
+
+`alreadyDebited` is recoverable from the ledger: sum `delta_minutes` for the
+workspace where `ref_id` equals the job's idempotency key. It is not stored on
+the job. Do not assume it equals one — a large upload is charged more than one
+credit at finalize.
+
+The finalize debit is written **before** the job is enqueued, so a job that
+exists has always been charged its floor. If the enqueue fails the debit is
+refunded as an `adjust` under `refund:<ref_id>`, which is why a naive
+`SUM(delta_minutes) WHERE ref_id = key` is the right way to compute
+`alreadyDebited` rather than reading the first matching row.
 
 ## Endpoints
 

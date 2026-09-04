@@ -444,6 +444,9 @@ func (s *Service) Finalize(ctx context.Context, actor auth.Membership, meetingID
 	if audio == nil && transcript == nil {
 		return Finalized{}, ErrNoObjects
 	}
+	if audio != nil && audio.Size <= 0 {
+		return Finalized{}, ErrEmptyObject
+	}
 
 	kinds := make([]string, 0, 2)
 	if audio != nil && transcript == nil {
