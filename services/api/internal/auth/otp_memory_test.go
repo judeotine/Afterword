@@ -79,6 +79,41 @@ func (s *memoryOTPStore) LatestOTP(_ context.Context, channel auth.Channel, dest
 }
 
 func (s *memoryOTPStore) ClaimOTPAttempt(_ context.Context, params auth.ClaimOTPAttemptParams) (int32, error) {
+	if err := s.recordOTPVerifyAttempt(params); err != nil {
+		return 0, err
+	}
+	return s.claimAuthOTPAttempt(params)
+}
+
+func (s *memoryOTPStore) recordOTPVerifyAttempt(params auth.ClaimOTPAttemptParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var byDestination, byIP int64
+	for _, attempt := range s.verifyAttempts {
+		if attempt.Destination == params.Destination && !attempt.CreatedAt.Before(params.DestinationSince) {
+			byDestination++
+		}
+		if params.RequestIP != "" && attempt.IP == params.RequestIP && !attempt.CreatedAt.Before(params.IPSince) {
+			byIP++
+		}
+	}
+	if byDestination >= params.DestinationLimit {
+		return auth.ErrVerifyDestinationRateLimited
+	}
+	if params.RequestIP != "" && byIP >= params.IPLimit {
+		return auth.ErrVerifyIPRateLimited
+	}
+
+	s.verifyAttempts = append(s.verifyAttempts, memoryVerifyAttempt{
+		Destination: params.Destination,
+		IP:          params.RequestIP,
+		CreatedAt:   params.Now,
+	})
+	return nil
+}
+
+func (s *memoryOTPStore) claimAuthOTPAttempt(params auth.ClaimOTPAttemptParams) (int32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -92,28 +127,6 @@ func (s *memoryOTPStore) ClaimOTPAttempt(_ context.Context, params auth.ClaimOTP
 	if index < 0 {
 		return 0, auth.ErrTooManyAttempts
 	}
-
-	var byDestination, byIP int64
-	for _, attempt := range s.verifyAttempts {
-		if attempt.Destination == params.Destination && !attempt.CreatedAt.Before(params.DestinationSince) {
-			byDestination++
-		}
-		if params.RequestIP != "" && attempt.IP == params.RequestIP && !attempt.CreatedAt.Before(params.IPSince) {
-			byIP++
-		}
-	}
-	if byDestination >= params.DestinationLimit {
-		return 0, auth.ErrVerifyDestinationRateLimited
-	}
-	if params.RequestIP != "" && byIP >= params.IPLimit {
-		return 0, auth.ErrVerifyIPRateLimited
-	}
-
-	s.verifyAttempts = append(s.verifyAttempts, memoryVerifyAttempt{
-		Destination: params.Destination,
-		IP:          params.RequestIP,
-		CreatedAt:   params.Now,
-	})
 
 	record := s.records[index]
 	if record.ConsumedAt != nil || record.Attempts >= params.MaxAttempts {

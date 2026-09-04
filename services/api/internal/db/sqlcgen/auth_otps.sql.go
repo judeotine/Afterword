@@ -179,7 +179,7 @@ func (q *Queries) GetLatestAuthOTP(ctx context.Context, arg GetLatestAuthOTPPara
 }
 
 const lockAuthOTPSendDestination = `-- name: LockAuthOTPSendDestination :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-send-destination:' || $1::text))
+SELECT pg_advisory_xact_lock(72001, hashtext($1::text))
 `
 
 func (q *Queries) LockAuthOTPSendDestination(ctx context.Context, destination string) error {
@@ -188,7 +188,7 @@ func (q *Queries) LockAuthOTPSendDestination(ctx context.Context, destination st
 }
 
 const lockAuthOTPSendIP = `-- name: LockAuthOTPSendIP :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-send-ip:' || $1::text))
+SELECT pg_advisory_xact_lock(72002, hashtext($1::text))
 `
 
 func (q *Queries) LockAuthOTPSendIP(ctx context.Context, ip string) error {
@@ -197,7 +197,7 @@ func (q *Queries) LockAuthOTPSendIP(ctx context.Context, ip string) error {
 }
 
 const lockAuthOTPVerifyDestination = `-- name: LockAuthOTPVerifyDestination :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-verify-destination:' || $1::text))
+SELECT pg_advisory_xact_lock(72003, hashtext($1::text))
 `
 
 func (q *Queries) LockAuthOTPVerifyDestination(ctx context.Context, destination string) error {
@@ -206,7 +206,7 @@ func (q *Queries) LockAuthOTPVerifyDestination(ctx context.Context, destination 
 }
 
 const lockAuthOTPVerifyIP = `-- name: LockAuthOTPVerifyIP :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-verify-ip:' || $1::text))
+SELECT pg_advisory_xact_lock(72004, hashtext($1::text))
 `
 
 func (q *Queries) LockAuthOTPVerifyIP(ctx context.Context, ip string) error {

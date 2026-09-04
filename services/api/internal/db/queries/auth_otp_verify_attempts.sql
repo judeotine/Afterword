@@ -12,3 +12,6 @@ WHERE ip = sqlc.arg(ip)
 -- name: CreateOTPVerifyAttempt :exec
 INSERT INTO auth_otp_verify_attempts (destination, ip, created_at)
 VALUES (sqlc.arg(destination), sqlc.arg(ip), sqlc.arg(created_at));
+
+-- name: DeleteExpiredOTPVerifyAttempts :execrows
+DELETE FROM auth_otp_verify_attempts WHERE created_at < sqlc.arg(before);

@@ -11,10 +11,10 @@ VALUES (
 RETURNING *;
 
 -- name: LockAuthOTPSendDestination :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-send-destination:' || sqlc.arg(destination)::text));
+SELECT pg_advisory_xact_lock(72001, hashtext(sqlc.arg(destination)::text));
 
 -- name: LockAuthOTPSendIP :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-send-ip:' || sqlc.arg(ip)::text));
+SELECT pg_advisory_xact_lock(72002, hashtext(sqlc.arg(ip)::text));
 
 -- name: GetLatestAuthOTP :one
 SELECT * FROM auth_otps
@@ -37,10 +37,10 @@ WHERE request_ip = sqlc.arg(request_ip)
   AND created_at >= sqlc.arg(since);
 
 -- name: LockAuthOTPVerifyDestination :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-verify-destination:' || sqlc.arg(destination)::text));
+SELECT pg_advisory_xact_lock(72003, hashtext(sqlc.arg(destination)::text));
 
 -- name: LockAuthOTPVerifyIP :exec
-SELECT pg_advisory_xact_lock(hashtext('otp-verify-ip:' || sqlc.arg(ip)::text));
+SELECT pg_advisory_xact_lock(72004, hashtext(sqlc.arg(ip)::text));
 
 -- name: ClaimAuthOTPAttempt :one
 UPDATE auth_otps SET attempts = attempts + 1

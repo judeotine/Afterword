@@ -57,6 +57,7 @@ type Querier interface {
 	DeleteDevice(ctx context.Context, arg DeleteDeviceParams) (int64, error)
 	DeleteExpiredAuthOTPs(ctx context.Context, before pgtype.Timestamptz) (int64, error)
 	DeleteExpiredOAuthStates(ctx context.Context, before pgtype.Timestamptz) (int64, error)
+	DeleteExpiredOTPVerifyAttempts(ctx context.Context, before pgtype.Timestamptz) (int64, error)
 	DeleteExpiredRefreshTokens(ctx context.Context, before pgtype.Timestamptz) (int64, error)
 	DeleteExpiredShareLinkRequests(ctx context.Context, before pgtype.Timestamptz) (int64, error)
 	DeleteFolder(ctx context.Context, arg DeleteFolderParams) (int64, error)

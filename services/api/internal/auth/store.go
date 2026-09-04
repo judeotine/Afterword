@@ -116,8 +116,25 @@ func (s *Store) LatestOTP(ctx context.Context, channel Channel, destination stri
 }
 
 func (s *Store) ClaimOTPAttempt(ctx context.Context, params ClaimOTPAttemptParams) (int32, error) {
-	var attempts int32
-	err := s.inTx(ctx, func(q *sqlcgen.Queries) error {
+	if err := s.recordOTPVerifyAttempt(ctx, params); err != nil {
+		return 0, err
+	}
+
+	claimed, err := s.queries.ClaimAuthOTPAttempt(ctx, sqlcgen.ClaimAuthOTPAttemptParams{
+		ID:          params.ID,
+		MaxAttempts: params.MaxAttempts,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrTooManyAttempts
+		}
+		return 0, fmt.Errorf("claim verification attempt: %w", err)
+	}
+	return claimed, nil
+}
+
+func (s *Store) recordOTPVerifyAttempt(ctx context.Context, params ClaimOTPAttemptParams) error {
+	return s.inTx(ctx, func(q *sqlcgen.Queries) error {
 		if err := q.LockAuthOTPVerifyDestination(ctx, params.Destination); err != nil {
 			return fmt.Errorf("lock destination: %w", err)
 		}
@@ -158,24 +175,8 @@ func (s *Store) ClaimOTPAttempt(ctx context.Context, params ClaimOTPAttemptParam
 		}); err != nil {
 			return fmt.Errorf("record verify attempt: %w", err)
 		}
-
-		claimed, err := q.ClaimAuthOTPAttempt(ctx, sqlcgen.ClaimAuthOTPAttemptParams{
-			ID:          params.ID,
-			MaxAttempts: params.MaxAttempts,
-		})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrTooManyAttempts
-			}
-			return fmt.Errorf("claim verification attempt: %w", err)
-		}
-		attempts = claimed
 		return nil
 	})
-	if err != nil {
-		return 0, err
-	}
-	return attempts, nil
 }
 
 func (s *Store) ConsumeOTP(ctx context.Context, id uuid.UUID, at time.Time) error {
@@ -196,6 +197,14 @@ func (s *Store) DeleteExpiredOTPs(ctx context.Context, before time.Time) (int64,
 	rows, err := s.queries.DeleteExpiredAuthOTPs(ctx, timestamp(before))
 	if err != nil {
 		return 0, fmt.Errorf("delete expired verification codes: %w", err)
+	}
+	return rows, nil
+}
+
+func (s *Store) DeleteOTPVerifyAttemptsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	rows, err := s.queries.DeleteExpiredOTPVerifyAttempts(ctx, timestamp(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("delete expired verify attempts: %w", err)
 	}
 	return rows, nil
 }

@@ -63,3 +63,15 @@ func (q *Queries) CreateOTPVerifyAttempt(ctx context.Context, arg CreateOTPVerif
 	_, err := q.db.Exec(ctx, createOTPVerifyAttempt, arg.Destination, arg.Ip, arg.CreatedAt)
 	return err
 }
+
+const deleteExpiredOTPVerifyAttempts = `-- name: DeleteExpiredOTPVerifyAttempts :execrows
+DELETE FROM auth_otp_verify_attempts WHERE created_at < $1
+`
+
+func (q *Queries) DeleteExpiredOTPVerifyAttempts(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredOTPVerifyAttempts, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
