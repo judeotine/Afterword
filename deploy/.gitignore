@@ -1,0 +1,7 @@
+.env
+.env.*
+api.env
+.last_tag
+!.env.example
+!.env.dev.example
+!api.env.example

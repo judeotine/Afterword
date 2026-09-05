@@ -190,3 +190,60 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  api:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: services/api
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: afterword
+          POSTGRES_PASSWORD: afterword
+          POSTGRES_DB: afterword_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U afterword -d afterword_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      INTEGRATION_DATABASE_URL: postgres://afterword:afterword@localhost:5432/afterword_test?sslmode=disable
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123
+      PAYMENT_PROVIDER: fake
+      ALLOW_FAKE_PAYMENTS: "true"
+      FAKE_PAYMENT_SECRET: ci-only-fake-payment-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: services/api/go.sum
+
+      - name: Check the committed sqlc output is current
+        run: make sqlc-diff
+
+      - name: Build
+        run: go build ./...
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          working-directory: services/api
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Integration test
+        run: go test -race -tags integration ./... -p 1
+
+      - name: Build image
+        working-directory: ${{ github.workspace }}
+        run: docker build -f services/api/Dockerfile services/api

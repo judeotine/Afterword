@@ -9,6 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { SUPPORT_URL } from '@/constants/links';
 
 export function SetupOverviewStep() {
   const { goNext } = useOnboarding();
@@ -98,12 +99,10 @@ export function SetupOverviewStep() {
           </Button>
           <div className="text-center">
             <a
-              href="https://github.com/judeotine/Afterword"
-              target="_blank"
-              rel="noopener noreferrer"
+              href={SUPPORT_URL}
               className="text-xs text-gray-600 hover:underline"
             >
-              Report issues on GitHub
+              Contact support
             </a>
           </div>
         </div>

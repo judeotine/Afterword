@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from "react";
-import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import Image from 'next/image';
 import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch";
 import { UpdateDialog } from "./UpdateDialog";
 import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from './ui/tooltip';
+import { useAccount } from '@/hooks/useAccount';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -15,19 +20,11 @@ export function About() {
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [isChecking, setIsChecking] = useState(false);
     const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+    const account = useAccount();
 
     useEffect(() => {
-        // Get current version on mount
         getVersion().then(setCurrentVersion).catch(console.error);
     }, []);
-
-    const handleContactClick = async () => {
-        try {
-            await invoke('open_external_url', { url: 'https://github.com/judeotine/Afterword' });
-        } catch (error) {
-            console.error('Failed to open link:', error);
-        }
-    };
 
     const handleCheckForUpdates = async () => {
         setIsChecking(true);
@@ -116,18 +113,44 @@ export function About() {
                 </div>
             </div>
 
-            {/* Open source - Compact */}
-            <div className="text-center space-y-2">
-                <h3 className="text-medium font-semibold text-gray-800">Open source</h3>
-                <p className="text-s text-gray-600">
-                    Afterword is open source under the MIT license. Report issues, request features, or contribute on GitHub.
-                </p>
-                <button
-                    onClick={handleContactClick}
-                    className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors duration-200 shadow-sm hover:shadow-md"
-                >
-                    View on GitHub
-                </button>
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 text-center space-y-3">
+                {account.mode === 'local' ? (
+                    <>
+                        <h3 className="text-medium font-semibold text-gray-800">Local mode</h3>
+                        <p className="text-s text-gray-600">
+                            Transcription and summaries run on this device for free. Sign in to sync, share with your team, and send the notetaker to meetings.
+                        </p>
+                    </>
+                ) : (
+                    <>
+                        <h3 className="text-medium font-semibold text-gray-800">{account.workspaceName}</h3>
+                        <p className="text-s text-gray-600">
+                            {account.credits ?? 0} credits remaining.
+                        </p>
+                    </>
+                )}
+                <div className="flex items-center justify-center gap-2">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span tabIndex={0}>
+                                <Button disabled className="text-xs">
+                                    Sign in
+                                </Button>
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Coming soon</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <span tabIndex={0}>
+                                <Button disabled variant="outline" className="text-xs">
+                                    Top up credits
+                                </Button>
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent>Coming soon</TooltipContent>
+                    </Tooltip>
+                </div>
             </div>
 
             {/* Footer - Compact */}

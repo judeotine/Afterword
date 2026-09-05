@@ -1,0 +1,292 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - 'cloud-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to build and deploy
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      git_ref: ${{ steps.resolve.outputs.git_ref }}
+      transcribe_worker: ${{ steps.dockerfiles.outputs.transcribe_worker }}
+      web: ${{ steps.dockerfiles.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+            GIT_REF="$COMMIT_SHA"
+          else
+            TAG="${GITHUB_REF_NAME#cloud-v}"
+            GIT_REF="$GITHUB_REF_NAME"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "could not resolve an image tag" >&2
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "git_ref=$GIT_REF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Detect optional Dockerfiles
+        id: dockerfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "transcribe_worker=${{ hashFiles('services/transcribe-worker/Dockerfile') != '' }}"
+            echo "web=${{ hashFiles('services/web/Dockerfile') != '' }}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-api:
+    needs: plan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api
+        uses: docker/build-push-action@v6
+        with:
+          context: services/api
+          file: services/api/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ needs.plan.outputs.tag }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-api:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-api:${{ github.sha }}
+
+  build-backup:
+    needs: plan
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backup
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy
+          file: deploy/backup.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-backup:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-backup:${{ github.sha }}
+
+  build-transcribe-worker:
+    needs: plan
+    if: needs.plan.outputs.transcribe_worker == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push transcribe-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/transcribe-worker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-transcribe-worker:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-transcribe-worker:${{ github.sha }}
+
+  build-web:
+    needs: plan
+    if: needs.plan.outputs.web == 'true'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/web/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/afterword-web:${{ needs.plan.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/afterword-web:${{ github.sha }}
+
+  deploy:
+    needs: [plan, build-api, build-backup, build-transcribe-worker, build-web]
+    if: >-
+      always() &&
+      needs.build-api.result == 'success' &&
+      needs.build-backup.result == 'success' &&
+      needs.build-transcribe-worker.result != 'failure' &&
+      needs.build-web.result != 'failure'
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - name: Deploy over ssh
+        uses: appleboy/ssh-action@v1
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          GIT_REF: ${{ needs.plan.outputs.git_ref }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: TAG,GIT_REF
+          command_timeout: 30m
+          script: |
+            set -eu
+
+            APP_DIR=/opt/afterword
+            cd "$APP_DIR"
+            git fetch --prune --tags origin
+            git checkout --detach "$GIT_REF"
+            cd "$APP_DIR/deploy"
+
+            if [ ! -f api.env ]; then
+              echo "deploy/api.env is missing on this box" >&2
+              echo "this release splits deploy/.env into two files and nothing has been changed yet" >&2
+              echo "on the box, in /opt/afterword/deploy, as the afterword user:" >&2
+              echo "  cp api.env.example api.env && chmod 600 api.env" >&2
+              echo "  move JWT_SECRET, DATABASE_MAX_CONNS, TRUSTED_PROXY_CIDRS, REQUEST_TIMEOUT," >&2
+              echo "  SHUTDOWN_TIMEOUT, the GOOGLE_ and SMTP_ values, SMS_SENDER and the S3_BUCKET_" >&2
+              echo "  values from .env into api.env, then delete them from .env" >&2
+              echo "  docker compose config -q" >&2
+              echo "then re-run this workflow" >&2
+              exit 1
+            fi
+
+            PREVIOUS_TAG=$(cat .last_tag 2>/dev/null || echo "")
+
+            write_tag() {
+              staged=$(mktemp .env.staged.XXXXXX) || return 1
+              grep -v '^TAG=' .env > "$staged" || true
+              printf 'TAG=%s\n' "$1" >> "$staged" || return 1
+              chmod 600 "$staged" || return 1
+              mv "$staged" .env || return 1
+            }
+
+            wait_for_health() {
+              domain=$(sed -n 's/^DOMAIN=//p' .env | tail -n1)
+              if [ -z "$domain" ]; then
+                echo "DOMAIN is not set in deploy/.env" >&2
+                return 1
+              fi
+              url="https://api.$domain/healthz"
+              attempt=0
+              while [ "$attempt" -lt 60 ]; do
+                if curl -fsS --max-time 10 "$url" > /dev/null; then
+                  echo "healthy: $url"
+                  return 0
+                fi
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+              echo "unhealthy after 5 minutes: $url" >&2
+              curl -sS --max-time 10 "$url" || true
+              docker compose logs --tail 50 api caddy || true
+              return 1
+            }
+
+            deploy_tag() {
+              echo "deploying tag $1"
+              write_tag "$1" || return 1
+              docker compose pull || return 1
+              docker compose up -d || return 1
+              docker compose run --rm api /migrate up || return 1
+              wait_for_health || return 1
+            }
+
+            schema_state() {
+              docker compose run --rm api /migrate version 2>&1 || true
+            }
+
+            if deploy_tag "$TAG"; then
+              printf '%s\n' "$TAG" > .last_tag
+              echo "deploy of $TAG succeeded"
+              exit 0
+            fi
+
+            echo "deploy of $TAG failed" >&2
+            STATE=$(schema_state)
+            echo "$STATE" >&2
+            case "$STATE" in
+              *dirty=true*)
+                echo "migrations are dirty: refusing to roll back automatically" >&2
+                echo "a migration failed part way through and the schema is in an unknown state" >&2
+                echo "on the box, in /opt/afterword/deploy:" >&2
+                echo "  docker compose run --rm api /migrate version" >&2
+                echo "  finish or undo the failed migration by hand in psql" >&2
+                echo "  docker compose run --rm api /migrate force <last-good-version>" >&2
+                echo "  docker compose run --rm api /migrate up" >&2
+                exit 1
+                ;;
+            esac
+
+            if [ -z "$PREVIOUS_TAG" ]; then
+              echo "no previous tag recorded in deploy/.last_tag, not rolling back" >&2
+              exit 1
+            fi
+
+            echo "rolling back to $PREVIOUS_TAG" >&2
+            if deploy_tag "$PREVIOUS_TAG"; then
+              echo "rolled back to $PREVIOUS_TAG" >&2
+            else
+              echo "rollback to $PREVIOUS_TAG also failed, the stack needs manual attention" >&2
+            fi
+            exit 1
