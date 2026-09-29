@@ -57,3 +57,9 @@ UPDATE bot_jobs SET
     error = COALESCE(sqlc.narg(error), error)
 WHERE id = sqlc.arg(id) AND worker_id = sqlc.arg(worker_id)
 RETURNING *;
+
+-- name: AttachBotJobMeeting :one
+UPDATE bot_jobs SET
+    meeting_id = sqlc.arg(meeting_id)
+WHERE id = sqlc.arg(id)
+RETURNING *;
