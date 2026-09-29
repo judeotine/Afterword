@@ -32,3 +32,28 @@ RETURNING *;
 -- name: DeleteBotJob :execrows
 DELETE FROM bot_jobs
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id);
+
+-- name: ClaimNextBotJob :one
+UPDATE bot_jobs SET
+    status = 'claimed',
+    worker_id = sqlc.arg(worker_id)
+WHERE id = (
+    SELECT candidate.id FROM bot_jobs candidate
+    WHERE candidate.status = 'scheduled' AND candidate.scheduled_at <= sqlc.arg(now)
+    ORDER BY candidate.scheduled_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING *;
+
+-- name: GetBotJobByID :one
+SELECT * FROM bot_jobs WHERE id = sqlc.arg(id);
+
+-- name: UpdateBotJobByWorker :one
+UPDATE bot_jobs SET
+    status = COALESCE(sqlc.narg(status), status),
+    minutes_used = COALESCE(sqlc.narg(minutes_used), minutes_used),
+    consent_announced_at = COALESCE(sqlc.narg(consent_announced_at), consent_announced_at),
+    error = COALESCE(sqlc.narg(error), error)
+WHERE id = sqlc.arg(id) AND worker_id = sqlc.arg(worker_id)
+RETURNING *;
