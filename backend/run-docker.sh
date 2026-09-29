@@ -1,17 +1,7 @@
 #!/bin/bash
 
-# Easy deployment script for Whisper Server and Meeting App Docker containers
-# Handles model downloads, GPU detection, and container management
-#
-# ⚠️  AUDIO PROCESSING WARNING:
-# Insufficient Docker resources cause audio drops! The audio processing system
-# drops chunks when queue is full (MAX_AUDIO_QUEUE_SIZE=10, lib.rs:54).
-# Symptoms: "Dropped old audio chunk" in logs (lib.rs:330-333).
-# Solution: Allocate 8GB+ RAM and adequate CPU to Docker containers.
-
 set -e
 
-# Configuration
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WHISPER_PROJECT_NAME="whisper-server"
 WHISPER_CONTAINER_NAME="whisper-server"
@@ -22,7 +12,6 @@ DEFAULT_APP_PORT=5167
 DEFAULT_MODEL="base.en"
 PREFERENCES_FILE="$SCRIPT_DIR/.docker-preferences"
 
-# Color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -41,7 +30,6 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Function to run docker compose with the correct command
 docker_compose() {
     if command -v docker-compose >/dev/null 2>&1; then
         docker-compose "$@"
@@ -53,50 +41,43 @@ docker_compose() {
     fi
 }
 
-# Ensure required directories exist
 ensure_directories() {
-    # Create data directory for database if it doesn't exist
+
     if [ ! -d "$SCRIPT_DIR/data" ]; then
         log_info "Creating data directory for database..."
         mkdir -p "$SCRIPT_DIR/data"
         chmod 755 "$SCRIPT_DIR/data"
         log_info "✓ Data directory created"
     fi
-    
-    # Create models directory if it doesn't exist
+
     if [ ! -d "$SCRIPT_DIR/models" ]; then
         log_info "Creating models directory..."
         mkdir -p "$SCRIPT_DIR/models"
         chmod 755 "$SCRIPT_DIR/models"
         log_info "✓ Models directory created"
     fi
-    
-    # Create config directory if it doesn't exist
+
     if [ ! -d "$SCRIPT_DIR/config" ]; then
         mkdir -p "$SCRIPT_DIR/config"
         chmod 755 "$SCRIPT_DIR/config"
     fi
 }
 
-# Initialize fresh database file
 init_fresh_database() {
     local db_path="$SCRIPT_DIR/data/meeting_minutes.db"
     if [ ! -f "$db_path" ]; then
         log_info "Initializing fresh database..."
-        # Create an empty database file with proper permissions
+
         touch "$db_path"
         chmod 644 "$db_path"
         log_info "✓ Fresh database initialized at: $db_path"
     fi
 }
 
-# Ensure directories exist on script start
 ensure_directories
 
-# Initialize fresh database if it doesn't exist
 init_fresh_database
 
-# Platform detection for macOS support
 DETECTED_OS=$(uname -s)
 IS_MACOS=false
 COMPOSE_PROFILE_ARGS=()
@@ -105,17 +86,15 @@ if [[ "$DETECTED_OS" == "Darwin" ]]; then
     COMPOSE_PROFILE_ARGS=("--profile" "macos")
     log_info "macOS detected - will use macOS-optimized Docker services"
 else
-    # Use default profile for Linux/Windows
+
     COMPOSE_PROFILE_ARGS=("--profile" "default")
 fi
 
-# Function to load saved preferences
 load_preferences() {
     if [ ! -f "$PREFERENCES_FILE" ]; then
         return 1
     fi
-    
-    # Source the preferences file safely
+
     if source "$PREFERENCES_FILE" 2>/dev/null; then
         return 0
     else
@@ -124,7 +103,6 @@ load_preferences() {
     fi
 }
 
-# Function to save current preferences
 save_preferences() {
     local model="$1"
     local port="$2"
@@ -134,10 +112,9 @@ save_preferences() {
     local translate="$6"
     local diarize="$7"
     local db_selection="$8"
-    
+
     cat > "$PREFERENCES_FILE" << EOF
-# Docker run preferences - automatically generated
-# Last updated: $(date)
+
 SAVED_MODEL="$model"
 SAVED_PORT="$port"
 SAVED_APP_PORT="$app_port"
@@ -147,11 +124,10 @@ SAVED_TRANSLATE="$translate"
 SAVED_DIARIZE="$diarize"
 SAVED_DB_SELECTION="$db_selection"
 EOF
-    
+
     log_info "✓ Preferences saved to $PREFERENCES_FILE"
 }
 
-# Function to show saved preferences and ask user choice
 show_previous_settings() {
     echo -e "${BLUE}=== Previous Settings Found ===${NC}" >&2
     echo -e "${GREEN}Your last configuration:${NC}" >&2
@@ -164,22 +140,21 @@ show_previous_settings() {
     echo "  Diarization: ${SAVED_DIARIZE:-false}" >&2
     echo "  Database: ${SAVED_DB_SELECTION:-fresh}" >&2
     echo >&2
-    
+
     echo "What would you like to do?" >&2
     echo "  1) Use previous settings" >&2
     echo "  2) Customize settings (interactive setup)" >&2
     echo "  3) Use defaults and skip interactive setup" >&2
     echo >&2
-    
+
     while true; do
         echo -ne "${YELLOW}Choose option [default: 1]: ${NC}" >&2
         read choice
-        
-        # Default to use previous settings if empty
+
         if [[ -z "$choice" ]]; then
             choice=1
         fi
-        
+
         case "$choice" in
             1)
                 echo "previous"
@@ -228,7 +203,7 @@ START OPTIONS:
   -c, --cpu               Force CPU mode for whisper
   --language LANG         Language code (default: auto)
   --translate             Enable translation to English
-  # --diarize               Enable speaker diarization (feature not available yet)
+
   -d, --detach            Run in background
   -i, --interactive       Interactive setup with prompts
   --env-file FILE         Load environment from file
@@ -243,49 +218,39 @@ GLOBAL OPTIONS:
   -h, --help              Show this help
 
 Examples:
-  # Interactive setup with prompts for model, language, ports, database, etc.
+
   $0 start --interactive
-  
-  # Start with default settings (may prompt for missing options)
+
   $0 start
-  
-  # Start with large model on port 8081 in background
+
   $0 start --model large-v3 --port 8081 --detach
-  
-  # Start with GPU and custom language  
+
   $0 start --gpu --language es --detach
-  
-  # Start with translation enabled
+
   $0 start --model base --translate --language auto --detach
-  
-  # Build and start interactively
+
   $0 build cpu && $0 start --interactive
-  
-  # View whisper logs
+
   $0 logs --service whisper -f
-  
-  # View meeting app logs
+
   $0 logs --service app -f
-  
-  # Check status of both services
+
   $0 status
-  
-  # Database setup (run before first start)
-  $0 setup-db                         # Interactive database setup
-  $0 setup-db --auto                  # Auto-detect existing database
-  
-  # Using docker_compose directly
-  $0 compose up -d                    # Start both services in background
-  $0 compose logs meeting-app         # View app logs
-  $0 compose down                     # Stop all services
+
+  $0 setup-db
+  $0 setup-db --auto
+
+  $0 compose up -d
+  $0 compose logs meeting-app
+  $0 compose down
 
 User Preferences:
   The script automatically saves your configuration choices and offers to reuse them
   on subsequent runs. Preferences are stored in: .docker-preferences
-  
+
   When starting interactively, you'll be offered:
   1) Use previous settings - Reuse your last configuration
-  2) Customize settings - Go through interactive setup again  
+  2) Customize settings - Go through interactive setup again
   3) Use defaults - Skip setup and use default values
 
 Environment Variables:
@@ -298,12 +263,10 @@ Environment Variables:
 EOF
 }
 
-# Function to detect system capabilities
 detect_system() {
     local gpu_available=false
     local gpu_type="none"
-    
-    # Check for NVIDIA GPU
+
     if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
         gpu_available=true
         gpu_type="nvidia"
@@ -313,42 +276,38 @@ detect_system() {
         gpu_type="nvidia"
         log_info "NVIDIA GPU drivers detected"
     fi
-    
-    # Check for AMD GPU
+
     if command -v rocm-smi >/dev/null 2>&1; then
         gpu_available=true
         gpu_type="amd"
         log_info "AMD GPU detected"
     fi
-    
-    # Check Docker
+
     if ! command -v docker >/dev/null 2>&1; then
         log_error "Docker is not installed"
         exit 1
     fi
-    
-    # Check Docker Compose
+
     local compose_available=false
     if command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1; then
         compose_available=true
     fi
-    
+
     echo "gpu_available:$gpu_available gpu_type:$gpu_type compose_available:$compose_available"
 }
 
-# Function to choose image type
 choose_image() {
     local force_mode="$1"
     local registry="${2:-}"
     local system_info
     system_info=$(detect_system)
-    
+
     local gpu_available=$(echo "$system_info" | grep -o 'gpu_available:[^[:space:]]*' | cut -d: -f2)
     local gpu_type=$(echo "$system_info" | grep -o 'gpu_type:[^[:space:]]*' | cut -d: -f2)
-    
+
     local image_tag=""
     local docker_args=()
-    
+
     case "$force_mode" in
         "gpu")
             if [ "$gpu_available" = "true" ]; then
@@ -379,67 +338,59 @@ choose_image() {
             fi
             ;;
     esac
-    
+
     local full_image=""
     if [ -n "$registry" ]; then
         full_image="${registry}/${PROJECT_NAME}:${image_tag}"
     else
         full_image="${PROJECT_NAME}:${image_tag}"
     fi
-    
+
     echo "image:$full_image docker_args:${docker_args[*]}"
 }
 
-# Function to check if image exists and find best match
 check_image() {
     local image="$1"
-    
-    # First, try exact match
+
     if docker image inspect "$image" >/dev/null 2>&1; then
         echo "$image"
         return 0
     fi
-    
-    # If exact match fails, try to find the latest timestamped version
-    local image_base="${image%:*}"  # Remove tag part
-    local tag="${image##*:}"        # Get tag part
-    
-    # Look for any images with the same base and tag pattern
+
+    local image_base="${image%:*}"
+    local tag="${image##*:}"
+
     local found_image
     found_image=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${image_base}:${tag}-" | head -1)
-    
+
     if [ -n "$found_image" ]; then
         echo "$found_image"
         return 0
     fi
-    
-    # No image found
+
     echo "$image"
     return 1
 }
 
-# Function to ensure models directory exists
 ensure_models_dir() {
     local models_dir="$SCRIPT_DIR/models"
-    
+
     if [ ! -d "$models_dir" ]; then
         log_info "Creating models directory: $models_dir"
         mkdir -p "$models_dir"
     fi
-    
+
     echo "$models_dir"
 }
 
-# Function to show options when user presses Ctrl+C during log viewing
 show_log_exit_options() {
     local port="$1"
     local app_port="$2"
-    
+
     echo
     echo
     log_info "=== Log Viewing Options ==="
-    
-    # Check if services are actually running
+
     local services_running=false
     if docker ps --format "{{.Names}}" | grep -q "whisper-server\|meetily-backend"; then
         services_running=true
@@ -447,7 +398,7 @@ show_log_exit_options() {
     else
         echo "Services appear to have stopped."
     fi
-    
+
     echo
     echo "What would you like to do?"
     if [ "$services_running" = "true" ]; then
@@ -462,9 +413,9 @@ show_log_exit_options() {
         echo "  3) Show service status"
     fi
     echo
-    
+
     while true; do
-        # Check if services are running to determine valid options
+
         local services_running=false
         if docker ps --format "{{.Names}}" | grep -q "whisper-server\|meetily-backend"; then
             services_running=true
@@ -472,14 +423,14 @@ show_log_exit_options() {
         else
             read -p "$(echo -e "${YELLOW}Choose option (1-3): ${NC}")" choice
         fi
-        
+
         if [ "$services_running" = "true" ]; then
-            # Services are running - full menu
+
             case "$choice" in
                 1)
                     log_info "Continuing log viewing... (Press Ctrl+C again for options)"
                     echo
-                    # Set trap and continue with logs
+
                     trap 'show_log_exit_options "$port" "$app_port"' INT
                     exec MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" logs -f
                     ;;
@@ -508,7 +459,7 @@ show_log_exit_options() {
                     log_info "✓ Services restarted"
                     log_info "Resuming log viewing... (Press Ctrl+C for options)"
                     echo
-                    # Set trap and continue with logs
+
                     trap 'show_log_exit_options "$port" "$app_port"' INT
                     exec MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" logs -f
                     ;;
@@ -523,7 +474,7 @@ show_log_exit_options() {
                     ;;
             esac
         else
-            # Services are stopped - limited menu
+
             case "$choice" in
                 1)
                     log_info "Restarting services..."
@@ -531,7 +482,7 @@ show_log_exit_options() {
                     log_info "✓ Services restarted"
                     log_info "Starting log viewing... (Press Ctrl+C for options)"
                     echo
-                    # Set trap and continue with logs
+
                     trap 'show_log_exit_options "$port" "$app_port"' INT
                     exec MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" logs -f
                     ;;
@@ -553,7 +504,6 @@ show_log_exit_options() {
     done
 }
 
-# Available whisper models
 AVAILABLE_MODELS=(
     "tiny" "tiny.en" "tiny-q5_1"
     "base" "base.en" "base-q5_1"
@@ -564,14 +514,13 @@ AVAILABLE_MODELS=(
     "large-v1-turbo" "large-v2-turbo" "large-v3-turbo"
 )
 
-# Function to show interactive model selection
 select_model() {
     local default_model="${1:-base.en}"
-    
+
     echo -e "${BLUE}=== Model Selection ===${NC}" >&2
     echo -e "${GREEN}Available Whisper models:${NC}" >&2
     echo >&2
-    
+
     local i=1
     for model in "${AVAILABLE_MODELS[@]}"; do
         if [[ "$model" == "$default_model" ]]; then
@@ -581,7 +530,7 @@ select_model() {
         fi
         ((i++))
     done
-    
+
     echo >&2
     echo -e "${YELLOW}Model size guide:${NC}" >&2
     echo "  tiny    (~39 MB)  - Fastest, least accurate" >&2
@@ -590,18 +539,16 @@ select_model() {
     echo "  medium  (~769 MB) - High accuracy" >&2
     echo "  large   (~1550 MB)- Best accuracy, slowest" >&2
     echo >&2
-    
+
     while true; do
         echo -ne "${YELLOW}Select model number (1-${#AVAILABLE_MODELS[@]}) or enter model name [default: $default_model]: ${NC}" >&2
         read choice
-        
-        # Default to saved preference if empty
+
         if [[ -z "$choice" ]]; then
             echo "$default_model"
             return
         fi
-        
-        # Check if it's a number
+
         if [[ "$choice" =~ ^[0-9]+$ ]]; then
             if [[ $choice -ge 1 && $choice -le ${#AVAILABLE_MODELS[@]} ]]; then
                 echo "${AVAILABLE_MODELS[$((choice-1))]}"
@@ -611,7 +558,7 @@ select_model() {
                 continue
             fi
         else
-            # Check if it's a valid model name
+
             for model in "${AVAILABLE_MODELS[@]}"; do
                 if [[ "$choice" == "$model" ]]; then
                     echo "$choice"
@@ -623,14 +570,12 @@ select_model() {
     done
 }
 
-# Function to show interactive language selection
 select_language() {
     local default_language="${1:-auto}"
-    
+
     echo -e "${BLUE}=== Language Selection ===${NC}" >&2
     echo -e "${GREEN}Common languages:${NC}" >&2
-    
-    # Helper function to show current marker
+
     show_option() {
         local num="$1"
         local code="$2"
@@ -641,7 +586,7 @@ select_language() {
             printf "%3s) %s\n" "$num" "$name" >&2
         fi
     }
-    
+
     show_option "1" "auto" "auto (automatic detection)"
     show_option "2" "en" "en (English)"
     show_option "3" "es" "es (Spanish)"
@@ -654,11 +599,11 @@ select_language() {
     show_option "10" "zh" "zh (Chinese)"
     echo " 11) Other (enter language code)" >&2
     echo >&2
-    
+
     while true; do
         echo -ne "${YELLOW}Select language [default: $default_language]: ${NC}" >&2
         read choice
-        
+
         case "$choice" in
             ""|"1") echo "auto"; return ;;
             "2") echo "en"; return ;;
@@ -686,7 +631,7 @@ select_language() {
                 return
                 ;;
             *)
-                # Check if it's a direct language code
+
                 if [[ "$choice" =~ ^[a-z]{2}$ ]]; then
                     echo "$choice"
                     return
@@ -698,37 +643,33 @@ select_language() {
     done
 }
 
-# Function to check if port is available
 check_port_available() {
     local port="$1"
     if lsof -i ":$port" | grep -q LISTEN 2>/dev/null; then
-        return 1  # Port is in use
+        return 1
     else
-        return 0  # Port is available
+        return 0
     fi
 }
 
-# Function to select whisper server port
 select_whisper_port() {
     local default_port="${1:-8178}"
-    
+
     echo -e "${BLUE}=== Whisper Server Port Selection ===${NC}" >&2
     echo -e "${GREEN}Choose Whisper server port:${NC}" >&2
     echo "  Current: $default_port" >&2
     echo "  Common alternatives: 8081, 8082, 8178, 9080" >&2
     echo >&2
-    
+
     while true; do
         echo -ne "${YELLOW}Enter Whisper server port [default: $default_port]: ${NC}" >&2
         read port_choice
-        
-        # Default to saved preference if empty
+
         if [[ -z "$port_choice" ]]; then
             echo "$default_port"
             return
         fi
-        
-        # Validate port number
+
         if [[ "$port_choice" =~ ^[0-9]+$ ]] && [[ $port_choice -ge 1024 && $port_choice -le 65535 ]]; then
             if check_port_available "$port_choice"; then
                 echo "$port_choice"
@@ -753,27 +694,24 @@ select_whisper_port() {
     done
 }
 
-# Function to select meeting app port
 select_app_port() {
     local default_port="${1:-5167}"
-    
+
     echo -e "${BLUE}=== Meeting App Port Selection ===${NC}" >&2
     echo -e "${GREEN}Choose Meeting app port:${NC}" >&2
     echo "  Current: $default_port" >&2
     echo "  Common alternatives: 5168, 5169, 3000, 8000" >&2
     echo >&2
-    
+
     while true; do
         echo -ne "${YELLOW}Enter Meeting app port [default: $default_port]: ${NC}" >&2
         read port_choice
-        
-        # Default to saved preference if empty
+
         if [[ -z "$port_choice" ]]; then
             echo "$default_port"
             return
         fi
-        
-        # Validate port number
+
         if [[ "$port_choice" =~ ^[0-9]+$ ]] && [[ $port_choice -ge 1024 && $port_choice -le 65535 ]]; then
             if check_port_available "$port_choice"; then
                 echo "$port_choice"
@@ -798,49 +736,42 @@ select_app_port() {
     done
 }
 
-# Function to check if database exists and is valid
 check_database() {
     local db_path="$1"
-    
+
     if [ ! -f "$db_path" ]; then
         return 1
     fi
-    
-    # Check if it's a valid SQLite database
+
     if ! sqlite3 "$db_path" "SELECT name FROM sqlite_master WHERE type='table' LIMIT 1;" >/dev/null 2>&1; then
         return 1
     fi
-    
+
     return 0
 }
 
-# Function to get database info
 get_database_info() {
     local db_path="$1"
-    
+
     echo "  Path: $db_path" >&2
     echo "  Size: $(du -h "$db_path" | cut -f1)" >&2
     echo "  Modified: $(stat -f "%Sm" "$db_path" 2>/dev/null || stat -c "%y" "$db_path" 2>/dev/null || echo "Unknown")" >&2
-    
-    # Try to get table counts
+
     local meetings_count=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM meetings;" 2>/dev/null || echo "0")
     local transcripts_count=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM transcripts;" 2>/dev/null || echo "0")
-    
+
     echo "  Meetings: $meetings_count" >&2
     echo "  Transcripts: $transcripts_count" >&2
 }
 
-# Function to find existing databases
 find_existing_databases() {
     local found_dbs=()
     local default_db_path="/opt/homebrew/Cellar/meetily-backend/0.0.4/backend/meeting_minutes.db"
-    
-    # Check default location
+
     if check_database "$default_db_path"; then
         found_dbs+=("$default_db_path")
     fi
-    
-    # Check other common locations
+
     local common_paths=(
         "/opt/homebrew/Cellar/meetily-backend/*/backend/meeting_minutes.db"
         "$HOME/.meetily/meeting_minutes.db"
@@ -849,7 +780,7 @@ find_existing_databases() {
         "./meeting_minutes.db"
         "$SCRIPT_DIR/data/meeting_minutes.db"
     )
-    
+
     for pattern in "${common_paths[@]}"; do
         for path in $pattern; do
             if [[ "$path" != "$default_db_path" ]] && check_database "$path"; then
@@ -857,34 +788,31 @@ find_existing_databases() {
             fi
         done
     done
-    
+
     printf '%s\n' "${found_dbs[@]}"
 }
 
-# Function to select database setup option
 select_database_setup() {
     echo -e "${BLUE}=== Database Setup Selection ===${NC}" >&2
     echo -e "${GREEN}Choose database setup option:${NC}" >&2
     echo >&2
-    
-    # Search for existing databases
+
     local found_dbs=($(find_existing_databases))
-    
+
     if [ ${#found_dbs[@]} -eq 0 ]; then
         echo "  1) Fresh installation (create new database)" >&2
         echo "  2) I have an existing database at a custom location" >&2
         echo >&2
-        
+
         while true; do
             echo -ne "${YELLOW}Select database option [default: 1]: ${NC}" >&2
             read db_choice
-            
-            # Default to fresh if empty
+
             if [[ -z "$db_choice" ]]; then
                 echo "fresh"
                 return
             fi
-            
+
             case "$db_choice" in
                 1)
                     echo "fresh"
@@ -915,7 +843,7 @@ select_database_setup() {
     else
         echo -e "${GREEN}Found ${#found_dbs[@]} existing database(s):${NC}" >&2
         echo >&2
-        
+
         local i=1
         for db in "${found_dbs[@]}"; do
             echo "  $i) $db" >&2
@@ -925,16 +853,15 @@ select_database_setup() {
         ((i++))
         echo "  $i) Fresh installation" >&2
         echo >&2
-        
+
         while true; do
             echo -ne "${YELLOW}Select database option [default: 1]: ${NC}" >&2
             read db_choice
-            
-            # Default to first found database if empty
+
             if [[ -z "$db_choice" ]]; then
                 db_choice=1
             fi
-            
+
             if [[ "$db_choice" =~ ^[0-9]+$ ]] && [[ $db_choice -ge 1 && $db_choice -le ${#found_dbs[@]} ]]; then
                 local selected_db="${found_dbs[$((db_choice-1))]}"
                 echo -e "${GREEN}Selected database:${NC}" >&2
@@ -972,21 +899,19 @@ select_database_setup() {
     fi
 }
 
-# Function to check if model exists and download if needed
 ensure_model_available() {
     local model="$1"
     local models_dir=$(ensure_models_dir)
     local model_file="$models_dir/ggml-${model}.bin"
-    
+
     if [[ -f "$model_file" ]]; then
         local file_size=$(du -h "$model_file" | cut -f1)
         log_info "✅ Model already available: $model ($file_size)"
         return 0
     fi
-    
+
     log_warn "⚠️  Model not found locally: $model"
-    
-    # Show estimated download size
+
     case "$model" in
         tiny*) log_info "📦 Estimated download size: ~39 MB (fastest, least accurate)" ;;
         base*) log_info "📦 Estimated download size: ~142 MB (good balance)" ;;
@@ -994,17 +919,16 @@ ensure_model_available() {
         medium*) log_info "📦 Estimated download size: ~769 MB (high accuracy)" ;;
         large*) log_info "📦 Estimated download size: ~1550 MB (best accuracy)" ;;
     esac
-    
+
     echo
     log_info "💡 Model download options:"
     log_info "   1. Download now (recommended for faster startup)"
     log_info "   2. Auto-download in container (slower startup, but automated)"
     echo
-    
-    # Ask user preference if running interactively
+
     if [[ -t 0 && -t 1 ]]; then
         read -p "$(echo -e "${YELLOW}Download model now? (Y/n): ${NC}")" download_choice
-        
+
         if [[ ! "$download_choice" =~ ^[Nn] ]]; then
             log_info "🔄 Downloading model now..."
             if manage_models download "$model"; then
@@ -1019,11 +943,10 @@ ensure_model_available() {
     else
         log_info "📌 Model will be downloaded automatically in the container"
     fi
-    
+
     return 0
 }
 
-# Function to start both services using docker_compose
 start_server() {
     local model="$DEFAULT_MODEL"
     local port="$DEFAULT_PORT"
@@ -1035,10 +958,9 @@ start_server() {
     local compose_env=()
     local language=""
     local translate="false"
-    # local diarize="false"  # Feature not available yet
+
     local interactive=false
-    
-    # Parse options
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -m|--model)
@@ -1069,10 +991,7 @@ start_server() {
                 translate="true"
                 shift
                 ;;
-            # --diarize)  # Feature not available yet
-            #     diarize="true"
-            #     shift
-            #     ;;
+
             -d|--detach)
                 detach=true
                 shift
@@ -1091,17 +1010,15 @@ start_server() {
                 ;;
         esac
     done
-    
-    # Check if we should run interactive mode and handle preferences
+
     local run_interactive=false
     local setup_mode="interactive"
     local has_saved_preferences=false
-    
-    # Try to load saved preferences
+
     if load_preferences; then
         has_saved_preferences=true
     fi
-    
+
     if [[ "$interactive" == "true" ]]; then
         run_interactive=true
         if [[ "$has_saved_preferences" == "true" ]]; then
@@ -1110,7 +1027,7 @@ start_server() {
             setup_mode="customize"
         fi
     elif [[ "$model" == "$DEFAULT_MODEL" && -z "$language" && -t 0 && -t 1 ]]; then
-        # Only auto-prompt if running interactively (not in scripts/pipes)
+
         run_interactive=true
         if [[ "$has_saved_preferences" == "true" ]]; then
             setup_mode=$(show_previous_settings)
@@ -1118,15 +1035,14 @@ start_server() {
             setup_mode="customize"
         fi
     fi
-    
-    # Interactive mode - prompt for settings
+
     if [[ "$run_interactive" == "true" ]]; then
         local db_selection="fresh"
         local db_setup_needed=""
-        
+
         case "$setup_mode" in
             "previous")
-                # Use saved preferences
+
                 echo -e "${GREEN}=== Using Previous Settings ===${NC}"
                 model="${SAVED_MODEL:-$model}"
                 port="${SAVED_PORT:-$port}"
@@ -1134,60 +1050,56 @@ start_server() {
                 force_mode="${SAVED_FORCE_MODE:-$force_mode}"
                 language="${SAVED_LANGUAGE:-$language}"
                 translate="${SAVED_TRANSLATE:-$translate}"
-                # diarize="${SAVED_DIARIZE:-$diarize}"  # Feature not available yet
+
                 db_selection="${SAVED_DB_SELECTION:-fresh}"
-                
+
                 log_info "✓ Loaded previous configuration"
                 echo
                 ;;
             "defaults")
-                # Use defaults, skip interactive setup
+
                 echo -e "${GREEN}=== Using Default Settings ===${NC}"
                 log_info "✓ Using default configuration"
                 echo
                 ;;
             "customize")
-                # Full interactive setup with saved preferences as defaults
+
                 echo -e "${GREEN}=== Interactive Setup ===${NC}"
                 echo
-                
-                # Model selection - always show, using saved preference as default
+
                 echo -e "${BLUE}🎯 Model Selection${NC}"
                 local current_model="${SAVED_MODEL:-$model}"
                 model=$(select_model "$current_model")
                 echo -e "${GREEN}Selected model: $model${NC}"
                 echo
-                
-                # Language selection - always show, using saved preference as default
+
                 echo -e "${BLUE}🌐 Language Selection${NC}"
                 local current_language="${SAVED_LANGUAGE:-$language}"
                 language=$(select_language "$current_language")
                 echo -e "${GREEN}Selected language: $language${NC}"
                 echo
-                
-                # Port selection - always show, using saved preference as default
+
                 echo -e "${BLUE}🔌 Whisper Server Port Selection${NC}"
                 local current_port="${SAVED_PORT:-$port}"
                 port=$(select_whisper_port "$current_port")
                 echo -e "${GREEN}Selected Whisper port: $port${NC}"
                 echo
-                
+
                 echo -e "${BLUE}🔌 Meeting App Port Selection${NC}"
                 local current_app_port="${SAVED_APP_PORT:-$app_port}"
                 app_port=$(select_app_port "$current_app_port")
                 echo -e "${GREEN}Selected Meeting app port: $app_port${NC}"
                 echo
-                
-                # Database setup selection
+
                 echo -e "${BLUE}🗄️ Database Setup Selection${NC}"
-                # Check if sqlite3 is available for database operations
+
                 if command -v sqlite3 >/dev/null 2>&1; then
                     db_selection=$(select_database_setup)
                     if [[ "$db_selection" == "fresh" ]]; then
                         echo -e "${GREEN}Selected: Fresh database installation${NC}"
                     else
                         echo -e "${GREEN}Selected database: $db_selection${NC}"
-                        # Set up database copy for the selected database
+
                         db_setup_needed="$db_selection"
                     fi
                 else
@@ -1195,13 +1107,12 @@ start_server() {
                     db_selection="fresh"
                 fi
                 echo
-                
-                # GPU mode selection
+
                 if [[ "$force_mode" == "auto" ]]; then
                     local system_info
                     system_info=$(detect_system)
                     local gpu_available=$(echo "$system_info" | grep -o 'gpu_available:[^[:space:]]*' | cut -d: -f2)
-                    
+
                     if [[ "$gpu_available" == "true" ]]; then
                         echo
                         local saved_gpu_mode="${SAVED_FORCE_MODE:-auto}"
@@ -1221,8 +1132,7 @@ start_server() {
                         force_mode="cpu"
                     fi
                 fi
-                
-                # Advanced options
+
                 echo
                 local saved_translate="${SAVED_TRANSLATE:-false}"
                 local translate_default="N"
@@ -1234,59 +1144,39 @@ start_server() {
                 if [[ "$translate_choice" =~ ^[Yy] ]]; then
                     translate="true"
                 fi
-                
-                # local saved_diarize="${SAVED_DIARIZE:-false}"
-                # local diarize_default="N"
-                # if [[ "$saved_diarize" == "true" ]]; then
-                #     diarize_default="y"
-                # fi
-                # read -p "$(echo -e "${YELLOW}Enable speaker diarization? (y/N) [current: $saved_diarize]: ${NC}")" diarize_choice
-                # diarize_choice="${diarize_choice:-$diarize_default}"
-                # if [[ "$diarize_choice" =~ ^[Yy] ]]; then
-                #     diarize="true"
-                # fi
-                
-                # Save the new preferences
-                # save_preferences "$model" "$port" "$app_port" "$force_mode" "$language" "$translate" "$diarize" "$db_selection"
+
                 save_preferences "$model" "$port" "$app_port" "$force_mode" "$language" "$translate" "false" "$db_selection"
                 echo
                 ;;
         esac
-        
-        # Handle database setup for all modes
+
         if [[ "$db_selection" != "fresh" && -n "$db_selection" ]]; then
             db_setup_needed="$db_selection"
         fi
-        
-        # If sqlite3 is not available and we're not in customize mode, ensure db_selection is set to fresh
-        # and update preferences if we loaded previous settings
+
         if ! command -v sqlite3 >/dev/null 2>&1 && [[ "$setup_mode" != "customize" ]]; then
             if [[ "$db_selection" != "fresh" ]]; then
                 log_warn "sqlite3 not found, switching to fresh database installation"
                 db_selection="fresh"
-                # Update preferences with fresh db_selection
+
                 if [[ "$setup_mode" == "previous" ]]; then
                     save_preferences "$model" "$port" "$app_port" "$force_mode" "$language" "$translate" "$diarize" "$db_selection"
                 fi
             fi
         fi
     fi
-    
-    # Use environment variables if set
+
     model="${WHISPER_MODEL:-$model}"
     port="${WHISPER_PORT:-$port}"
     app_port="${APP_PORT:-$app_port}"
-    
-    # Handle database setup if needed
+
     if [[ -n "${db_setup_needed:-}" ]]; then
         log_info "Setting up database from selected source..."
         local docker_db_dir="$SCRIPT_DIR/data"
         local docker_db_path="$docker_db_dir/meeting_minutes.db"
-        
-        # Create data directory
+
         mkdir -p "$docker_db_dir"
-        
-        # Copy the selected database
+
         if cp "$db_setup_needed" "$docker_db_path"; then
             chmod 644 "$docker_db_path"
             log_info "✓ Database setup complete: $docker_db_path"
@@ -1299,23 +1189,19 @@ start_server() {
         init_fresh_database
         local docker_db_dir="$SCRIPT_DIR/data"
         local docker_db_path="$docker_db_dir/meeting_minutes.db"
-        
-        # Create data directory
+
         mkdir -p "$docker_db_dir"
-        
-        # Ensure database file exists
+
         if [ ! -f "$docker_db_path" ]; then
             touch "$docker_db_path"
             chmod 644 "$docker_db_path"
         fi
-        
+
         log_info "✓ Fresh database setup complete at: $docker_db_path"
     fi
-    
-    # Check model availability and show download info
+
     ensure_model_available "$model"
-    
-    # Determine dockerfile based on force_mode
+
     local dockerfile=""
     case "$force_mode" in
         "gpu")
@@ -1327,11 +1213,11 @@ start_server() {
             log_info "Using CPU mode"
             ;;
         "auto"|"")
-            # Auto-detect GPU
+
             local system_info
             system_info=$(detect_system)
             local gpu_available=$(echo "$system_info" | grep -o 'gpu_available:[^[:space:]]*' | cut -d: -f2)
-            
+
             if [ "$gpu_available" = "true" ]; then
                 dockerfile="Dockerfile.server-gpu"
                 log_info "GPU detected, using GPU mode"
@@ -1341,110 +1227,92 @@ start_server() {
             fi
             ;;
     esac
-    
-    # Convert model name to proper path format for whisper.cpp
+
     local whisper_model_path=""
     if [[ "$model" =~ ^models/ ]]; then
-        # Already in path format
+
         whisper_model_path="$model"
     else
-        # Convert model name to path format
+
         whisper_model_path="models/ggml-${model}.bin"
     fi
-    
-    # Build environment variables for docker_compose
+
     compose_env+=("DOCKERFILE=$dockerfile")
     compose_env+=("WHISPER_MODEL=$whisper_model_path")
     compose_env+=("WHISPER_PORT=$port")
     compose_env+=("APP_PORT=$app_port")
-    compose_env+=("MODEL_NAME=$model")  # For model-downloader compatibility
-    
+    compose_env+=("MODEL_NAME=$model")
+
     if [ -n "$language" ]; then
         compose_env+=("WHISPER_LANGUAGE=$language")
     fi
     if [ "$translate" = "true" ]; then
         compose_env+=("WHISPER_TRANSLATE=true")
     fi
-    # if [ "$diarize" = "true" ]; then  # Feature not available yet
-    #     compose_env+=("WHISPER_DIARIZE=true")
-    # fi
-    
-    # Check if images exist, build if needed
+
     local build_type=""
     if [[ "$dockerfile" == *"gpu"* ]]; then
         build_type="gpu"
     else
         build_type="cpu"
     fi
-    
-    # Check if both images exist
+
     local whisper_image_exists=false
     local app_image_exists=false
-    
+
     if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "whisper-server:$build_type"; then
         whisper_image_exists=true
     fi
-    
+
     if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "meetily-backend:"; then
         app_image_exists=true
     fi
-    
-    # Build images if they don't exist
+
     if [ "$whisper_image_exists" = "false" ] || [ "$app_image_exists" = "false" ]; then
         log_info "Some images missing, building..."
         if [ "$DRY_RUN" != "true" ]; then
             "$SCRIPT_DIR/build-docker.sh" "$build_type"
         fi
     fi
-    
-    # Prepare docker_compose command
+
     local compose_cmd=()
-    
-    # Add environment variables
+
     for env_var in "${compose_env[@]}"; do
         compose_cmd+=("$env_var")
     done
-    
-    # Docker compose will be called with env command
-    
-    # Add env-file if specified
+
     if [ -n "$env_file" ]; then
         compose_cmd+=("--env-file" "$env_file")
     fi
-    
+
     compose_cmd+=("up")
-    
-    # Add detach flag
+
     if [ "$detach" = "true" ]; then
         compose_cmd+=("-d")
     fi
-    
+
     log_info "Starting Whisper Server + Meeting App..."
     log_info "Whisper Model: $whisper_model_path"
     log_info "Whisper Port: $port"
     log_info "Meeting App Port: $app_port"
     log_info "Docker mode: $dockerfile"
-    
+
     if [ -n "$language" ]; then
         log_info "Language: $language"
     fi
     if [ "$translate" = "true" ]; then
         log_info "Translation: enabled"
     fi
-    # if [ "$diarize" = "true" ]; then  # Feature not available yet
-    #     log_info "Diarization: enabled"
-    # fi
-    
+
     if [ "$DRY_RUN" = "true" ]; then
         log_info "DRY RUN - Command would be:"
         echo "${compose_cmd[@]}"
         return 0
     fi
-    
-    # Execute docker_compose
+
     if [ "$detach" = "true" ]; then
         log_info "Starting services in background..."
-        # Export environment variables and run docker_compose
+
         (
             export "${compose_env[@]}"
             docker_compose "${COMPOSE_PROFILE_ARGS[@]}" up -d ${env_file:+--env-file "$env_file"}
@@ -1461,82 +1329,74 @@ start_server() {
             log_info "  Check status:  $0 status"
             log_info "  Stop services: $0 stop"
             echo
-            
-            # Check for model availability and wait for services to initialize
+
             log_info "🔍 Checking model availability and service initialization..."
-            
-            # Function to check if model is available in container
+
             check_model_available() {
                 local model_name="$1"
-                # Check if model file exists and is not empty in the whisper container
+
                 if docker exec whisper-server test -s "/app/models/ggml-${model_name}.bin" 2>/dev/null; then
                     return 0
                 else
                     return 1
                 fi
             }
-            
-            # Wait for model to be available
-            local max_wait=300  # 5 minutes max wait for model download
+
+            local max_wait=300
             local wait_count=0
             local model_ready=false
-            local model_name="${model##*/}"  # Extract filename from path
-            model_name="${model_name#ggml-}"  # Remove ggml- prefix
-            model_name="${model_name%.bin}"   # Remove .bin suffix
-            
+            local model_name="${model##*/}"
+            model_name="${model_name#ggml-}"
+            model_name="${model_name%.bin}"
+
             log_info "⏳ Waiting for model '$model_name' to be ready..."
-            
+
             while [ $wait_count -lt $max_wait ]; do
                 if check_model_available "$model_name"; then
                     log_info "✅ Model is ready: $model_name"
                     model_ready=true
                     break
                 fi
-                
-                # Show progress every 30 seconds
+
                 if [ $((wait_count % 30)) -eq 0 ] && [ $wait_count -gt 0 ]; then
                     log_info "⏳ Still downloading model '$model_name'... (${wait_count}s elapsed)"
                 fi
-                
+
                 sleep 5
                 ((wait_count += 5))
             done
-            
+
             if ! $model_ready; then
                 log_warn "⚠️  Model download taking longer than expected. Check logs: $0 logs --service whisper -f"
             fi
-            
-            # Now wait for services to respond
+
             log_info "⏳ Waiting for services to respond..."
-            local service_wait=60  # 1 minute for services to respond after model is ready
+            local service_wait=60
             local service_count=0
             local whisper_ready=false
             local app_ready=false
-            
+
             while [ $service_count -lt $service_wait ]; do
-                # Check if whisper server is responding
+
                 if ! $whisper_ready && curl -s --connect-timeout 3 "http://localhost:$port/" >/dev/null 2>&1; then
                     log_info "✅ Whisper Server is responding"
                     whisper_ready=true
                 fi
-                
-                # Check if meeting app is responding  
+
                 if ! $app_ready && curl -s --connect-timeout 3 "http://localhost:$app_port/get-meetings" >/dev/null 2>&1; then
-                    log_info "✅ Meeting App is responding" 
+                    log_info "✅ Meeting App is responding"
                     app_ready=true
                 fi
-                
-                # Both services ready
+
                 if $whisper_ready && $app_ready; then
                     log_info "🎉 All services are ready!"
                     break
                 fi
-                
+
                 sleep 3
                 ((service_count += 3))
             done
-            
-            # Final status check
+
             if ! $whisper_ready && ! $app_ready; then
                 log_warn "⚠️  Services may still be starting up. Check logs: $0 logs -f"
             elif ! $whisper_ready; then
@@ -1552,27 +1412,21 @@ start_server() {
         log_info "Starting services with live logs..."
         log_info "Press Ctrl+C to view options for stopping/continuing"
         echo
-        
-        # Start services in detached mode first
-        # Export environment variables and run docker_compose
+
         (
             export "${compose_env[@]}"
             docker_compose "${COMPOSE_PROFILE_ARGS[@]}" up -d ${env_file:+--env-file "$env_file"}
         )
         if [ $? -eq 0 ]; then
             log_info "✓ Services started in background"
-            
-            # Now follow logs with trap handling
-            # Set up trap for Ctrl+C to show options
+
             trap 'show_log_exit_options "$port" "$app_port"' INT
-            
-            # Follow logs - this way docker_compose doesn't handle the interrupt
+
             MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" logs -f
             local exit_code=$?
-            
-            # Reset trap to default
+
             trap - INT
-            
+
             if [ $exit_code -eq 0 ]; then
                 log_info "✓ Log viewing stopped normally"
             else
@@ -1585,14 +1439,13 @@ start_server() {
     fi
 }
 
-# Function to stop services
 stop_server() {
     log_info "Stopping services..."
     if [ "$DRY_RUN" = "true" ]; then
         log_info "DRY RUN - Would run: docker_compose down"
         return 0
     fi
-    
+
     if MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" down; then
         log_info "✓ Services stopped"
     else
@@ -1601,12 +1454,11 @@ stop_server() {
     fi
 }
 
-# Function to show logs
 show_logs() {
     local follow=false
     local lines=100
     local service=""
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -f|--follow)
@@ -1630,14 +1482,13 @@ show_logs() {
                 ;;
         esac
     done
-    
+
     local log_cmd=("docker_compose" "${COMPOSE_PROFILE_ARGS[@]}" "logs" "--tail=$lines")
-    
+
     if [ "$follow" = "true" ]; then
         log_cmd+=("-f")
     fi
-    
-    # Add service if specified
+
     case "$service" in
         "whisper")
             log_cmd+=("whisper-server")
@@ -1646,44 +1497,40 @@ show_logs() {
             log_cmd+=("meetily-backend")
             ;;
         "")
-            # Show logs from both services
+
             ;;
         *)
             log_cmd+=("$service")
             ;;
     esac
-    
+
     if [ "$DRY_RUN" = "true" ]; then
         log_info "DRY RUN - Would run: ${log_cmd[*]}"
         return 0
     fi
-    
-    # Set MODEL_NAME to suppress warnings
+
     MODEL_NAME="$DEFAULT_MODEL" "${log_cmd[@]}"
 }
 
-# Function to show status
 show_status() {
     log_info "=== Services Status ==="
-    
+
     if [ "$DRY_RUN" = "true" ]; then
         log_info "DRY RUN - Would run: docker_compose ps"
         return 0
     fi
-    
-    # Show docker_compose status
+
     MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" ps
-    
-    # Check individual service health
+
     local whisper_running=false
     local app_running=false
-    
+
     if docker ps --format "{{.Names}}" | grep -q "whisper-server"; then
         whisper_running=true
         local whisper_port=$(docker port whisper-server 8178/tcp 2>/dev/null | cut -d: -f2)
         if [ -n "$whisper_port" ]; then
             log_info "Whisper Server: http://localhost:$whisper_port"
-            # Test connectivity
+
             if curl -s --connect-timeout 2 "http://localhost:$whisper_port/" >/dev/null 2>&1; then
                 log_info "✓ Whisper Server is responding"
             else
@@ -1691,13 +1538,13 @@ show_status() {
             fi
         fi
     fi
-    
+
     if docker ps --format "{{.Names}}" | grep -q "meetily-backend"; then
         app_running=true
         local app_port=$(docker port meetily-backend 5167/tcp 2>/dev/null | cut -d: -f2)
         if [ -n "$app_port" ]; then
             log_info "Meeting App: http://localhost:$app_port"
-            # Test connectivity
+
             if curl -s --connect-timeout 2 "http://localhost:$app_port/get-meetings" >/dev/null 2>&1; then
                 log_info "✓ Meeting App is responding"
             else
@@ -1705,17 +1552,15 @@ show_status() {
             fi
         fi
     fi
-    
+
     if [ "$whisper_running" = "false" ] && [ "$app_running" = "false" ]; then
         log_warn "✗ No services are running"
     fi
 }
 
-# Function to open shell
 open_shell() {
     local service="whisper"
-    
-    # Parse service option
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             --service)
@@ -1731,7 +1576,7 @@ open_shell() {
                 ;;
         esac
     done
-    
+
     local container_name=""
     case "$service" in
         "whisper")
@@ -1744,7 +1589,7 @@ open_shell() {
             container_name="$service"
             ;;
     esac
-    
+
     if docker ps -q -f name="$container_name" | grep -q .; then
         log_info "Opening shell in $container_name..."
         docker exec -it "$container_name" bash
@@ -1754,10 +1599,9 @@ open_shell() {
     fi
 }
 
-# Function to clean up
 clean_up() {
     local remove_images=false
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             --images)
@@ -1769,9 +1613,9 @@ clean_up() {
                 ;;
         esac
     done
-    
+
     log_info "Cleaning up services..."
-    
+
     if [ "$DRY_RUN" = "true" ]; then
         log_info "DRY RUN - Would run:"
         log_info "  docker_compose down"
@@ -1780,27 +1624,25 @@ clean_up() {
         fi
         return 0
     fi
-    
-    # Stop and remove containers
+
     log_info "Stopping and removing containers..."
     if [ "$remove_images" = "true" ]; then
         MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" down --rmi all --volumes --remove-orphans
     else
         MODEL_NAME="$DEFAULT_MODEL" docker_compose "${COMPOSE_PROFILE_ARGS[@]}" down --volumes --remove-orphans
     fi
-    
+
     log_info "✓ Cleanup complete"
 }
 
-# Function to manage models
 manage_models() {
     local action="${1:-list}"
-    
+
     case "$action" in
         "list")
             log_info "=== Available Models ==="
             local models_dir=$(ensure_models_dir)
-            
+
             if [ -d "$models_dir" ] && [ "$(ls -A "$models_dir")" ]; then
                 find "$models_dir" -name "*.bin" -type f | sort | while read -r model; do
                     local size=$(du -h "$model" | cut -f1)
@@ -1816,14 +1658,13 @@ manage_models() {
             local model_name="${2:-base.en}"
             local models_dir=$(ensure_models_dir)
             local model_file="$models_dir/ggml-${model_name}.bin"
-            
+
             if [ -f "$model_file" ]; then
                 local file_size=$(du -h "$model_file" | cut -f1)
                 log_info "Model already exists: $model_file ($file_size)"
                 return 0
             fi
-            
-            # Validate model name against available models
+
             local valid_model=false
             for available_model in "${AVAILABLE_MODELS[@]}"; do
                 if [[ "$model_name" == "$available_model" ]]; then
@@ -1831,15 +1672,14 @@ manage_models() {
                     break
                 fi
             done
-            
+
             if [[ "$valid_model" == "false" ]]; then
                 log_error "Invalid model name: $model_name"
                 log_info "Available models:"
                 printf '  %s\n' "${AVAILABLE_MODELS[@]}"
                 return 1
             fi
-            
-            # Show download information
+
             log_info "Downloading model: $model_name"
             case "$model_name" in
                 tiny*) log_info "📦 Size: ~39 MB (fastest, least accurate)" ;;
@@ -1848,14 +1688,12 @@ manage_models() {
                 medium*) log_info "📦 Size: ~769 MB (high accuracy)" ;;
                 large*) log_info "📦 Size: ~1550 MB (best accuracy)" ;;
             esac
-            
+
             local download_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model_name}.bin"
             log_info "🌐 URL: $download_url"
-            
-            # Create a temporary file for download
+
             local temp_file="${model_file}.tmp"
-            
-            # Download with progress and error handling
+
             log_info "🔄 Starting download..."
             if curl -L -f \
                 --progress-bar \
@@ -1866,8 +1704,7 @@ manage_models() {
                 --retry-connrefused \
                 -o "$temp_file" \
                 "$download_url"; then
-                
-                # Verify download completed successfully
+
                 if [ -s "$temp_file" ]; then
                     mv "$temp_file" "$model_file"
                     local file_size=$(du -h "$model_file" | cut -f1)
@@ -1895,31 +1732,29 @@ manage_models() {
     esac
 }
 
-# Function to test GPU
 test_gpu() {
     log_info "=== GPU Test ==="
-    
+
     local system_info
     system_info=$(detect_system)
-    
+
     local gpu_available=$(echo "$system_info" | grep -o 'gpu_available:[^[:space:]]*' | cut -d: -f2)
     local gpu_type=$(echo "$system_info" | grep -o 'gpu_type:[^[:space:]]*' | cut -d: -f2)
-    
+
     log_info "GPU Available: $gpu_available"
     log_info "GPU Type: $gpu_type"
-    
+
     if [ "$gpu_available" = "true" ]; then
         if [ "$gpu_type" = "nvidia" ]; then
             log_info "NVIDIA GPU Details:"
             nvidia-smi 2>/dev/null || log_warn "nvidia-smi not available"
         fi
-        
-        # Test with container
+
         log_info "Testing GPU in container..."
         local image_info
         image_info=$(choose_image "gpu" "")
         local image=$(echo "$image_info" | grep -o 'image:[^[:space:]]*' | cut -d: -f2-)
-        
+
         if check_image "$image"; then
             docker run --rm --gpus all "$image" gpu-test
         else
@@ -1930,11 +1765,10 @@ test_gpu() {
     fi
 }
 
-# Main function
 main() {
     local command="${1:-start}"
     shift || true
-    
+
     case "$command" in
         "start")
             start_server "$@"
@@ -1987,7 +1821,6 @@ main() {
     esac
 }
 
-# Parse global options
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)
@@ -2004,6 +1837,5 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Execute main function
 cd "$SCRIPT_DIR"
 main "$@"
