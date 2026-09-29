@@ -164,6 +164,10 @@ func (s *Server) Routes(router chi.Router) {
 					r.Get("/comments", s.handleListComments)
 					r.Patch("/comments/{"+commentParam+"}", s.handleUpdateComment)
 					r.Delete("/comments/{"+commentParam+"}", s.handleDeleteComment)
+
+					r.Post("/clips", s.handleCreateClip)
+					r.Get("/clips", s.handleListClips)
+					r.Delete("/clips/{"+clipParam+"}", s.handleDeleteClip)
 				})
 
 				r.Post("/folders", s.handleCreateFolder)
