@@ -11,15 +11,7 @@ import { ModalType } from '@/hooks/useModalState';
 import { useIsLinux } from '@/hooks/usePlatform';
 import { useMemo } from 'react';
 
-/**
- * TranscriptPanel Component
- *
- * Displays transcript content with controls for copying and language settings.
- * Uses TranscriptContext, ConfigContext, and RecordingStateContext internally.
- */
-
 interface TranscriptPanelProps {
-  // indicates stop-processing state for transcripts; derived from backend statuses.
   isProcessingStop: boolean;
   isStopping: boolean;
   showModal: (name: ModalType, message?: string) => void;
@@ -30,14 +22,12 @@ export function TranscriptPanel({
   isStopping,
   showModal
 }: TranscriptPanelProps) {
-  // Contexts
   const { transcripts, transcriptContainerRef, copyTranscript } = useTranscripts();
   const { transcriptModelConfig } = useConfig();
   const { isRecording, isPaused } = useRecordingState();
   const { checkPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
   const isLinux = useIsLinux();
 
-  // Convert transcripts to segments for virtualized view
   const segments = useMemo(() =>
     transcripts.map(t => ({
       id: t.id,
