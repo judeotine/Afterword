@@ -176,6 +176,7 @@ func (s *Server) Routes(router chi.Router) {
 				r.Delete("/folders/{"+folderParam+"}", s.handleDeleteFolder)
 
 				r.Get("/search", s.handleSearch)
+				r.Post("/ask", s.handleAsk)
 
 				r.Post("/keyword-alerts", s.handleCreateKeywordAlert)
 				r.Get("/keyword-alerts", s.handleListKeywordAlerts)
