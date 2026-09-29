@@ -9,7 +9,6 @@ export interface Language {
   name: string;
 }
 
-// ISO 639-1 language codes supported by Whisper
 const LANGUAGES: Language[] = [
   { code: 'auto', name: 'Auto Detect (Original Language)' },
   { code: 'auto-translate', name: 'Auto Detect (Translate to English)' },
@@ -130,7 +129,6 @@ export function LanguageSelection({
   const [saving, setSaving] = useState(false);
   const { setSelectedLanguage } = useConfig();
 
-  // Parakeet only supports auto-detection (doesn't support manual language selection)
   const isParakeet = provider === 'parakeet';
   const availableLanguages = isParakeet
     ? LANGUAGES.filter(lang => lang.code === 'auto' || lang.code === 'auto-translate')
@@ -139,12 +137,10 @@ export function LanguageSelection({
   const handleLanguageChange = async (languageCode: string) => {
     setSaving(true);
     try {
-      // Save language preference to localStorage and sync to backend
       setSelectedLanguage(languageCode);
       onLanguageChange(languageCode);
       console.log('Language preference saved:', languageCode);
 
-      // Track language selection analytics
       const selectedLang = LANGUAGES.find(lang => lang.code === languageCode);
       await Analytics.track('language_selected', {
         language_code: languageCode,
@@ -153,7 +149,6 @@ export function LanguageSelection({
         is_auto_translate: (languageCode === 'auto-translate').toString()
       });
 
-      // Show success toast
       const languageName = selectedLang?.name || languageCode;
       toast.success("Language preference saved", {
         description: `Transcription language set to ${languageName}`
@@ -168,7 +163,6 @@ export function LanguageSelection({
     }
   };
 
-  // Find the selected language name for display
   const selectedLanguageName = LANGUAGES.find(
     lang => lang.code === selectedLanguage
   )?.name || 'Auto Detect (Original Language)';
