@@ -1,9 +1,3 @@
-/**
- * HTTP API for the meeting bot: create, inspect and cancel meeting jobs.
- *
- * Jobs live in memory only (see README limitations) and are executed by
- * scheduler.ts, which spawns one worker process per meeting.
- */
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -27,7 +21,6 @@ export interface ServerOptions {
   scheduler?: Scheduler;
 }
 
-/** Build the Fastify app. Injecting a runner keeps the API testable. */
 export function buildServer(options: ServerOptions = {}): FastifyInstance {
   const scheduler =
     options.scheduler ?? new Scheduler({ runner: options.runner ?? new ChildProcessRunner() });
