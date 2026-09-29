@@ -106,14 +106,19 @@ GHCR.
 
 ### Honest scope note
 
-Phases C3 through G (keyword and semantic search, Ask, the desktop sync engine,
-the full web app, bot calendar and Zoom and Teams adapters, and the Slack,
-Notion, and HubSpot integrations) are a multi-service, multi-week build. None of
-them can be verified end to end on this machine, which has no Docker, no
-Postgres, no object storage, no transcription models, no OAuth credentials, and
-no meeting targets. They remain to be built and verified in an environment that
-has those. The comment removal, C0, and C1 above are complete and verified as
-described.
+Phase C is complete and verified end to end against real infrastructure (Docker
+Postgres with pgvector, MinIO, ffmpeg): C0 embedding index, C1 transcribe
+worker, C2 summarise CLI and worker, C3 keyword search, C4 Ask, C5 comments and
+clips and keyword alerts. LLM-dependent features (summarise, Ask) use a provider
+interface with a tested offline fake and an Ollama provider selected by config.
+Four pre-existing bugs were found and fixed by the real tests: a NULL embedding
+scan, an ambiguous clip title column, and NULL-safe embedding projection.
+
+Phases D (desktop sync), E (bot to backend), F (web app), and G (integrations)
+follow. Backend-testable parts are verified with real integration tests; the
+web and desktop UI and the browser-driven bot adapters are compile-checked only,
+because this machine has no windowed desktop session, no meeting targets, and no
+third-party OAuth or integration credentials.
 
 ### Two facts that change sequencing
 
