@@ -1,41 +1,27 @@
-//! Transcript segment types and the pure helpers that build/serialize them.
-//!
-//! Two segment shapes exist for historical reasons:
-//! - [`TranscriptSegment`] is the recording-side segment (absolute audio
-//!   offsets, display string, confidence, sequence id) written into the
-//!   meeting folder by the recording saver.
-//! - [`ApiTranscriptSegment`] is the payload shape used by the app's API layer
-//!   and by `transcripts.json`; it is re-exported by the app as
-//!   `crate::api::TranscriptSegment`.
-
 use anyhow::Result;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
 
-/// Structured transcript segment for JSON export
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptSegment {
     pub id: String,
     pub text: String,
-    pub audio_start_time: f64, // Seconds from recording start
-    pub audio_end_time: f64,   // Seconds from recording start
-    pub duration: f64,         // Segment duration in seconds
-    pub display_time: String,  // Formatted time for display like "[02:15]"
+    pub audio_start_time: f64,
+    pub audio_end_time: f64,
+    pub duration: f64,
+    pub display_time: String,
     pub confidence: f32,
     pub sequence_id: u64,
 }
 
-/// Transcript segment as exchanged with the app's API/database layer.
-///
-/// Re-exported by the desktop app as `crate::api::TranscriptSegment`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiTranscriptSegment {
     pub id: String,
     pub text: String,
     pub timestamp: String,
-    // NEW: Recording-relative timestamps for playback synchronization
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_start_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,8 +30,6 @@ pub struct ApiTranscriptSegment {
     pub duration: Option<f64>,
 }
 
-/// Create transcript segments from transcription results.
-/// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
 pub fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<ApiTranscriptSegment> {
     transcripts
         .iter()
@@ -66,7 +50,6 @@ pub fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<Api
         .collect()
 }
 
-/// Write transcripts.json to a meeting folder (atomic write with temp file)
 pub fn write_transcripts_json(folder: &Path, segments: &[ApiTranscriptSegment]) -> Result<()> {
     let transcript_path = folder.join("transcripts.json");
     let temp_path = folder.join(".transcripts.json.tmp");
@@ -100,23 +83,18 @@ pub fn write_transcripts_json(folder: &Path, segments: &[ApiTranscriptSegment]) 
     Ok(())
 }
 
-/// Split a long speech segment at the lowest-energy (silence) point near the target size.
-///
-/// Scans for 100ms windows with minimal RMS energy within +/-3 seconds of each target
-/// split point. If no clear silence is found, falls back to a 1-second overlap split
-/// to avoid cutting words at boundaries.
 pub fn split_segment_at_silence(
     segment: &crate::audio::vad::SpeechSegment,
     max_samples: usize,
 ) -> Vec<crate::audio::vad::SpeechSegment> {
     const SAMPLE_RATE: usize = 16000;
-    // 100ms window for energy measurement (1600 samples at 16kHz)
+
     const ENERGY_WINDOW: usize = SAMPLE_RATE / 10;
-    // Search +/-3 seconds around the target split point
+
     const SEARCH_RADIUS: usize = SAMPLE_RATE * 3;
-    // RMS threshold below which we consider a window "silent"
+
     const SILENCE_RMS_THRESHOLD: f32 = 0.02;
-    // Overlap to use when no silence boundary is found (1 second)
+
     const FALLBACK_OVERLAP: usize = SAMPLE_RATE;
 
     let total = segment.samples.len();
@@ -132,7 +110,6 @@ pub fn split_segment_at_silence(
     while pos < total {
         let remaining = total - pos;
         if remaining <= max_samples {
-            // Last chunk - take everything remaining
             let chunk_samples = segment.samples[pos..].to_vec();
             let chunk_start_ms = segment.start_timestamp_ms + (pos as f64 * ms_per_sample);
             let chunk_end_ms = segment.end_timestamp_ms;
@@ -145,15 +122,12 @@ pub fn split_segment_at_silence(
             break;
         }
 
-        // Target split point
         let target = pos + max_samples;
 
-        // Search window: [target - SEARCH_RADIUS, target + SEARCH_RADIUS]
         let search_start = target.saturating_sub(SEARCH_RADIUS).max(pos + SAMPLE_RATE);
         let search_end = (target + SEARCH_RADIUS).min(total.saturating_sub(ENERGY_WINDOW));
 
-        // Find the lowest-energy 100ms window in the search range
-        let mut best_split = target.min(total); // fallback: exact target
+        let mut best_split = target.min(total);
         let mut best_rms = f32::MAX;
 
         if search_start + ENERGY_WINDOW <= search_end {
@@ -163,9 +137,9 @@ pub fn split_segment_at_silence(
                 let rms = (window.iter().map(|s| s * s).sum::<f32>() / ENERGY_WINDOW as f32).sqrt();
                 if rms < best_rms {
                     best_rms = rms;
-                    best_split = idx + ENERGY_WINDOW / 2; // split at center of quiet window
+                    best_split = idx + ENERGY_WINDOW / 2;
                 }
-                // Step by 10ms (160 samples) for efficiency
+
                 idx += SAMPLE_RATE / 100;
             }
         }
@@ -183,7 +157,6 @@ pub fn split_segment_at_silence(
             );
         }
 
-        // Determine the actual end of this chunk (with overlap if no silence)
         let chunk_end = if best_rms > SILENCE_RMS_THRESHOLD {
             (split_at + FALLBACK_OVERLAP).min(total)
         } else {
@@ -201,8 +174,6 @@ pub fn split_segment_at_silence(
             confidence: segment.confidence,
         });
 
-        // Advance position to where the current chunk actually ends
-        // to avoid transcribing the overlap region twice
         pos = chunk_end;
     }
 
