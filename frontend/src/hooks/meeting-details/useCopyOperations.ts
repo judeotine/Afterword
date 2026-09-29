@@ -21,12 +21,10 @@ export function useCopyOperations({
   blockNoteSummaryRef,
 }: UseCopyOperationsProps) {
 
-  // Helper function to fetch ALL transcripts for copying (not just paginated data)
   const fetchAllTranscripts = useCallback(async (meetingId: string): Promise<Transcript[]> => {
     try {
       console.log('📊 Fetching all transcripts for copying:', meetingId);
 
-      // First, get total count by fetching first page
       const firstPage = await invokeTauri('api_get_meeting_transcripts', {
         meetingId,
         limit: 1,
@@ -40,7 +38,6 @@ export function useCopyOperations({
         return [];
       }
 
-      // Fetch all transcripts in one call
       const allData = await invokeTauri('api_get_meeting_transcripts', {
         meetingId,
         limit: totalCount,
@@ -56,9 +53,7 @@ export function useCopyOperations({
     }
   }, []);
 
-  // Copy transcript to clipboard
   const handleCopyTranscript = useCallback(async () => {
-    // CHANGE: Fetch ALL transcripts from database, not from pagination state
     console.log('📊 Fetching all transcripts for copying...');
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
@@ -71,10 +66,8 @@ export function useCopyOperations({
 
     console.log(`✅ Copying ${allTranscripts.length} transcripts to clipboard`);
 
-    // Format timestamps as recording-relative [MM:SS] instead of wall-clock time
     const formatTime = (seconds: number | undefined, fallbackTimestamp: string): string => {
       if (seconds === undefined) {
-        // For old transcripts without audio_start_time, use wall-clock time
         return fallbackTimestamp;
       }
       const totalSecs = Math.floor(seconds);
@@ -92,7 +85,6 @@ export function useCopyOperations({
     await navigator.clipboard.writeText(header + date + fullTranscript);
     toast.success("Transcript copied to clipboard");
 
-    // Track copy analytics
     const wordCount = allTranscripts
       .map(t => t.text.split(/\s+/).length)
       .reduce((a, b) => a + b, 0);
@@ -104,33 +96,28 @@ export function useCopyOperations({
     });
   }, [meeting, meetingTitle, fetchAllTranscripts]);
 
-  // Copy summary to clipboard
   const handleCopySummary = useCallback(async () => {
     try {
       let summaryMarkdown = '';
 
       console.log('🔍 Copy Summary - Starting...');
 
-      // Try to get markdown from BlockNote editor first
       if (blockNoteSummaryRef.current?.getMarkdown) {
         console.log('📝 Trying to get markdown from ref...');
         summaryMarkdown = await blockNoteSummaryRef.current.getMarkdown();
         console.log('📝 Got markdown from ref, length:', summaryMarkdown.length);
       }
 
-      // Fallback: Check if aiSummary has markdown property
       if (!summaryMarkdown && aiSummary && 'markdown' in aiSummary) {
         console.log('📝 Using markdown from aiSummary');
         summaryMarkdown = (aiSummary as any).markdown || '';
         console.log('📝 Markdown from aiSummary, length:', summaryMarkdown.length);
       }
 
-      // Fallback: Check for legacy format
       if (!summaryMarkdown && aiSummary) {
         console.log('📝 Converting legacy format to markdown');
         const sections = Object.entries(aiSummary)
           .filter(([key]) => {
-            // Skip non-section keys
             return key !== 'markdown' && key !== 'summary_json' && key !== '_section_order' && key !== 'MeetingName';
           })
           .map(([, section]) => {
@@ -149,14 +136,12 @@ export function useCopyOperations({
         console.log('📝 Converted legacy format, length:', summaryMarkdown.length);
       }
 
-      // If still no summary content, show message
       if (!summaryMarkdown.trim()) {
         console.error('❌ No summary content available to copy');
         toast.error('No summary content available to copy');
         return;
       }
 
-      // Build metadata header
       const header = `# Meeting Summary: ${meetingTitle}\n\n`;
       const metadata = `**Meeting ID:** ${meeting.id}\n**Date:** ${new Date(meeting.created_at).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -178,7 +163,6 @@ export function useCopyOperations({
       console.log('✅ Successfully copied to clipboard!');
       toast.success("Summary copied to clipboard");
 
-      // Track copy analytics
       await Analytics.trackCopy('summary', {
         meeting_id: meeting.id,
         has_markdown: (!!aiSummary && 'markdown' in aiSummary).toString()
