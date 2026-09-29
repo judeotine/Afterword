@@ -1,18 +1,11 @@
 #!/bin/sh
 
-# This script downloads Whisper model files that have already been converted to ggml format.
-# This way you don't have to convert them yourself.
-
-#src="https://ggml.ggerganov.com"
-#pfx="ggml-model-whisper"
-
 src="https://huggingface.co/ggerganov/whisper.cpp"
 pfx="resolve/main/ggml"
 
 BOLD="\033[1m"
 RESET='\033[0m'
 
-# get the path of this script
 get_script_path() {
     if [ -x "$(command -v realpath)" ]; then
         dirname "$(realpath "$0")"
@@ -24,7 +17,6 @@ get_script_path() {
 
 models_path="${2:-$(get_script_path)}"
 
-# Whisper models
 models="tiny
 tiny.en
 tiny-q5_1
@@ -56,7 +48,6 @@ large-v3-turbo
 large-v3-turbo-q5_0
 large-v3-turbo-q8_0"
 
-# list available models
 list_models() {
     printf "\n"
     printf "Available models:"
@@ -90,15 +81,12 @@ if ! echo "$models" | grep -q -w "$model"; then
     exit 1
 fi
 
-# check if model contains `tdrz` and update the src and pfx accordingly
 if echo "$model" | grep -q "tdrz"; then
     src="https://huggingface.co/akashmjn/tinydiarize-whisper.cpp"
     pfx="resolve/main/ggml"
 fi
 
 echo "$model" | grep -q '^"tdrz"*$'
-
-# download ggml model
 
 printf "Downloading ggml model %s from '%s' ...\n" "$model" "$src"
 
