@@ -119,7 +119,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Auto Summary</h3>
-            <p className="text-sm text-gray-600">Auto Generating summary after meeting completion(Stopping)</p>
+            <p className="text-sm text-gray-600">Automatically generate a summary when a meeting recording stops.</p>
           </div>
           <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} />
         </div>
