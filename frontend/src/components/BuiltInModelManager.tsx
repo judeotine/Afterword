@@ -53,7 +53,6 @@ export function BuiltInModelManager({
       const data = (await invoke('builtin_ai_list_models')) as ModelInfo[];
       setModels(data);
 
-      // Auto-select first available model if none selected
       if (data.length > 0 && !selectedModel) {
         const firstAvailable = data.find((m) => m.status.type === 'available');
         if (firstAvailable) {
@@ -73,7 +72,6 @@ export function BuiltInModelManager({
     fetchModels();
   }, []);
 
-  // Listen for download progress events
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -81,13 +79,11 @@ export function BuiltInModelManager({
       unlisten = await listen('builtin-ai-download-progress', (event: any) => {
         const { model, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
 
-        // Update percentage progress
         setDownloadProgress((prev) => ({
           ...prev,
           [model]: progress,
         }));
 
-        // Update detailed progress info (MB, speed)
         setDownloadProgressInfo((prev) => ({
           ...prev,
           [model]: {
@@ -97,7 +93,6 @@ export function BuiltInModelManager({
           },
         }));
 
-        // Handle downloading status - restore downloadingModels state on modal reopen
         if (status === 'downloading') {
           setDownloadingModels((prev) => {
             if (!prev.has(model)) {
@@ -109,14 +104,12 @@ export function BuiltInModelManager({
           });
         }
 
-        // Handle completed status
         if (status === 'completed') {
           setDownloadingModels((prev) => {
             const newSet = new Set(prev);
             newSet.delete(model);
             return newSet;
           });
-          // Clean up progress state
           setDownloadProgress((prev) => {
             const { [model]: _, ...rest } = prev;
             return rest;
@@ -125,19 +118,16 @@ export function BuiltInModelManager({
             const { [model]: _, ...rest } = prev;
             return rest;
           });
-          // Refresh models list
           fetchModels();
           toast.success(`Model ${model} downloaded successfully`);
         }
 
-        // Handle cancelled status
         if (status === 'cancelled') {
           setDownloadingModels((prev) => {
             const newSet = new Set(prev);
             newSet.delete(model);
             return newSet;
           });
-          // Clean up progress state
           setDownloadProgress((prev) => {
             const { [model]: _, ...rest } = prev;
             return rest;
@@ -146,18 +136,15 @@ export function BuiltInModelManager({
             const { [model]: _, ...rest } = prev;
             return rest;
           });
-          // Refresh models list
           fetchModels();
         }
 
-        // Handle error status
         if (status === 'error') {
           setDownloadingModels((prev) => {
             const newSet = new Set(prev);
             newSet.delete(model);
             return newSet;
           });
-          // Clean up progress state
           setDownloadProgress((prev) => {
             const { [model]: _, ...rest } = prev;
             return rest;
@@ -167,8 +154,6 @@ export function BuiltInModelManager({
             return rest;
           });
 
-          // Update model status to error locally instead of fetching from backend
-          // Backend doesn't persist error status, so fetchModels() would return not_downloaded
           setModels((prevModels) =>
             prevModels.map((m) =>
               m.name === model
@@ -200,22 +185,17 @@ export function BuiltInModelManager({
 
   const downloadModel = async (modelName: string) => {
     try {
-      // Optimistically add to downloadingModels for immediate UI feedback
       setDownloadingModels((prev) => new Set([...prev, modelName]));
 
       await invoke('builtin_ai_download_model', { modelName });
     } catch (error) {
       console.error('Failed to download model:', error);
 
-      // Check if this is a cancellation error (starts with "CANCELLED:")
       const errorMsg = String(error);
       if (errorMsg.startsWith('CANCELLED:')) {
-        // Cancel handler already removed from downloadingModels
-        // Don't show error toast for cancellations - cancel function already shows info toast
         return;
       }
 
-      // For real errors, show toast and remove from downloading
       toast.error(`Failed to download ${modelName}`);
 
       setDownloadingModels((prev) => {
@@ -224,7 +204,6 @@ export function BuiltInModelManager({
         return newSet;
       });
 
-      // Refresh model list to get updated Error status from backend
       fetchModels();
     }
   };
@@ -254,7 +233,6 @@ export function BuiltInModelManager({
     }
   };
 
-  // Don't show loading spinner if we have downloads in progress - show the model list instead
   if (isLoading && downloadingModels.size === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
@@ -264,7 +242,6 @@ export function BuiltInModelManager({
     );
   }
 
-  // Only show "no models" message after fetch has completed
   if (hasFetched && models.length === 0) {
     return (
       <Alert>
