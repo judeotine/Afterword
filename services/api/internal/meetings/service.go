@@ -64,6 +64,7 @@ type ServiceOptions struct {
 	ShareRateLimit     int64
 	AbandonedUploadTTL time.Duration
 	Clock              func() time.Time
+	Ask                AskProvider
 }
 
 type Service struct {
@@ -82,6 +83,7 @@ type Service struct {
 	shareLimit         int64
 	abandonedUploadTTL time.Duration
 	clock              func() time.Time
+	ask                AskProvider
 }
 
 func NewService(options ServiceOptions) (*Service, error) {
@@ -110,6 +112,7 @@ func NewService(options ServiceOptions) (*Service, error) {
 		shareLimit:         options.ShareRateLimit,
 		abandonedUploadTTL: options.AbandonedUploadTTL,
 		clock:              options.Clock,
+		ask:                options.Ask,
 	}
 	if service.uploadTTL <= 0 {
 		service.uploadTTL = DefaultUploadTTL
