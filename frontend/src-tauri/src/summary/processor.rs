@@ -7,10 +7,8 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-// Compile regex once and reuse (significant performance improvement for repeated calls)
-static THINKING_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap()
-});
+static THINKING_TAG_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap());
 
 const ENGLISH_BASE_SUMMARY_INSTRUCTION: &str =
     "**Write the summary/report in English regardless of transcript language; non-English prose is invalid.**";
@@ -23,7 +21,11 @@ fn resolve_cached_english<'a>(
     let target_is_translation = summary_language
         .and_then(language_name_from_code)
         .is_some_and(|n| n != "English");
-    if target_is_translation { Some(cached_clean) } else { None }
+    if target_is_translation {
+        Some(cached_clean)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,12 +76,6 @@ fn english_markdown_after_normalization_result(
     }
 }
 
-/// Maps a BCP-47 tag to the English language name used inside LLM prompts.
-///
-/// LLMs respond far more reliably to "in Spanish" than to "in es". Regional
-/// tags (`pt-BR`, `en_GB`) are normalised to their base language; Chinese
-/// variants are disambiguated. Unknown codes return None so the caller falls
-/// back to English rather than injecting a literal ISO code into the prompt.
 pub(crate) fn language_name_from_code(code: &str) -> Option<&'static str> {
     let normalised = code.to_ascii_lowercase().replace('_', "-");
     let lookup: &str = match normalised.as_str() {
@@ -171,22 +167,11 @@ fn build_final_report_system_prompt(
     )
 }
 
-/// Rough token count estimation using character count
 pub fn rough_token_count(s: &str) -> usize {
     let char_count = s.chars().count();
     (char_count as f64 * 0.35).ceil() as usize
 }
 
-/// Chunks text into overlapping segments based on token count
-/// Uses character-based chunking for proper Unicode support
-///
-/// # Arguments
-/// * `text` - The text to chunk
-/// * `chunk_size_tokens` - Maximum tokens per chunk
-/// * `overlap_tokens` - Number of overlapping tokens between chunks
-///
-/// # Returns
-/// Vector of text chunks with smart word-boundary splitting
 pub fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -> Vec<String> {
     info!(
         "Chunking text with token-based chunk_size: {} and overlap: {}",
@@ -197,13 +182,10 @@ pub fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -
         return vec![];
     }
 
-    // Convert token-based sizes to character-based sizes
-    // Using ~2.85 chars per token (inverse of 0.35 tokens per char from rough_token_count)
     let chars_per_token = 1.0 / 0.35;
     let chunk_size_chars = (chunk_size_tokens as f64 * chars_per_token).ceil() as usize;
     let overlap_chars = (overlap_tokens as f64 * chars_per_token).ceil() as usize;
 
-    // Collect characters for indexing (needed for proper Unicode support)
     let chars: Vec<char> = text.chars().collect();
     let total_chars = chars.len();
 
@@ -214,36 +196,31 @@ pub fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -
 
     let mut chunks = Vec::new();
     let mut start_char = 0;
-    // Step is the size of the non-overlapping part of the window
+
     let step = chunk_size_chars.saturating_sub(overlap_chars).max(1);
 
     while start_char < total_chars {
         let end_char = (start_char + chunk_size_chars).min(total_chars);
 
-        // Convert character indices to byte indices for string slicing
         let start_byte: usize = chars[..start_char].iter().map(|c| c.len_utf8()).sum();
         let mut end_byte: usize = chars[..end_char].iter().map(|c| c.len_utf8()).sum();
 
-        // Try to break at sentence or word boundary for cleaner chunks
         if end_char < total_chars {
             let slice = &text[start_byte..end_byte];
-            // Look for sentence boundary (period followed by space)
+
             if let Some(last_period) = slice.rfind(". ") {
                 end_byte = start_byte + last_period + 2;
             } else if let Some(last_space) = slice.rfind(' ') {
-                // Fall back to word boundary (space)
                 end_byte = start_byte + last_space + 1;
             }
         }
 
-        // Extract chunk
         chunks.push(text[start_byte..end_byte].to_string());
 
         if end_char >= total_chars {
             break;
         }
 
-        // Move to next chunk with overlap (in character units)
         start_char += step;
     }
 
@@ -251,42 +228,24 @@ pub fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -
     chunks
 }
 
-/// Cleans markdown output from LLM by removing thinking tags and code fences
-///
-/// # Arguments
-/// * `markdown` - Raw markdown output from LLM
-///
-/// # Returns
-/// Cleaned markdown string
 pub fn clean_llm_markdown_output(markdown: &str) -> String {
-    // Remove <think>...</think> or <thinking>...</thinking> blocks using cached regex
     let without_thinking = THINKING_TAG_REGEX.replace_all(markdown, "");
 
     let trimmed = without_thinking.trim();
 
-    // List of possible language identifiers for code blocks
     const PREFIXES: &[&str] = &["```markdown\n", "```\n"];
     const SUFFIX: &str = "```";
 
     for prefix in PREFIXES {
         if trimmed.starts_with(prefix) && trimmed.ends_with(SUFFIX) {
-            // Extract content between the fences
             let content = &trimmed[prefix.len()..trimmed.len() - SUFFIX.len()];
             return content.trim().to_string();
         }
     }
 
-    // If no fences found, return the trimmed string
     trimmed.to_string()
 }
 
-/// Extracts meeting name from the first heading in markdown
-///
-/// # Arguments
-/// * `markdown` - Markdown content
-///
-/// # Returns
-/// Meeting name if found, None otherwise
 pub fn extract_meeting_name_from_markdown(markdown: &str) -> Option<String> {
     markdown
         .lines()
@@ -294,32 +253,6 @@ pub fn extract_meeting_name_from_markdown(markdown: &str) -> Option<String> {
         .map(|line| line.trim_start_matches("# ").trim().to_string())
 }
 
-/// Generates a complete meeting summary with conditional chunking strategy
-///
-/// # Arguments
-/// * `client` - Reqwest HTTP client
-/// * `provider` - LLM provider to use
-/// * `model_name` - Specific model name
-/// * `api_key` - API key for the provider
-/// * `text` - Full transcript text to summarize
-/// * `custom_prompt` - Optional user-provided context
-/// * `template_id` - Template identifier (e.g., "daily_standup", "standard_meeting")
-/// * `token_threshold` - Token limit for single-pass processing (default 4000)
-/// * `ollama_endpoint` - Optional custom Ollama endpoint
-/// * `custom_openai_endpoint` - Optional custom OpenAI-compatible endpoint
-/// * `max_tokens` - Optional max tokens for completion (CustomOpenAI provider)
-/// * `temperature` - Optional temperature (CustomOpenAI provider)
-/// * `top_p` - Optional top_p (CustomOpenAI provider)
-/// * `app_data_dir` - Optional app data directory (BuiltInAI provider)
-/// * `cancellation_token` - Optional cancellation token to stop processing
-/// * `summary_language` - Optional BCP-47 tag (e.g. "en-GB") to force summary output language
-/// * `detected_transcript_language` - Optional detected transcript language BCP-47 tag
-/// * `cached_english` - Optional previously-generated English summary to skip pass 1 when translating
-///
-/// # Returns
-/// Tuple of (final_summary_markdown, english_summary_markdown, number_of_chunks_processed)
-/// where english_summary_markdown is the canonical AI-generated English summary
-/// (equals final_summary_markdown when target language is English)
 pub async fn generate_meeting_summary(
     client: &Client,
     provider: &LLMProvider,
@@ -357,16 +290,18 @@ pub async fn generate_meeting_summary(
     let (mut english_markdown, successful_chunk_count) = if let Some(cached) =
         resolve_cached_english(cached_english, summary_language)
     {
-        info!("✓ Using cached English summary ({} chars), skipping pass 1", cached.len());
+        info!(
+            "✓ Using cached English summary ({} chars), skipping pass 1",
+            cached.len()
+        );
         (cached.to_string(), 1_i64)
     } else {
         let content_to_summarize: String;
         let successful_chunk_count: i64;
 
-        // Strategy: Use single-pass for cloud providers or short transcripts
-        // Use multi-level chunking for Ollama/BuiltInAI with long transcripts
-        // Note: CustomOpenAI is treated like cloud providers (unlimited context)
-        if (provider != &LLMProvider::Ollama && provider != &LLMProvider::BuiltInAI) || total_tokens < token_threshold {
+        if (provider != &LLMProvider::Ollama && provider != &LLMProvider::BuiltInAI)
+            || total_tokens < token_threshold
+        {
             info!(
                 "Using single-pass summarization (tokens: {}, threshold: {})",
                 total_tokens, token_threshold
@@ -379,7 +314,6 @@ pub async fn generate_meeting_summary(
                 total_tokens, token_threshold
             );
 
-            // Reserve 300 tokens for prompt overhead
             let chunks = chunk_text(text, token_threshold - 300, 100);
             let num_chunks = chunks.len();
             info!("Split transcript into {} chunks", num_chunks);
@@ -388,10 +322,13 @@ pub async fn generate_meeting_summary(
             let system_prompt_chunk = "You are an expert meeting summarizer.";
 
             for (i, chunk) in chunks.iter().enumerate() {
-                // Check for cancellation before processing each chunk
                 if let Some(token) = cancellation_token {
                     if token.is_cancelled() {
-                        info!("Summary generation cancelled during chunk {}/{}", i + 1, num_chunks);
+                        info!(
+                            "Summary generation cancelled during chunk {}/{}",
+                            i + 1,
+                            num_chunks
+                        );
                         return Err("Summary generation was cancelled".to_string());
                     }
                 }
@@ -421,7 +358,6 @@ pub async fn generate_meeting_summary(
                         info!("✓ Chunk {}/{} processed successfully", i + 1, num_chunks);
                     }
                     Err(e) => {
-                        // Check if error is due to cancellation
                         if e.contains("cancelled") {
                             return Err(e);
                         }
@@ -443,7 +379,6 @@ pub async fn generate_meeting_summary(
                 successful_chunk_count, num_chunks
             );
 
-            // Combine chunk summaries if multiple chunks
             content_to_summarize = if chunk_summaries.len() > 1 {
                 info!(
                     "Combining {} chunk summaries into cohesive summary",
@@ -473,18 +408,19 @@ pub async fn generate_meeting_summary(
             };
         }
 
-        info!("Generating final markdown report with template: {}", template_id);
+        info!(
+            "Generating final markdown report with template: {}",
+            template_id
+        );
 
-        // Generate markdown structure and section instructions using template methods
         let clean_template_markdown = template.to_markdown_structure();
         let section_instructions = template.to_section_instructions();
 
         let final_system_prompt =
             build_final_report_system_prompt(&section_instructions, &clean_template_markdown);
 
-        let mut final_user_prompt = format!(
-            "<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n"
-        );
+        let mut final_user_prompt =
+            format!("<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n");
 
         if !custom_prompt.is_empty() {
             final_user_prompt.push_str("\n\nUser Provided Context:\n\n<user_context>\n");
@@ -492,7 +428,6 @@ pub async fn generate_meeting_summary(
             final_user_prompt.push_str("\n</user_context>");
         }
 
-        // Check cancellation before final summary generation
         if let Some(token) = cancellation_token {
             if token.is_cancelled() {
                 info!("Summary generation cancelled before final summary");
@@ -523,7 +458,10 @@ pub async fn generate_meeting_summary(
         (english_markdown, successful_chunk_count)
     };
 
-    let final_markdown = match resolve_final_language_action(summary_language, detected_transcript_language) {
+    let final_markdown = match resolve_final_language_action(
+        summary_language,
+        detected_transcript_language,
+    ) {
         FinalLanguageAction::Translate(name) => {
             match translate_markdown(
                 client,
@@ -785,16 +723,12 @@ mod tests {
 
     #[test]
     fn cancelled_english_normalization_is_not_swallowed() {
-        assert!(
-            english_markdown_after_normalization_result(
-                "# Original",
-                Err("Summary generation was cancelled".to_string())
-            )
-            .is_err()
-        );
+        assert!(english_markdown_after_normalization_result(
+            "# Original",
+            Err("Summary generation was cancelled".to_string())
+        )
+        .is_err());
     }
-
-    // resolve_cached_english matrix -------------------------------------------
 
     #[test]
     fn no_cache_no_language_returns_none() {
@@ -823,24 +757,31 @@ mod tests {
 
     #[test]
     fn valid_cache_english_variant_returns_none() {
-        // "en-GB" normalises to English — cache should not be used (re-run pass 1)
         assert_eq!(resolve_cached_english(Some("body"), Some("en-GB")), None);
     }
 
     #[test]
     fn valid_cache_french_target_returns_cache() {
-        assert_eq!(resolve_cached_english(Some("body"), Some("fr")), Some("body"));
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("fr")),
+            Some("body")
+        );
     }
 
     #[test]
     fn valid_cache_unknown_language_returns_none() {
-        // Unknown code -> language_name_from_code returns None -> not a translation
-        assert_eq!(resolve_cached_english(Some("body"), Some("zz-unknown")), None);
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("zz-unknown")),
+            None
+        );
     }
 
     #[test]
     fn uppercase_translation_code_returns_cache() {
-        assert_eq!(resolve_cached_english(Some("body"), Some("FR")), Some("body"));
+        assert_eq!(
+            resolve_cached_english(Some("body"), Some("FR")),
+            Some("body")
+        );
     }
 
     #[test]
@@ -850,7 +791,6 @@ mod tests {
 
     #[test]
     fn underscore_locale_variant_returns_none() {
-        // OS locale APIs (notably macOS) may emit "en_GB" with underscore.
         assert_eq!(resolve_cached_english(Some("body"), Some("en_GB")), None);
     }
 }
