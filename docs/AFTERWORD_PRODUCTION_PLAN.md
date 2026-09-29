@@ -120,6 +120,15 @@ web and desktop UI and the browser-driven bot adapters are compile-checked only,
 because this machine has no windowed desktop session, no meeting targets, and no
 third-party OAuth or integration credentials.
 
+Phase E backend is complete and verified: a shared worker token guards new
+`POST /v1/worker/bot-jobs/claim` and `POST /v1/worker/bot-jobs/{id}/status`
+routes. Claim uses `FOR UPDATE SKIP LOCKED` across workspaces; status updates are
+scoped to the claiming worker id. Verified with a real integration test covering
+token rejection, claim, empty claim, status transitions, and worker ownership.
+Remaining for E: the bot TypeScript client that calls these endpoints and
+uploads recordings, plus calendar and Zoom and Teams adapters (compile-checked
+only here).
+
 ### Two facts that change sequencing
 
 - The compose file assumes `web` and `transcribe-worker` images exist. Until
