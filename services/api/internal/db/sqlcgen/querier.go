@@ -161,6 +161,7 @@ type Querier interface {
 	RevokeRefreshFamily(ctx context.Context, arg RevokeRefreshFamilyParams) (int64, error)
 	RevokeUserRefreshTokens(ctx context.Context, arg RevokeUserRefreshTokensParams) (int64, error)
 	RevokeWorkspaceInvite(ctx context.Context, arg RevokeWorkspaceInviteParams) (int64, error)
+	SearchSegments(ctx context.Context, arg SearchSegmentsParams) ([]SearchSegmentsRow, error)
 	SetMeetingLinkSharing(ctx context.Context, arg SetMeetingLinkSharingParams) (Meeting, error)
 	SetPaymentProviderRef(ctx context.Context, arg SetPaymentProviderRefParams) (Payment, error)
 	SettlePayment(ctx context.Context, arg SettlePaymentParams) (Payment, error)

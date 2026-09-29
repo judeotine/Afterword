@@ -587,6 +587,77 @@ func (q *Queries) LockShareLinkIP(ctx context.Context, requestIp string) error {
 	return err
 }
 
+const searchSegments = `-- name: SearchSegments :many
+SELECT transcript_segments.id, transcript_segments.meeting_id, transcript_segments.seq,
+       transcript_segments.speaker, transcript_segments.start_s, transcript_segments.end_s,
+       transcript_segments.text, meetings.title AS meeting_title,
+       ts_rank_cd(transcript_segments.tsv, websearch_to_tsquery('simple', $1)) AS rank
+FROM transcript_segments
+JOIN meetings ON meetings.id = transcript_segments.meeting_id
+WHERE meetings.workspace_id = $2
+  AND (meetings.visibility <> 'private' OR meetings.owner_user_id = $3)
+  AND ($4::uuid IS NULL OR meetings.folder_id = $4::uuid)
+  AND transcript_segments.tsv @@ websearch_to_tsquery('simple', $1)
+ORDER BY rank DESC, transcript_segments.meeting_id, transcript_segments.seq
+LIMIT $5
+`
+
+type SearchSegmentsParams struct {
+	Query        string     `json:"query"`
+	WorkspaceID  uuid.UUID  `json:"workspace_id"`
+	ViewerUserID *uuid.UUID `json:"viewer_user_id"`
+	FolderID     *uuid.UUID `json:"folder_id"`
+	PageSize     int32      `json:"page_size"`
+}
+
+type SearchSegmentsRow struct {
+	ID           uuid.UUID `json:"id"`
+	MeetingID    uuid.UUID `json:"meeting_id"`
+	Seq          int32     `json:"seq"`
+	Speaker      *string   `json:"speaker"`
+	StartS       float64   `json:"start_s"`
+	EndS         float64   `json:"end_s"`
+	Text         string    `json:"text"`
+	MeetingTitle string    `json:"meeting_title"`
+	Rank         float32   `json:"rank"`
+}
+
+func (q *Queries) SearchSegments(ctx context.Context, arg SearchSegmentsParams) ([]SearchSegmentsRow, error) {
+	rows, err := q.db.Query(ctx, searchSegments,
+		arg.Query,
+		arg.WorkspaceID,
+		arg.ViewerUserID,
+		arg.FolderID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchSegmentsRow{}
+	for rows.Next() {
+		var i SearchSegmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MeetingID,
+			&i.Seq,
+			&i.Speaker,
+			&i.StartS,
+			&i.EndS,
+			&i.Text,
+			&i.MeetingTitle,
+			&i.Rank,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setMeetingLinkSharing = `-- name: SetMeetingLinkSharing :one
 UPDATE meetings SET link_sharing_enabled = $1
 WHERE id = $2 AND workspace_id = $3
