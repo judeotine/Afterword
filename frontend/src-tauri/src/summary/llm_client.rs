@@ -7,14 +7,12 @@ use tracing::info;
 
 const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
-// Generic structure for OpenAI-compatible API chat messages
 #[derive(Debug, Serialize)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
 }
 
-// Generic structure for OpenAI-compatible API chat requests
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
     pub model: String,
@@ -27,7 +25,6 @@ pub struct ChatRequest {
     pub top_p: Option<f32>,
 }
 
-// Generic structure for OpenAI-compatible API chat responses
 #[derive(Deserialize, Debug)]
 pub struct ChatResponse {
     pub choices: Vec<Choice>,
@@ -43,7 +40,6 @@ pub struct MessageContent {
     pub content: String,
 }
 
-// Claude-specific request structure
 #[derive(Debug, Serialize)]
 pub struct ClaudeRequest {
     pub model: String,
@@ -52,7 +48,6 @@ pub struct ClaudeRequest {
     pub messages: Vec<ChatMessage>,
 }
 
-// Claude-specific response structure
 #[derive(Deserialize, Debug)]
 pub struct ClaudeChatResponse {
     pub content: Vec<ClaudeChatContent>,
@@ -63,7 +58,6 @@ pub struct ClaudeChatContent {
     pub text: String,
 }
 
-/// LLM Provider enumeration for multi-provider support
 #[derive(Debug, Clone, PartialEq)]
 pub enum LLMProvider {
     OpenAI,
@@ -76,7 +70,6 @@ pub enum LLMProvider {
 }
 
 impl LLMProvider {
-    /// Parse provider from string (case-insensitive)
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "openai" => Ok(Self::OpenAI),
@@ -91,25 +84,6 @@ impl LLMProvider {
     }
 }
 
-/// Generates a summary using the specified LLM provider
-///
-/// # Arguments
-/// * `client` - Reqwest HTTP client (reused for performance)
-/// * `provider` - The LLM provider to use
-/// * `model_name` - The specific model to use (e.g., "gpt-4", "claude-3-opus")
-/// * `api_key` - API key for the provider (not needed for Ollama)
-/// * `system_prompt` - System instructions for the LLM
-/// * `user_prompt` - User query/content to process
-/// * `ollama_endpoint` - Optional custom Ollama endpoint (defaults to localhost:11434)
-/// * `custom_openai_endpoint` - Optional custom OpenAI-compatible endpoint
-/// * `max_tokens` - Optional max tokens (for CustomOpenAI provider)
-/// * `temperature` - Optional temperature (for CustomOpenAI provider)
-/// * `top_p` - Optional top_p (for CustomOpenAI provider)
-/// * `app_data_dir` - Optional app data directory (for BuiltInAI provider)
-/// * `cancellation_token` - Optional token to cancel the request
-///
-/// # Returns
-/// The generated summary text or an error message
 pub async fn generate_summary(
     client: &Client,
     provider: &LLMProvider,
@@ -125,14 +99,12 @@ pub async fn generate_summary(
     app_data_dir: Option<&PathBuf>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
-    // Check if cancelled before starting
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
             return Err("Summary generation was cancelled".to_string());
         }
     }
 
-    // Handle BuiltInAI provider separately (uses local sidecar, no HTTP API)
     if provider == &LLMProvider::BuiltInAI {
         let app_data_dir = app_data_dir
             .ok_or_else(|| "app_data_dir is required for BuiltInAI provider".to_string())?;
@@ -192,15 +164,16 @@ pub async fn generate_summary(
                     .parse()
                     .map_err(|_| "Invalid anthropic version".to_string())?,
             );
-            ("https://api.anthropic.com/v1/messages".to_string(), header_map)
+            (
+                "https://api.anthropic.com/v1/messages".to_string(),
+                header_map,
+            )
         }
         LLMProvider::BuiltInAI => {
-            // This case is handled earlier with early returns
             unreachable!("BuiltInAI is handled before this match statement")
         }
     };
 
-    // Add authorization header for non-Claude providers
     if provider != &LLMProvider::Claude {
         headers.insert(
             header::AUTHORIZATION,
@@ -216,10 +189,9 @@ pub async fn generate_summary(
             .map_err(|_| "Invalid content type".to_string())?,
     );
 
-    // Build request body based on provider
     let request_body = if provider != &LLMProvider::Claude {
-        // For CustomOpenAI, apply optional parameters if provided
-        let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI {
+        let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI
+        {
             (max_tokens, temperature, top_p)
         } else {
             (None, None, None)
@@ -253,9 +225,12 @@ pub async fn generate_summary(
         })
     };
 
-    info!("🐞 LLM Request to {}: model={}", provider_name(provider), model_name);
+    info!(
+        "🐞 LLM Request to {}: model={}",
+        provider_name(provider),
+        model_name
+    );
 
-    // Send request with timeout and cancellation support
     let request_future = client
         .post(api_url)
         .headers(headers)
@@ -263,7 +238,6 @@ pub async fn generate_summary(
         .timeout(REQUEST_TIMEOUT_DURATION)
         .send();
 
-    // Use tokio::select to race between cancellation and request completion
     let response = if let Some(token) = cancellation_token {
         tokio::select! {
             result = request_future => {
@@ -297,7 +271,6 @@ pub async fn generate_summary(
         return Err(format!("LLM API request failed: {}", error_body));
     }
 
-    // Parse response based on provider
     if provider == &LLMProvider::Claude {
         let chat_response = response
             .json::<ClaudeChatResponse>()
@@ -332,7 +305,6 @@ pub async fn generate_summary(
     }
 }
 
-/// Helper function to get provider name for logging
 fn provider_name(provider: &LLMProvider) -> &str {
     match provider {
         LLMProvider::OpenAI => "OpenAI",
