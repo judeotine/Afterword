@@ -15,7 +15,6 @@ interface TranscriptPanelProps {
   isRecording: boolean;
   disableAutoScroll?: boolean;
 
-  // Optional pagination props (when using virtualization)
   usePagination?: boolean;
   segments?: TranscriptSegmentData[];
   hasMore?: boolean;
@@ -24,7 +23,6 @@ interface TranscriptPanelProps {
   loadedCount?: number;
   onLoadMore?: () => void;
 
-  // Retranscription props
   meetingId?: string;
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
@@ -49,12 +47,10 @@ export function TranscriptPanel({
   meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptPanelProps) {
-  // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) {
       return segments;
     }
-    // Convert transcripts to segments for virtualization
     return transcripts.map(t => ({
       id: t.id,
       timestamp: t.audio_start_time ?? 0,
