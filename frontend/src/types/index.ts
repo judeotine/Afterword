@@ -7,29 +7,27 @@ export interface Message {
 export interface Transcript {
   id: string;
   text: string;
-  timestamp: string; // Wall-clock time (e.g., "14:30:05")
+  timestamp: string;
   sequence_id?: number;
-  chunk_start_time?: number; // Legacy field
+  chunk_start_time?: number;
   is_partial?: boolean;
   confidence?: number;
-  // NEW: Recording-relative timestamps for playback sync
-  audio_start_time?: number; // Seconds from recording start (e.g., 125.3)
-  audio_end_time?: number;   // Seconds from recording start (e.g., 128.6)
-  duration?: number;          // Segment duration in seconds (e.g., 3.3)
+  audio_start_time?: number;
+  audio_end_time?: number;
+  duration?: number;
 }
 
 export interface TranscriptUpdate {
   text: string;
-  timestamp: string; // Wall-clock time for reference
+  timestamp: string;
   source: string;
   sequence_id: number;
-  chunk_start_time: number; // Legacy field
+  chunk_start_time: number;
   is_partial: boolean;
   confidence: number;
-  // NEW: Recording-relative timestamps for playback sync
-  audio_start_time: number; // Seconds from recording start
-  audio_end_time: number;   // Seconds from recording start
-  duration: number;          // Segment duration in seconds
+  audio_start_time: number;
+  audio_end_time: number;
+  duration: number;
 }
 
 export interface Block {
@@ -65,7 +63,6 @@ export interface SummaryResponse {
   };
 }
 
-// BlockNote-specific types
 export type SummaryFormat = 'legacy' | 'markdown' | 'blocknote';
 
 export interface BlockNoteBlock {
@@ -79,13 +76,11 @@ export interface BlockNoteBlock {
 export interface SummaryDataResponse {
   markdown?: string;
   summary_json?: BlockNoteBlock[];
-  // Legacy format fields
   MeetingName?: string;
   _section_order?: string[];
-  [key: string]: any; // For legacy section data
+  [key: string]: any;
 }
 
-// Pagination types for optimized transcript loading
 export interface MeetingMetadata {
   id: string;
   title: string;
@@ -100,11 +95,10 @@ export interface PaginatedTranscriptsResponse {
   has_more: boolean;
 }
 
-// Transcript segment data for virtualized display
 export interface TranscriptSegmentData {
   id: string;
-  timestamp: number; // audio_start_time in seconds
-  endTime?: number; // audio_end_time in seconds
+  timestamp: number;
+  endTime?: number;
   text: string;
   confidence?: number;
 }
