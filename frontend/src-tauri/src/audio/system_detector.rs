@@ -4,10 +4,9 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use cidre::{core_audio as ca, os};
 
-/// Event types for system audio detection
 #[derive(Debug, Clone)]
 pub enum SystemAudioEvent {
-    SystemAudioStarted(Vec<String>), // List of apps using system audio
+    SystemAudioStarted(Vec<String>),
     SystemAudioStopped,
 }
 
@@ -20,7 +19,6 @@ where
     std::sync::Arc::new(f)
 }
 
-/// Background task manager for system audio detection
 #[derive(Default)]
 pub struct BackgroundTask {
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -38,7 +36,7 @@ impl BackgroundTask {
             + 'static,
     {
         if self.handle.is_some() {
-            return; // Already running
+            return;
         }
 
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -70,7 +68,6 @@ impl Drop for BackgroundTask {
     }
 }
 
-/// Detects system audio usage on macOS
 #[cfg(target_os = "macos")]
 pub struct MacOSSystemAudioDetector {
     background: BackgroundTask,
@@ -378,7 +375,6 @@ fn list_system_audio_using_apps() -> Vec<String> {
     }
 }
 
-// Stub implementation for non-macOS platforms
 #[cfg(not(target_os = "macos"))]
 pub struct MacOSSystemAudioDetector;
 
@@ -398,7 +394,6 @@ impl MacOSSystemAudioDetector {
     pub fn stop(&mut self) {}
 }
 
-/// Public interface for system audio detection
 #[derive(Default)]
 pub struct SystemAudioDetector {
     inner: MacOSSystemAudioDetector,
@@ -423,7 +418,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore] // Only run manually as it requires audio hardware
+    #[ignore]
     async fn test_system_audio_detector() {
         let mut detector = SystemAudioDetector::new();
         detector.start(new_system_audio_callback(|event| {
