@@ -165,6 +165,8 @@ func (s *Server) Routes(router chi.Router) {
 				r.Get("/folders", s.handleListFolders)
 				r.Patch("/folders/{"+folderParam+"}", s.handleUpdateFolder)
 				r.Delete("/folders/{"+folderParam+"}", s.handleDeleteFolder)
+
+				r.Get("/search", s.handleSearch)
 			})
 		})
 	})
