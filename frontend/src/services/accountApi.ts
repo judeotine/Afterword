@@ -17,6 +17,14 @@ export interface BalanceSnapshot {
   credits: number;
 }
 
+export interface BotJobSummary {
+  id: string;
+  meeting_url: string;
+  platform: string;
+  status: string;
+  created_at: string;
+}
+
 function channelFor(destination: string): string {
   return destination.includes('@') ? 'email' : 'phone';
 }
@@ -63,6 +71,19 @@ export class AccountApi {
   async balance(accessToken: string, workspaceId: string): Promise<BalanceSnapshot> {
     const raw = await this.get<{ minutes?: number }>('/v1/billing/balance', accessToken, workspaceId);
     return { credits: raw.minutes ?? 0 };
+  }
+
+  async sendBot(accessToken: string, workspaceId: string, meetingUrl: string, botName?: string): Promise<BotJobSummary> {
+    const body: Record<string, string> = { meeting_url: meetingUrl };
+    if (botName && botName.trim()) {
+      body.bot_name = botName.trim();
+    }
+    return this.post('/v1/bot-jobs', body, accessToken, workspaceId);
+  }
+
+  async listBotJobs(accessToken: string, workspaceId: string): Promise<{ items: BotJobSummary[] }> {
+    const raw = await this.get<{ bot_jobs?: BotJobSummary[] }>('/v1/bot-jobs', accessToken, workspaceId);
+    return { items: raw.bot_jobs ?? [] };
   }
 
   private async post<T>(path: string, body: unknown, accessToken?: string, workspaceId?: string): Promise<T> {
