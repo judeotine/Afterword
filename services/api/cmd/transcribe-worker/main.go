@@ -71,6 +71,7 @@ func run(logger zerolog.Logger) error {
 	buckets := storage.Buckets{
 		Audio:       os.Getenv("AUDIO_BUCKET"),
 		Transcripts: os.Getenv("TRANSCRIPT_BUCKET"),
+		Clips:       os.Getenv("CLIP_BUCKET"),
 	}.WithDefaults()
 
 	deps := workerlib.Deps{
@@ -99,6 +100,17 @@ func run(logger zerolog.Logger) error {
 		concurrency = 1
 	}
 	if err := runner.Register(meetings.KindTranscribe, concurrency, workerlib.NewTranscribeHandler(deps)); err != nil {
+		return err
+	}
+	clipDeps := workerlib.ClipDeps{
+		Queries:     deps.Queries,
+		Storage:     client,
+		AudioBucket: buckets.Audio,
+		ClipBucket:  buckets.Clips,
+		FFmpegBin:   deps.Config.FFmpegBin,
+		WorkDir:     deps.Config.WorkDir,
+	}
+	if err := runner.Register(meetings.KindClip, concurrency, workerlib.NewClipHandler(clipDeps)); err != nil {
 		return err
 	}
 
