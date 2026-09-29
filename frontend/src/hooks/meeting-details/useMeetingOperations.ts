@@ -10,7 +10,6 @@ export function useMeetingOperations({
   meeting,
 }: UseMeetingOperationsProps) {
 
-  // Open meeting folder in file explorer
   const handleOpenMeetingFolder = useCallback(async () => {
     try {
       await invokeTauri('open_meeting_folder', { meetingId: meeting.id });
