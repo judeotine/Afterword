@@ -1,4 +1,3 @@
-/** Microsoft Teams adapter placeholder — URLs are recognised, joining is Phase 4 work. */
 import type { Page } from 'playwright';
 import { NotImplementedError } from '../errors.js';
 import type { JoinOptions, MeetingPlatform, PlatformName } from './types.js';
