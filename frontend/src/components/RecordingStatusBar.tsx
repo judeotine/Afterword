@@ -9,17 +9,12 @@ interface RecordingStatusBarProps {
 }
 
 export const RecordingStatusBar: React.FC<RecordingStatusBarProps> = ({ isPaused = false }) => {
-  // Get recording duration from backend-synced context (in seconds)
-  // Backend polls every 500ms, providing smooth updates
   const { activeDuration, isRecording } = useRecordingState();
 
-  // Display state synced from backend
   const [displaySeconds, setDisplaySeconds] = useState(0);
 
-  // Sync with backend duration when it changes (handles refresh/navigation)
   useEffect(() => {
     if (activeDuration !== null) {
-      // Round to nearest second to avoid decimal issues
       setDisplaySeconds(Math.floor(activeDuration));
     }
   }, [activeDuration]);
