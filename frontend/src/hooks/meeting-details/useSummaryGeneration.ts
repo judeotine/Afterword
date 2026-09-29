@@ -78,7 +78,6 @@ export function useSummaryGeneration({
 
   const { startSummaryPolling, stopSummaryPolling } = useSidebar();
 
-  // Helper to get status message
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {
     switch (status) {
       case 'processing':
@@ -96,7 +95,6 @@ export function useSummaryGeneration({
     }
   }, []);
 
-  // Unified summary processing logic
   const processSummary = useCallback(async ({
     transcriptText,
     transcriptTexts,
@@ -118,10 +116,8 @@ export function useSummaryGeneration({
 
       console.log('Processing transcript with template:', selectedTemplate);
 
-      // Calculate time since recording
-      const timeSinceRecording = (Date.now() - new Date(meeting.created_at).getTime()) / 60000; // minutes
+      const timeSinceRecording = (Date.now() - new Date(meeting.created_at).getTime()) / 60000;
 
-      // Track summary generation started
       await Analytics.trackSummaryGenerationStarted(
         modelConfig.provider,
         modelConfig.model,
@@ -129,24 +125,20 @@ export function useSummaryGeneration({
         timeSinceRecording
       );
 
-      // Track custom prompt usage if present
       if (customPrompt.trim().length > 0) {
         await Analytics.trackCustomPromptUsed(customPrompt.trim().length);
       }
 
-      // Show toast notification for generation start
       toast.info(`${isRegeneration ? 'Regenerating' : 'Generating'} summary...`, {
         description: `Using ${modelConfig.provider}/${modelConfig.model}`,
         duration: 3000,
       });
 
-      // Resolve explicit metadata override first; Auto detects the transcript language.
       const summaryLanguage = await resolveSummaryLanguage(
         meeting.id,
         transcriptTexts?.length ? transcriptTexts : [transcriptText]
       );
 
-      // Process transcript and get process_id
       const result = await invokeTauri('api_process_transcript', {
         text: transcriptText,
         model: modelConfig.provider,
@@ -162,15 +154,12 @@ export function useSummaryGeneration({
       const process_id = result.process_id;
       console.log('Process ID:', process_id);
 
-      // Start global polling via context
       startSummaryPolling(meeting.id, process_id, async (pollingResult) => {
         console.log('Summary status:', pollingResult);
 
-        // Handle cancellation
         if (pollingResult.status === 'cancelled') {
           console.log('Summary generation was cancelled');
 
-          // Reload summary from database (backend has already restored from backup)
           try {
             const existingSummary = await invokeTauri('api_get_summary', {
               meetingId: meeting.id
@@ -192,12 +181,10 @@ export function useSummaryGeneration({
           return;
         }
 
-        // Handle errors
         if (pollingResult.status === 'error' || pollingResult.status === 'failed') {
           console.error('Backend returned error:', pollingResult.error);
           const errorMessage = pollingResult.error || `Summary ${isRegeneration ? 'regeneration' : 'generation'} failed`;
 
-          // If this was a regeneration, try to restore previous summary from database
           if (isRegeneration) {
             try {
               const existingSummary = await invokeTauri('api_get_summary', {
@@ -210,7 +197,6 @@ export function useSummaryGeneration({
                 setSummaryStatus('completed');
                 setSummaryError(null);
 
-                // Show error toast with restoration message
                 toast.error(`Failed to regenerate summary`, {
                   description: `${errorMessage}. Your previous summary has been restored.`,
                 });
@@ -229,23 +215,19 @@ export function useSummaryGeneration({
             }
           }
 
-          // Continue with normal error handling if not regeneration or reload failed
           setSummaryError(errorMessage);
           setSummaryStatus('error');
 
-          // Check if this is a "model is required" error
           const isModelRequiredError = errorMessage.includes('model is required') ||
             errorMessage.includes('"model":"required"') ||
             errorMessage.toLowerCase().includes('model') && errorMessage.toLowerCase().includes('required');
 
-          // Show error toast
           toast.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary`, {
             description: errorMessage.includes('Connection refused')
               ? 'Could not connect to LLM service. Please ensure Ollama or your configured LLM provider is running.'
               : errorMessage,
           });
 
-          // Auto-open model settings modal if model is missing
           if (isModelRequiredError && onOpenModelSettings) {
             console.log('🔧 Model required error detected, opening model settings...');
             onOpenModelSettings();
@@ -261,23 +243,19 @@ export function useSummaryGeneration({
           return;
         }
 
-        // Handle successful completion
         if (pollingResult.status === 'completed' && pollingResult.data) {
           console.log('Summary generation completed:', pollingResult.data);
 
-          // Update meeting title if available
           const meetingName = pollingResult.data.MeetingName || pollingResult.meetingName;
           if (meetingName) {
             updateMeetingTitle(meetingName);
           }
 
-          // Check if backend returned markdown format (new flow)
           if (pollingResult.data.markdown) {
             console.log('Received markdown format from backend');
             setAiSummary({ markdown: pollingResult.data.markdown } as any);
             setSummaryStatus('completed');
 
-            // Show success toast
             toast.success('Summary generated successfully!', {
               description: 'Your meeting summary is ready',
               duration: 4000,
@@ -295,7 +273,6 @@ export function useSummaryGeneration({
             return;
           }
 
-          // Legacy format handling
           const summarySections = Object.entries(pollingResult.data).filter(([key]) => key !== 'MeetingName');
           const allEmpty = summarySections.every(([, section]) => !(section as any).blocks || (section as any).blocks.length === 0);
 
@@ -314,10 +291,8 @@ export function useSummaryGeneration({
             return;
           }
 
-          // Remove MeetingName from data before formatting
           const { MeetingName, ...summaryData } = pollingResult.data;
 
-          // Format legacy summary data
           const formattedSummary: Summary = {};
           const sectionKeys = pollingResult.data._section_order || Object.keys(summaryData);
 
@@ -351,7 +326,6 @@ export function useSummaryGeneration({
           setAiSummary(formattedSummary);
           setSummaryStatus('completed');
 
-          // Show success toast
           toast.success('Summary generated successfully!', {
             description: 'Your meeting summary is ready',
             duration: 4000,
@@ -373,7 +347,6 @@ export function useSummaryGeneration({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setSummaryError(errorMessage);
       setSummaryStatus('error');
-      // Note: We don't clear the summary here because the backend has already restored from backup
 
       toast.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary`, {
         description: errorMessage,
@@ -398,12 +371,10 @@ export function useSummaryGeneration({
     onMeetingUpdated,
   ]);
 
-  // Helper function to fetch ALL transcripts for summary generation
   const fetchAllTranscripts = useCallback(async (meetingId: string): Promise<Transcript[]> => {
     try {
       console.log('📊 Fetching all transcripts for meeting:', meetingId);
 
-      // First, get total count by fetching first page
       const firstPage = await invokeTauri('api_get_meeting_transcripts', {
         meetingId,
         limit: 1,
@@ -417,7 +388,6 @@ export function useSummaryGeneration({
         return [];
       }
 
-      // Fetch all transcripts in one call
       const allData = await invokeTauri('api_get_meeting_transcripts', {
         meetingId,
         limit: totalCount,
@@ -452,16 +422,13 @@ export function useSummaryGeneration({
     };
   }, []);
 
-  // Public API: Generate summary from transcripts
   const handleGenerateSummary = useCallback(async (customPrompt: string = '') => {
-    // Check if model config is still loading
     if (isModelConfigLoading) {
       console.log('⏳ Model configuration is still loading, please wait...');
       toast.info('Loading model configuration, please wait...');
       return;
     }
 
-    // CHANGE: Fetch ALL transcripts from database, not from pagination state
     console.log('📊 Fetching all transcripts for summary generation...');
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
@@ -480,7 +447,6 @@ export function useSummaryGeneration({
       template: selectedTemplate
     });
 
-    // Check if Ollama provider has models available
     if (modelConfig.provider === 'ollama') {
       try {
         const endpoint = modelConfig.ollamaEndpoint || null;
@@ -498,7 +464,6 @@ export function useSummaryGeneration({
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         if (isOllamaNotInstalledError(errorMessage)) {
-          // Ollama is not installed - show specific message with download link
           toast.error(
             'Ollama is not installed',
             {
@@ -511,7 +476,6 @@ export function useSummaryGeneration({
             }
           );
         } else {
-          // Other error - generic message
           toast.error(
             'Failed to check Ollama models. Please ensure Ollama is running and download a model from Settings.',
             { duration: 5000 }
@@ -521,7 +485,6 @@ export function useSummaryGeneration({
       }
     }
 
-    // Check if built-in AI provider has models available
     if (modelConfig.provider === 'builtin-ai') {
       try {
         const selectedModel = modelConfig.model;
@@ -537,14 +500,12 @@ export function useSummaryGeneration({
           return;
         }
 
-        // Check model readiness with filesystem refresh
         const isReady = await invokeTauri<boolean>('builtin_ai_is_model_ready', {
           modelName: selectedModel,
           refresh: true,
         });
 
         if (!isReady) {
-          // Get detailed model status
           const modelInfo = await invokeTauri<BuiltInModelInfo | null>('builtin_ai_get_model_info', {
             modelName: selectedModel,
           });
@@ -586,7 +547,6 @@ export function useSummaryGeneration({
             }
           }
 
-          // Fallback if we couldn't get model info
           toast.error('Built-in AI model not ready', {
             description: 'Please ensure the model is downloaded in settings',
             duration: 5000,
@@ -616,7 +576,6 @@ export function useSummaryGeneration({
     });
   }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
 
-  // Public API: Regenerate summary from the current saved transcript
   const handleRegenerateSummary = useCallback(async () => {
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
@@ -632,12 +591,10 @@ export function useSummaryGeneration({
     });
   }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary]);
 
-  // Public API: Stop ongoing summary generation
   const handleStopGeneration = useCallback(async () => {
     console.log('Stopping summary generation for meeting:', meeting.id);
 
     try {
-      // Call backend to cancel the summary generation
       await invokeTauri('api_cancel_summary', {
         meetingId: meeting.id
       });
@@ -647,14 +604,11 @@ export function useSummaryGeneration({
       // Continue with frontend cleanup even if backend call fails
     }
 
-    // Stop polling
     stopSummaryPolling(meeting.id);
 
-    // Reset status to idle
     setSummaryStatus('idle');
     setSummaryError(null);
 
-    // Show toast notification
     toast.info('Summary generation stopped', {
       description: 'You can generate a new summary anytime',
       duration: 3000,
