@@ -88,6 +88,12 @@ export default function MeetingsPage() {
           >
             Record
           </Link>
+          <Link
+            href="/bot"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-ink"
+          >
+            Send notetaker
+          </Link>
           {workspaces.length > 1 ? (
             <select
               className="rounded-md border border-slate-300 px-2 py-1 text-sm"
