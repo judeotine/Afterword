@@ -18,7 +18,7 @@ interface RecordingControlsProps {
   onRecordingStart: () => void;
   onTranscriptReceived: (summary: SummaryResponse) => void;
   onTranscriptionError?: (message: string) => void;
-  onStopInitiated?: () => void; // Called immediately when stop button is clicked
+  onStopInitiated?: () => void;
   isRecordingDisabled: boolean;
   isParentProcessing: boolean;
   selectedDevices?: {
@@ -41,7 +41,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   selectedDevices,
   meetingName,
 }) => {
-  // Use global recording state context for pause state (syncs with tray operations)
   const recordingState = useRecordingState();
   const isPaused = recordingState.isPaused;
 
@@ -53,7 +52,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
-  const MIN_RECORDING_DURATION = 2000; // 2 seconds minimum recording time
+  const MIN_RECORDING_DURATION = 2000;
   const [transcriptionErrors, setTranscriptionErrors] = useState(0);
   const [isValidatingModel, setIsValidatingModel] = useState(false);
   const [speechDetected, setSpeechDetected] = useState(false);
@@ -91,15 +90,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     console.log('Current isRecording state:', isRecording);
 
     setShowPlayback(false);
-    setTranscript(''); // Clear any previous transcript
-    setSpeechDetected(false); // Reset speech detection on new recording
+    setTranscript('');
+    setSpeechDetected(false);
 
     try {
-      // Call the validation callback which will:
-      // 1. Check if model is ready
-      // 2. Show appropriate toast/modal
-      // 3. Call backend if valid
-      // 4. Update UI state
       await onRecordingStart();
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -109,10 +103,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         stack: error instanceof Error ? error.stack : undefined
       });
 
-      // Parse error message to provide user-friendly feedback
       const errorMsg = error instanceof Error ? error.message : String(error);
 
-      // Check for device-related errors
       if (errorMsg.includes('microphone') || errorMsg.includes('mic') || errorMsg.includes('input')) {
         setDeviceError({
           title: 'Microphone Not Available',
@@ -153,9 +145,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       });
       console.log('stop_recording command completed successfully:', result);
       setRecordingPath(savePath);
-      // setShowPlayback(true);
       setIsProcessing(false);
-      // Track successful transcription
       Analytics.trackTranscriptionSuccess();
       onRecordingStop(true);
     } catch (error) {
@@ -192,12 +182,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     console.log('Stopping recording...');
 
-    // Notify parent immediately (for UI state updates)
     onStopInitiated?.();
 
     setIsStopping(true);
 
-    // Immediately trigger the stop action
     await stopRecordingAction();
   }, [isRecording, isStarting, isStopping, stopRecordingAction, onStopInitiated]);
 
@@ -209,7 +197,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     try {
       await invoke('pause_recording');
-      // isPaused state now managed by RecordingStateContext via events
       console.log('Recording paused successfully');
     } catch (error) {
       console.error('Failed to pause recording:', error);
@@ -227,7 +214,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     try {
       await invoke('resume_recording');
-      // isPaused state now managed by RecordingStateContext via events
       console.log('Recording resumed successfully');
     } catch (error) {
       console.error('Failed to resume recording:', error);
@@ -249,7 +235,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     const setupListeners = async () => {
       try {
-        // Transcript error listener - handles both regular and actionable errors
         const transcriptErrorUnsubscribe = await listen('transcript-error', (event) => {
           console.log('transcript-error event received:', event);
           console.error('Transcription error received:', event.payload);
@@ -271,7 +256,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           }
         });
 
-        // Transcription error listener - handles structured error objects with actionable flag
         const transcriptionErrorUnsubscribe = await listen('transcription-error', (event) => {
           console.log('transcription-error event received:', event);
           console.error('Transcription error received:', event.payload);
@@ -307,10 +291,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           } */
         });
 
-        // Pause/Resume events are now handled by RecordingStateContext
-        // No need for duplicate listeners here
-
-        // Speech detected listener - for UX feedback when VAD detects speech
         const speechDetectedUnsubscribe = await listen('speech-detected', (event) => {
           console.log('speech-detected event received:', event);
           setSpeechDetected(true);
@@ -388,7 +368,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
               ) : (
                 <>
                   {!isRecording ? (
-                    // Start recording button
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
@@ -412,7 +391,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                       </TooltipContent>
                     </Tooltip>
                   ) : (
-                    // Recording controls (pause/resume + stop)
                     <>
                       <Tooltip>
                         <TooltipTrigger asChild>
