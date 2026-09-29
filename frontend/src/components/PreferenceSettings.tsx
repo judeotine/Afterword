@@ -25,26 +25,21 @@ export function PreferenceSettings() {
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
   const hasTrackedViewRef = useRef(false);
 
-  // Lazy load preferences on mount (only loads if not already cached)
   useEffect(() => {
     loadPreferences();
-    // Reset tracking ref on mount (every tab visit)
     hasTrackedViewRef.current = false;
   }, [loadPreferences]);
 
-  // Track preferences viewed analytics on every tab visit (once per mount)
   useEffect(() => {
     if (hasTrackedViewRef.current) return;
 
     const trackPreferencesViewed = async () => {
-      // Wait for notification settings to be available (either from cache or after loading)
       if (notificationSettings) {
         await Analytics.track('preferences_viewed', {
           notifications_enabled: notificationSettings.notification_preferences.show_recording_started ? 'true' : 'false'
         });
         hasTrackedViewRef.current = true;
       } else if (!isLoadingPreferences) {
-        // If not loading and no settings available, track with default value
         await Analytics.track('preferences_viewed', {
           notifications_enabled: 'false'
         });
@@ -55,10 +50,8 @@ export function PreferenceSettings() {
     trackPreferencesViewed();
   }, [notificationSettings, isLoadingPreferences]);
 
-  // Update notificationsEnabled when notificationSettings are loaded from global state
   useEffect(() => {
     if (notificationSettings) {
-      // Notification enabled means both started and stopped notifications are enabled
       const enabled =
         notificationSettings.notification_preferences.show_recording_started &&
         notificationSettings.notification_preferences.show_recording_stopped;
@@ -68,7 +61,6 @@ export function PreferenceSettings() {
         setIsInitialLoad(false);
       }
     } else if (!isLoadingPreferences) {
-      // If not loading and no settings, use default
       setNotificationsEnabled(true);
       if (isInitialLoad) {
         setPreviousNotificationsEnabled(true);
@@ -78,7 +70,6 @@ export function PreferenceSettings() {
   }, [notificationSettings, isLoadingPreferences, isInitialLoad])
 
   useEffect(() => {
-    // Skip update on initial load or if value hasn't actually changed
     if (isInitialLoad || notificationsEnabled === null || notificationsEnabled === previousNotificationsEnabled) return;
     if (!notificationSettings) return;
 
@@ -86,7 +77,6 @@ export function PreferenceSettings() {
       console.log("Updating notification settings to:", notificationsEnabled);
 
       try {
-        // Update the notification preferences
         const updatedSettings: NotificationSettings = {
           ...notificationSettings,
           notification_preferences: {
@@ -101,7 +91,6 @@ export function PreferenceSettings() {
         setPreviousNotificationsEnabled(notificationsEnabled);
         console.log("Successfully updated notification settings to:", notificationsEnabled);
 
-        // Track notification preference change - only fires when user manually toggles
         await Analytics.track('notification_settings_changed', {
           notifications_enabled: notificationsEnabled.toString()
         });
@@ -113,14 +102,12 @@ export function PreferenceSettings() {
     handleUpdateNotificationSettings();
   }, [notificationsEnabled, notificationSettings, isInitialLoad, previousNotificationsEnabled, updateNotificationSettings])
 
-  // Mirror the stored consent flag (notifications are opt-in, default off)
   useEffect(() => {
     if (notificationSettings) {
       setConsentGiven(notificationSettings.consent_given);
     }
   }, [notificationSettings]);
 
-  // Only offer the DND switch on platforms that can actually report the status
   useEffect(() => {
     let cancelled = false;
     invoke<SystemDndStatus>('get_system_dnd_status')
@@ -140,8 +127,6 @@ export function PreferenceSettings() {
     setConsentGiven(consent);
     try {
       await invoke('set_notification_consent', { consent });
-      // Consent lives in the backend; pull the stored state back into the
-      // context so later settings writes are not built on a stale copy.
       await refreshNotificationSettings();
     } catch (error) {
       console.error('Failed to update notification consent:', error);
@@ -175,7 +160,6 @@ export function PreferenceSettings() {
           break;
       }
 
-      // Track storage folder access
       await Analytics.track('storage_folder_opened', {
         folder_type: folderType
       });
@@ -184,17 +168,14 @@ export function PreferenceSettings() {
     }
   };
 
-  // Show loading only if we're actually loading and don't have cached data
   if (isLoadingPreferences && !notificationSettings && !storageLocations) {
     return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
   }
 
-  // Show loading if notificationsEnabled hasn't been determined yet
   if (notificationsEnabled === null && !isLoadingPreferences) {
     return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
   }
 
-  // Ensure we have a boolean value for the Switch component
   const notificationsEnabledValue = notificationsEnabled ?? false;
 
   return (
