@@ -1,27 +1,21 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
-// Removed unused import
 
-// Performance optimization: Conditional logging macros for hot paths.
-// Defined in afterword-core so the shared pipeline modules can use them too.
 pub(crate) use afterword_core::perf_debug;
 
-// Re-export async logging macros for external use (removed due to macro conflicts)
-
-// Declare audio module
 pub mod analytics;
 pub mod api;
 pub mod audio;
 pub use afterword_core::config;
+pub mod anthropic;
 pub mod console_utils;
 pub mod database;
+pub mod groq;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
 pub mod openai;
-pub mod anthropic;
-pub mod groq;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod state;
@@ -30,7 +24,7 @@ pub mod tray;
 pub mod utils;
 pub mod whisper_engine;
 
-use audio::{list_audio_devices, AudioDevice, trigger_audio_permission};
+use audio::{list_audio_devices, trigger_audio_permission, AudioDevice};
 use log::{error as log_error, info as log_info};
 use notifications::commands::NotificationManagerState;
 use std::sync::Arc;
@@ -39,7 +33,6 @@ use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
-// Global language preference storage (default to "auto-translate" for automatic translation to English)
 static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
     std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
 
@@ -74,7 +67,6 @@ async fn start_recording<R: Runtime>(
         return Err("Recording already in progress".to_string());
     }
 
-    // Call the actual audio recording system with meeting name
     match audio::recording_commands::start_recording_with_devices_and_meeting(
         app.clone(),
         mic_device_name,
@@ -89,8 +81,6 @@ async fn start_recording<R: Runtime>(
 
             log_info!("Recording started successfully");
 
-            // Show recording started notification through NotificationManager
-            // This respects user's notification preferences
             let notification_manager_state = app.state::<NotificationManagerState<R>>();
             if let Err(e) = notifications::commands::show_recording_started_notification(
                 &app,
@@ -99,10 +89,7 @@ async fn start_recording<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             } else {
                 log_info!("Successfully showed recording started notification");
             }
@@ -120,13 +107,11 @@ async fn start_recording<R: Runtime>(
 async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> Result<(), String> {
     log_info!("Attempting to stop recording...");
 
-    // Check the actual audio recording system state instead of the flag
     if !audio::recording_commands::is_recording().await {
         log_info!("Recording is already stopped");
         return Ok(());
     }
 
-    // Call the actual audio recording system to stop
     match audio::recording_commands::stop_recording(
         app.clone(),
         audio::recording_commands::RecordingArgs {
@@ -139,7 +124,6 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
             RECORDING_FLAG.store(false, Ordering::SeqCst);
             tray::update_tray_menu(&app);
 
-            // Create the save directory if it doesn't exist
             if let Some(parent) = std::path::Path::new(&args.save_path).parent() {
                 if !parent.exists() {
                     log_info!("Creating directory: {:?}", parent);
@@ -151,8 +135,6 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
                 }
             }
 
-            // Show recording stopped notification through NotificationManager
-            // This respects user's notification preferences
             let notification_manager_state = app.state::<NotificationManagerState<R>>();
             if let Err(e) = notifications::commands::show_recording_stopped_notification(
                 &app,
@@ -160,10 +142,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording stopped notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording stopped notification: {}", e);
             } else {
                 log_info!("Successfully showed recording stopped notification");
             }
@@ -172,7 +151,7 @@ async fn stop_recording<R: Runtime>(app: AppHandle<R>, args: RecordingArgs) -> R
         }
         Err(e) => {
             log_error!("Failed to stop audio recording: {}", e);
-            // Still update the flag even if stopping failed
+
             RECORDING_FLAG.store(false, Ordering::SeqCst);
             tray::update_tray_menu(&app);
             Err(format!("Failed to stop recording: {}", e))
@@ -206,7 +185,6 @@ fn read_audio_file(file_path: String) -> Result<Vec<u8>, String> {
 async fn save_transcript(file_path: String, content: String) -> Result<(), String> {
     log_info!("Saving transcript to: {}", file_path);
 
-    // Ensure parent directory exists
     if let Some(parent) = std::path::Path::new(&file_path).parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)
@@ -214,7 +192,6 @@ async fn save_transcript(file_path: String, content: String) -> Result<(), Strin
         }
     }
 
-    // Write content to file
     std::fs::write(&file_path, content)
         .map_err(|e| format!("Failed to write transcript: {}", e))?;
 
@@ -222,7 +199,6 @@ async fn save_transcript(file_path: String, content: String) -> Result<(), Strin
     Ok(())
 }
 
-// Audio level monitoring commands
 #[tauri::command]
 async fn start_audio_level_monitoring<R: Runtime>(
     app: AppHandle<R>,
@@ -251,10 +227,6 @@ async fn stop_audio_level_monitoring() -> Result<(), String> {
 async fn is_audio_level_monitoring() -> bool {
     audio::simple_level_monitor::is_monitoring()
 }
-
-// Analytics commands are now handled by analytics::commands module
-
-// Whisper commands are now handled by whisper_engine::commands module
 
 #[tauri::command]
 async fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
@@ -288,10 +260,8 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
     log_info!("🚀 CALLED start_recording_with_devices_and_meeting - Mic: {:?}, System: {:?}, Meeting: {:?}",
              mic_device_name, system_device_name, meeting_name);
 
-    // Clone meeting_name for notification use later
     let meeting_name_for_notification = meeting_name.clone();
 
-    // Call the recording module functions that support meeting names
     let recording_result = match (mic_device_name.clone(), system_device_name.clone()) {
         (None, None) => {
             log_info!(
@@ -322,8 +292,6 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
         Ok(_) => {
             log_info!("Recording started successfully via tauri command");
 
-            // Show recording started notification through NotificationManager
-            // This respects user's notification preferences
             let notification_manager_state = app.state::<NotificationManagerState<R>>();
             if let Err(e) = notifications::commands::show_recording_started_notification(
                 &app,
@@ -332,10 +300,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
             )
             .await
             {
-                log_error!(
-                    "Failed to show recording started notification: {}",
-                    e
-                );
+                log_error!("Failed to show recording started notification: {}", e);
             }
 
             Ok(())
@@ -357,19 +322,16 @@ async fn set_language_preference(language: String) -> Result<(), String> {
     Ok(())
 }
 
-// Internal helper function to get language preference (for use within Rust code)
 pub fn get_language_preference_internal() -> Option<String> {
     LANGUAGE_PREFERENCE.lock().ok().map(|lang| lang.clone())
 }
 
-/// `RUST_LOG` parsed into the levels the log plugin needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LogDirectives {
-    /// Level for every target without a directive of its own.
     global: log::LevelFilter,
-    /// Per-target overrides, in the order they were written.
+
     targets: Vec<(String, log::LevelFilter)>,
-    /// Directives that could not be understood, kept so the caller can warn.
+
     ignored: Vec<String>,
 }
 
@@ -384,9 +346,6 @@ impl Default for LogDirectives {
 }
 
 impl LogDirectives {
-    /// The most verbose level any directive asks for. `log::set_max_level` is a
-    /// global cap, so a per-target `debug` only reaches the logger if the cap
-    /// allows it.
     fn max_level(&self) -> log::LevelFilter {
         self.targets
             .iter()
@@ -397,11 +356,6 @@ impl LogDirectives {
     }
 }
 
-/// Parse an env-filter style `RUST_LOG` value.
-///
-/// Directives are comma separated. Each is either a bare level (`debug`) that
-/// sets the global level, or `target=level` (`app_lib::audio=debug`) that sets
-/// one target's level. Anything else is ignored and reported in `ignored`.
 fn parse_rust_log(value: &str) -> LogDirectives {
     let mut directives = LogDirectives::default();
 
@@ -429,7 +383,6 @@ fn parse_rust_log(value: &str) -> LogDirectives {
     directives
 }
 
-/// Log directives for the app: `RUST_LOG` when set, otherwise the defaults.
 fn configured_log_directives() -> LogDirectives {
     match std::env::var("RUST_LOG") {
         Ok(value) => parse_rust_log(&value),
@@ -439,9 +392,12 @@ fn configured_log_directives() -> LogDirectives {
 
 pub fn run() {
     let log_directives = configured_log_directives();
-    // The logger is not installed yet, so a bad directive has to go to stderr.
+
     for ignored in &log_directives.ignored {
-        eprintln!("warning: ignoring unrecognized RUST_LOG directive `{}`", ignored);
+        eprintln!(
+            "warning: ignoring unrecognized RUST_LOG directive `{}`",
+            ignored
+        );
     }
     log::set_max_level(log_directives.max_level());
 
@@ -486,25 +442,26 @@ pub fn run() {
             None::<notifications::manager::NotificationManager<tauri::Wry>>,
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
-        .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        .manage(summary::summary_engine::ModelManagerState(Arc::new(
+            tokio::sync::Mutex::new(None),
+        )))
         .setup(|_app| {
             log::info!("Application setup complete");
 
-            // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
             }
 
-            // Initialize notification system (consent stays user-controlled)
             log::info!("Initializing notification system...");
             let app_for_notif = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let notif_state = app_for_notif.state::<NotificationManagerState<tauri::Wry>>();
-                match notifications::commands::initialize_notification_manager(app_for_notif.clone()).await {
+                match notifications::commands::initialize_notification_manager(
+                    app_for_notif.clone(),
+                )
+                .await
+                {
                     Ok(manager) => {
-                        // Consent is opt-in: it stays whatever the user chose in
-                        // onboarding or preferences (default off). Do not grant it
-                        // or request system permission on their behalf here.
                         let mut state_lock = notif_state.write().await;
                         *state_lock = Some(manager);
                         log::info!("Notification system initialized");
@@ -515,30 +472,29 @@ pub fn run() {
                 }
             });
 
-            // Set models directory to use app_data_dir (unified storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
 
-            // Initialize Whisper engine on startup
             tauri::async_runtime::spawn(async {
                 if let Err(e) = whisper_engine::commands::whisper_init().await {
                     log::error!("Failed to initialize Whisper engine on startup: {}", e);
                 }
             });
 
-            // Set Parakeet models directory
             parakeet_engine::commands::set_models_directory(&_app.handle());
 
-            // Initialize Parakeet engine on startup
             tauri::async_runtime::spawn(async {
                 if let Err(e) = parakeet_engine::commands::parakeet_init().await {
                     log::error!("Failed to initialize Parakeet engine on startup: {}", e);
                 }
             });
 
-            // Initialize ModelManager for summary engine (async, non-blocking)
             let app_handle_for_model_manager = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match summary::summary_engine::commands::init_model_manager_at_startup(&app_handle_for_model_manager).await {
+                match summary::summary_engine::commands::init_model_manager_at_startup(
+                    &app_handle_for_model_manager,
+                )
+                .await
+                {
                     Ok(_) => log::info!("ModelManager initialized successfully at startup"),
                     Err(e) => {
                         log::warn!("Failed to initialize ModelManager at startup: {}", e);
@@ -547,27 +503,18 @@ pub fn run() {
                 }
             });
 
-            // Trigger system audio permission request on startup (similar to microphone permission)
-            // #[cfg(target_os = "macos")]
-            // {
-            //     tauri::async_runtime::spawn(async {
-            //         if let Err(e) = audio::permissions::trigger_system_audio_permission() {
-            //             log::warn!("Failed to trigger system audio permission: {}", e);
-            //         }
-            //     });
-            // }
-
-            // Initialize database (handles first launch detection and conditional setup)
             tauri::async_runtime::block_on(async {
                 database::setup::initialize_database_on_startup(&_app.handle()).await
             })
             .expect("Failed to initialize database");
 
-            // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
             if let Ok(resource_path) = _app.handle().path().resource_dir() {
                 let templates_dir = resource_path.join("templates");
-                log::info!("Setting bundled templates directory to: {:?}", templates_dir);
+                log::info!(
+                    "Setting bundled templates directory to: {:?}",
+                    templates_dir
+                );
                 summary::templates::set_bundled_templates_dir(templates_dir);
             } else {
                 log::warn!("Failed to resolve resource directory for templates");
@@ -631,7 +578,6 @@ pub fn run() {
             whisper_engine::commands::whisper_download_model,
             whisper_engine::commands::whisper_cancel_download,
             whisper_engine::commands::whisper_delete_corrupted_model,
-            // Parakeet engine commands
             parakeet_engine::commands::parakeet_init,
             parakeet_engine::commands::parakeet_get_available_models,
             parakeet_engine::commands::parakeet_load_model,
@@ -653,22 +599,17 @@ pub fn run() {
             start_audio_level_monitoring,
             stop_audio_level_monitoring,
             is_audio_level_monitoring,
-            // Recording pause/resume commands
             audio::recording_commands::pause_recording,
             audio::recording_commands::resume_recording,
             audio::recording_commands::is_recording_paused,
             audio::recording_commands::get_recording_state,
             audio::recording_commands::get_meeting_folder_path,
-            // Reload sync commands (retrieve transcript history and meeting name)
             audio::recording_commands::get_transcript_history,
             audio::recording_commands::get_recording_meeting_name,
-            // Device monitoring commands (AirPods/Bluetooth disconnect/reconnect)
             audio::recording_commands::poll_audio_device_events,
             audio::recording_commands::get_reconnection_status,
             audio::recording_commands::attempt_device_reconnect,
-            // Playback device detection (Bluetooth warning)
             audio::recording_commands::get_active_audio_output,
-            // Audio recovery commands (for transcript recovery feature)
             audio::incremental_saver::recover_audio_from_checkpoints,
             audio::incremental_saver::cleanup_checkpoints,
             audio::incremental_saver::has_audio_checkpoints,
@@ -687,8 +628,6 @@ pub fn run() {
             api::api_get_model_config,
             api::api_save_model_config,
             api::api_get_api_key,
-            // api::api_get_auto_generate_setting,
-            // api::api_save_auto_generate_setting,
             api::api_get_transcript_config,
             api::api_save_transcript_config,
             api::api_get_transcript_api_key,
@@ -700,11 +639,9 @@ pub fn run() {
             api::api_save_transcript,
             api::open_meeting_folder,
             api::open_external_url,
-            // Custom OpenAI commands
             api::api_save_custom_openai_config,
             api::api_get_custom_openai_config,
             api::api_test_custom_openai_connection,
-            // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
             summary::commands::api_save_meeting_summary,
@@ -714,11 +651,9 @@ pub fn run() {
             summary::commands::api_save_meeting_detected_summary_language,
             summary::commands::api_detect_transcript_summary_language,
             summary::commands::api_cancel_summary,
-            // Template commands
             summary::template_commands::api_list_templates,
             summary::template_commands::api_get_template_details,
             summary::template_commands::api_validate_template,
-            // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,
             summary::summary_engine::commands::builtin_ai_download_model,
@@ -737,9 +672,7 @@ pub fn run() {
             audio::recording_preferences::get_current_audio_backend,
             audio::recording_preferences::set_audio_backend,
             audio::recording_preferences::get_audio_backend_info,
-            // Language preference commands
             set_language_preference,
-            // Notification system commands
             notifications::commands::get_notification_settings,
             notifications::commands::set_notification_settings,
             notifications::commands::request_notification_permission,
@@ -754,18 +687,15 @@ pub fn run() {
             notifications::commands::initialize_notification_manager_manual,
             notifications::commands::test_notification_with_auto_consent,
             notifications::commands::get_notification_stats,
-            // System audio capture commands
             audio::system_audio_commands::start_system_audio_capture_command,
             audio::system_audio_commands::list_system_audio_devices_command,
             audio::system_audio_commands::check_system_audio_permissions_command,
             audio::system_audio_commands::start_system_audio_monitoring,
             audio::system_audio_commands::stop_system_audio_monitoring,
             audio::system_audio_commands::get_system_audio_monitoring_status,
-            // Screen Recording permission commands
             audio::permissions::check_screen_recording_permission_command,
             audio::permissions::request_screen_recording_permission_command,
             audio::permissions::trigger_system_audio_permission_command,
-            // Database import commands
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,
             database::commands::detect_legacy_database,
@@ -773,23 +703,18 @@ pub fn run() {
             database::commands::check_homebrew_database,
             database::commands::import_and_initialize_database,
             database::commands::initialize_fresh_database,
-            // Database and Models path commands
             database::commands::get_database_directory,
             database::commands::open_database_folder,
             whisper_engine::commands::open_models_folder,
-            // Onboarding commands
             onboarding::get_onboarding_status,
             onboarding::save_onboarding_status_cmd,
             onboarding::reset_onboarding_status_cmd,
             onboarding::complete_onboarding,
-            // System settings commands
             #[cfg(target_os = "macos")]
             utils::open_system_settings,
-            // Retranscription commands
             audio::retranscription::start_retranscription_command,
             audio::retranscription::cancel_retranscription_command,
             audio::retranscription::is_retranscription_in_progress_command,
-            // Import audio commands
             audio::import::select_and_validate_audio_command,
             audio::import::validate_audio_file_command,
             audio::import::start_import_audio_command,
@@ -798,37 +723,35 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            match event {
-                #[cfg(target_os = "macos")]
-                tauri::RunEvent::Reopen { .. } => {
-                    tray::focus_main_window(_app_handle);
-                }
-                tauri::RunEvent::Exit => {
-                    log::info!("Application exiting, cleaning up resources...");
-                    tauri::async_runtime::block_on(async {
-                        // Clean up database connection and checkpoint WAL
-                        if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
-                            log::info!("Starting database cleanup...");
-                            if let Err(e) = app_state.db_manager.cleanup().await {
-                                log::error!("Failed to cleanup database: {}", e);
-                            } else {
-                                log::info!("Database cleanup completed successfully");
-                            }
-                        } else {
-                            log::warn!("AppState not available for database cleanup (likely first launch)");
-                        }
-
-                        // Clean up sidecar
-                        log::info!("Cleaning up sidecar...");
-                        if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
-                            log::error!("Failed to force shutdown sidecar: {}", e);
-                        }
-                    });
-                    log::info!("Application cleanup complete");
-                }
-                _ => {}
+        .run(|_app_handle, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                tray::focus_main_window(_app_handle);
             }
+            tauri::RunEvent::Exit => {
+                log::info!("Application exiting, cleaning up resources...");
+                tauri::async_runtime::block_on(async {
+                    if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
+                        log::info!("Starting database cleanup...");
+                        if let Err(e) = app_state.db_manager.cleanup().await {
+                            log::error!("Failed to cleanup database: {}", e);
+                        } else {
+                            log::info!("Database cleanup completed successfully");
+                        }
+                    } else {
+                        log::warn!(
+                            "AppState not available for database cleanup (likely first launch)"
+                        );
+                    }
+
+                    log::info!("Cleaning up sidecar...");
+                    if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
+                        log::error!("Failed to force shutdown sidecar: {}", e);
+                    }
+                });
+                log::info!("Application cleanup complete");
+            }
+            _ => {}
         });
 }
 
@@ -868,7 +791,7 @@ mod log_directive_tests {
             vec![("app_lib::audio".to_string(), LevelFilter::Debug)]
         );
         assert!(parsed.ignored.is_empty());
-        // The global cap has to allow the most verbose target through.
+
         assert_eq!(parsed.max_level(), LevelFilter::Debug);
     }
 
@@ -916,8 +839,6 @@ mod log_directive_tests {
 
     #[test]
     fn audio_is_no_longer_pinned_to_info() {
-        // Regression: the plugin used to hard-code level_for("app_lib::audio", Info),
-        // so RUST_LOG=app_lib::audio=debug could never take effect.
         let parsed = parse_rust_log("app_lib::audio=trace");
         assert_eq!(
             parsed.targets,
