@@ -25,11 +25,11 @@ LIMIT sqlc.arg(page_size);
 
 -- name: UpdateClip :one
 UPDATE clips SET
-    start_s = COALESCE(sqlc.narg(start_s), start_s),
-    end_s = COALESCE(sqlc.narg(end_s), end_s),
-    title = COALESCE(sqlc.narg(title), title),
-    object = COALESCE(sqlc.narg(object), object),
-    share_token = COALESCE(sqlc.narg(share_token), share_token)
+    start_s = COALESCE(sqlc.narg(start_s), clips.start_s),
+    end_s = COALESCE(sqlc.narg(end_s), clips.end_s),
+    title = COALESCE(sqlc.narg(title), clips.title),
+    object = COALESCE(sqlc.narg(object), clips.object),
+    share_token = COALESCE(sqlc.narg(share_token), clips.share_token)
 FROM meetings
 WHERE clips.meeting_id = meetings.id
   AND clips.id = sqlc.arg(id)
