@@ -25,12 +25,11 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-
 def get_default_db_path() -> Path:
     """Get the default database path based on the platform."""
     system = platform.system()
 
-    if system == "Darwin":  # macOS
+    if system == "Darwin":
         base_path = Path.home() / "Library" / "Application Support" / "Afterword"
     elif system == "Windows":
         appdata = os.environ.get("APPDATA", "")
@@ -38,11 +37,10 @@ def get_default_db_path() -> Path:
             base_path = Path(appdata) / "Afterword"
         else:
             base_path = Path.home() / "AppData" / "Roaming" / "Afterword"
-    else:  # Linux and others
+    else:
         base_path = Path.home() / ".config" / "Afterword"
 
     return base_path / "meeting_minutes.sqlite"
-
 
 def estimate_duration(text: str) -> float:
     """
@@ -51,11 +49,10 @@ def estimate_duration(text: str) -> float:
     Assumes ~150 words per minute speech rate, which equals ~0.4 seconds per word.
     """
     word_count = len(text.split())
-    # ~0.4 seconds per word (150 words/minute)
-    duration = word_count * 0.4
-    # Minimum duration of 0.5 seconds for very short segments
-    return max(duration, 0.5)
 
+    duration = word_count * 0.4
+
+    return max(duration, 0.5)
 
 def read_csv(csv_path: str) -> list[dict]:
     """Read transcript segments from CSV file."""
@@ -64,7 +61,6 @@ def read_csv(csv_path: str) -> list[dict]:
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
 
-        # Check for required 'text' column
         if 'text' not in reader.fieldnames:
             raise ValueError("CSV must have a 'text' column")
 
@@ -77,7 +73,6 @@ def read_csv(csv_path: str) -> list[dict]:
         raise ValueError("CSV file contains no transcript segments")
 
     return segments
-
 
 def process_segments(segments: list[dict], start_time: datetime) -> list[dict]:
     """
@@ -107,12 +102,10 @@ def process_segments(segments: list[dict], start_time: datetime) -> list[dict]:
             'duration': duration,
         })
 
-        # Advance timing for next segment
         current_audio_time += duration
         current_timestamp += timedelta(seconds=duration)
 
     return processed
-
 
 def inject_meeting(
     db_path: str,
@@ -141,16 +134,14 @@ def inject_meeting(
     cursor = conn.cursor()
 
     try:
-        # Begin transaction
+
         cursor.execute("BEGIN TRANSACTION")
 
-        # Insert meeting
         cursor.execute("""
             INSERT INTO meetings (id, title, created_at, updated_at, folder_path)
             VALUES (?, ?, ?, ?, ?)
         """, (meeting_id, title, now, now, folder_path))
 
-        # Insert transcript segments
         for seg in segments:
             cursor.execute("""
                 INSERT INTO transcripts (
@@ -167,7 +158,6 @@ def inject_meeting(
                 seg['duration'],
             ))
 
-        # Commit transaction
         conn.commit()
 
     except Exception as e:
@@ -177,7 +167,6 @@ def inject_meeting(
         conn.close()
 
     return meeting_id
-
 
 def verify_injection(db_path: str, meeting_id: str) -> dict:
     """
@@ -190,7 +179,7 @@ def verify_injection(db_path: str, meeting_id: str) -> dict:
     cursor = conn.cursor()
 
     try:
-        # Get meeting info
+
         cursor.execute("""
             SELECT id, title, created_at, folder_path
             FROM meetings WHERE id = ?
@@ -200,13 +189,11 @@ def verify_injection(db_path: str, meeting_id: str) -> dict:
         if not meeting:
             raise RuntimeError(f"Meeting {meeting_id} not found after insertion")
 
-        # Count transcripts
         cursor.execute("""
             SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?
         """, (meeting_id,))
         transcript_count = cursor.fetchone()[0]
 
-        # Get total duration
         cursor.execute("""
             SELECT MAX(audio_end_time) FROM transcripts WHERE meeting_id = ?
         """, (meeting_id,))
@@ -223,7 +210,6 @@ def verify_injection(db_path: str, meeting_id: str) -> dict:
 
     finally:
         conn.close()
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -273,7 +259,6 @@ Example usage:
 
     args = parser.parse_args()
 
-    # Resolve database path
     if args.db:
         db_path = Path(args.db)
     else:
@@ -284,13 +269,11 @@ Example usage:
         print("Make sure Afterword has been run at least once to create the database.", file=sys.stderr)
         sys.exit(1)
 
-    # Resolve CSV path
     csv_path = Path(args.csv)
     if not csv_path.exists():
         print(f"Error: CSV file not found at {csv_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Parse creation timestamp
     if args.created_at:
         try:
             created_at = datetime.fromisoformat(args.created_at.replace('Z', '+00:00'))
@@ -301,7 +284,6 @@ Example usage:
     else:
         created_at = datetime.now()
 
-    # Generate title if not provided
     title = args.title or f"Injected Meeting - {created_at.strftime('%Y-%m-%d %H:%M')}"
 
     print(f"Reading CSV: {csv_path}")
@@ -327,7 +309,6 @@ Example usage:
         print(f"Error injecting meeting: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Verify and print summary
     print("\n" + "=" * 50)
     print("SUCCESS: Meeting injected")
     print("=" * 50)
@@ -345,7 +326,6 @@ Example usage:
         print(f"Warning: Verification failed: {e}", file=sys.stderr)
 
     print("\nThe meeting should now appear in the Afterword sidebar.")
-
 
 if __name__ == "__main__":
     main()
