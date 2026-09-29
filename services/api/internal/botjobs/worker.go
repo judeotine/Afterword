@@ -56,6 +56,20 @@ func (s *Service) GetByID(ctx context.Context, id uuid.UUID) (BotJob, error) {
 	return newBotJob(row), nil
 }
 
+func (s *Service) AttachMeeting(ctx context.Context, id uuid.UUID, meetingID uuid.UUID) (BotJob, error) {
+	row, err := s.queries.AttachBotJobMeeting(ctx, sqlcgen.AttachBotJobMeetingParams{
+		ID:        id,
+		MeetingID: &meetingID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return BotJob{}, ErrJobNotFound
+		}
+		return BotJob{}, fmt.Errorf("attach bot job meeting: %w", err)
+	}
+	return newBotJob(row), nil
+}
+
 type WorkerUpdate struct {
 	Status           string
 	MinutesUsed      *int32
