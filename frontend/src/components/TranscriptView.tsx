@@ -10,17 +10,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 interface TranscriptViewProps {
   transcripts: Transcript[];
   isRecording?: boolean;
-  isPaused?: boolean; // Is recording paused (affects UI indicators)
-  isProcessing?: boolean; // Is processing/finalizing transcription (hides "Listening..." indicator)
-  isStopping?: boolean; // Is recording being stopped (provides immediate UI feedback)
-  enableStreaming?: boolean; // Enable streaming effect for live transcription UX
+  isPaused?: boolean;
+  isProcessing?: boolean;
+  isStopping?: boolean;
+  enableStreaming?: boolean;
 }
 
 interface SpeechDetectedEvent {
   message: string;
 }
 
-// Helper function to format seconds as recording-relative time [MM:SS]
 function formatRecordingTime(seconds: number | undefined): string {
   if (seconds === undefined) return '[--:--]';
 
@@ -31,7 +30,6 @@ function formatRecordingTime(seconds: number | undefined): string {
   return `[${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
 }
 
-// Helper function to remove consecutive word repetitions (especially short words ≤2 letters)
 function cleanRepetitions(text: string): string {
   if (!text || text.trim().length === 0) return text;
 
@@ -43,7 +41,6 @@ function cleanRepetitions(text: string): string {
     const currentWord = words[i];
     const currentWordLower = currentWord.toLowerCase();
 
-    // Count consecutive repetitions of the same word
     let repeatCount = 1;
     while (
       i + repeatCount < words.length &&
@@ -52,10 +49,7 @@ function cleanRepetitions(text: string): string {
       repeatCount++;
     }
 
-    // For short words (≤2 letters), be aggressive: if repeated 2+ times, keep only 1
-    // For longer words, keep 1 if repeated 3+ times (less aggressive)
     if (currentWord.length <= 2) {
-      // Short words: "I I I I" → "I", "Tu Tu Tu" → "Tu"
       if (repeatCount >= 2) {
         cleanedWords.push(currentWord);
         i += repeatCount;
@@ -64,7 +58,6 @@ function cleanRepetitions(text: string): string {
         i += 1;
       }
     } else {
-      // Longer words: keep original unless heavily repeated
       if (repeatCount >= 3) {
         cleanedWords.push(currentWord);
         i += repeatCount;
@@ -78,12 +71,9 @@ function cleanRepetitions(text: string): string {
   return cleanedWords.join(' ');
 }
 
-// Helper function to remove filler words and stop words from transcripts
 function cleanStopWords(text: string): string {
-  // FIRST: Clean repetitions (especially short words)
   let cleanedText = cleanRepetitions(text);
 
-  // THEN: Remove filler words
   const stopWords = [
     'uh', 'um', 'er', 'ah', 'hmm', 'hm', 'eh', 'oh',
     // 'like', 'you know', 'i mean', 'sort of', 'kind of',
@@ -91,14 +81,11 @@ function cleanStopWords(text: string): string {
     // 'thank you', 'thanks'
   ];
 
-  // Remove each stop word (case-insensitive, with word boundaries)
   stopWords.forEach(word => {
-    // Match the stop word at word boundaries, with optional punctuation
     const pattern = new RegExp(`\\b${word}\\b[,\\s]*`, 'gi');
     cleanedText = cleanedText.replace(pattern, ' ');
   });
 
-  // Clean up extra whitespace and trim
   cleanedText = cleanedText.replace(/\s+/g, ' ').trim();
 
   return cleanedText;
@@ -107,7 +94,6 @@ function cleanStopWords(text: string): string {
 export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isRecording = false, isPaused = false, isProcessing = false, isStopping = false, enableStreaming = false }) => {
   const [speechDetected, setSpeechDetected] = useState(false);
 
-  // Debug: Log the props to understand what's happening
   console.log('TranscriptView render:', {
     isRecording,
     isPaused,
@@ -117,25 +103,22 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
     shouldShowListening: !isStopping && isRecording && !isPaused && !isProcessing && transcripts.length > 0
   });
 
-  // Streaming effect state
   const [streamingTranscript, setStreamingTranscript] = useState<{
     id: string;
     visibleText: string;
     fullText: string;
   } | null>(null);
   const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastStreamedIdRef = useRef<string | null>(null); // Track which transcript we've streamed
+  const lastStreamedIdRef = useRef<string | null>(null);
 
-  // Load preference for showing confidence indicator
   const [showConfidence, setShowConfidence] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showConfidenceIndicator');
-      return saved !== null ? saved === 'true' : true; // Default to true
+      return saved !== null ? saved === 'true' : true;
     }
     return true;
   });
 
-  // Listen for preference changes from settings
   useEffect(() => {
     const handleConfidenceChange = (e: Event) => {
       const customEvent = e as CustomEvent<boolean>;
@@ -146,7 +129,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
     return () => window.removeEventListener('confidenceIndicatorChanged', handleConfidenceChange);
   }, []);
 
-  // Listen for speech-detected event
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
 
@@ -160,7 +142,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
     if (isRecording) {
       setupListener();
     } else {
-      // Reset when not recording
       setSpeechDetected(false);
     }
 
@@ -171,10 +152,8 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
     };
   }, [isRecording]);
 
-  // Streaming effect: animate new transcripts character-by-character
   useEffect(() => {
     if (!enableStreaming || !isRecording) {
-      // Clean up if streaming is disabled
       if (streamingIntervalRef.current) {
         clearInterval(streamingIntervalRef.current);
         streamingIntervalRef.current = null;
@@ -184,31 +163,26 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
       return;
     }
 
-    // Find the latest non-partial transcript
     const latestTranscript = transcripts
       .slice(-1)[0];
 
     if (!latestTranscript) return;
 
-    // Check if this is a new transcript we haven't streamed yet (using ref to avoid dependency issues)
     if (lastStreamedIdRef.current !== latestTranscript.id) {
-      // Clear any existing streaming interval
       if (streamingIntervalRef.current) {
         clearInterval(streamingIntervalRef.current);
         streamingIntervalRef.current = null;
       }
 
-      // Mark this transcript as being streamed
       lastStreamedIdRef.current = latestTranscript.id;
 
       const fullText = latestTranscript.text;
 
-      // Fast typewriter effect - complete in 0.8 seconds for snappy feel
-      const TOTAL_DURATION_MS = 800; // 0.8 seconds total - fast and snappy!
-      const INTERVAL_MS = 15; // Update every 15ms for smooth animation
-      const totalTicks = TOTAL_DURATION_MS / INTERVAL_MS; // ~53 ticks
-      const charsPerTick = Math.max(2, Math.ceil(fullText.length / totalTicks)); // At least 2 chars per tick for speed
-      const INITIAL_CHARS = Math.min(5, fullText.length); // Start with first 5 chars visible
+      const TOTAL_DURATION_MS = 800;
+      const INTERVAL_MS = 15;
+      const totalTicks = TOTAL_DURATION_MS / INTERVAL_MS;
+      const charsPerTick = Math.max(2, Math.ceil(fullText.length / totalTicks));
+      const INITIAL_CHARS = Math.min(5, fullText.length);
       let charIndex = INITIAL_CHARS;
 
       setStreamingTranscript({
@@ -221,7 +195,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
         charIndex += charsPerTick;
 
         if (charIndex >= fullText.length) {
-          // Streaming complete
           clearInterval(streamingIntervalRef.current!);
           streamingIntervalRef.current = null;
           setStreamingTranscript(null);
@@ -238,7 +211,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
     }
   }, [transcripts, enableStreaming, isRecording]);
 
-  // Cleanup streaming interval on unmount
   useEffect(() => {
     return () => {
       if (streamingIntervalRef.current) {
@@ -263,13 +235,10 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
       {transcripts?.map((transcript, index) => {
         const isStreaming = streamingTranscript?.id === transcript.id;
         const textToShow = isStreaming ? streamingTranscript.visibleText : transcript.text;
-        // Clean up text for display - remove repetitions and filler words
         const filteredText = cleanStopWords(textToShow);
-        // Show [Silence] ONLY if the ORIGINAL transcript was empty (not just after filtering)
         const originalWasEmpty = transcript.text.trim() === '';
         const displayText = originalWasEmpty && !isStreaming ? '[Silence]' : filteredText;
 
-        // Sizer text: use cleaned version for proper sizing, fallback to [Silence] only if original was empty
         const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : transcript.text)
           || (originalWasEmpty && !isStreaming ? '[Silence]' : '');
 
@@ -306,7 +275,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
               </Tooltip>
               <div className="flex-1">
                 {isStreaming ? (
-                  // Streaming transcript - show in bubble (full width)
                   <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                     <div className="relative">
                       <p className="text-base text-gray-800 leading-relaxed" style={{ visibility: 'hidden' }}>
@@ -318,7 +286,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
                     </div>
                   </div>
                 ) : (
-                  // Regular transcript - simple text
                   <div className="relative">
                     <p className="text-base text-gray-800 leading-relaxed" style={{ visibility: 'hidden' }}>
                       {sizerText}
