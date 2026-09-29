@@ -20,6 +20,8 @@ const (
 	codeShareClosed     = "share_link_closed"
 	codeFinalized       = "meeting_finalized"
 	codeEmptyComment    = "empty_comment"
+	codeEmptyPhrase     = "empty_phrase"
+	codeInvalidChannel  = "invalid_channel"
 )
 
 var libraryErrors = []struct {
@@ -44,6 +46,9 @@ var libraryErrors = []struct {
 	{meetings.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That page cursor is not valid."}},
 	{meetings.ErrCommentNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That comment does not exist."}},
 	{meetings.ErrEmptyComment, statusError{http.StatusBadRequest, codeEmptyComment, "A comment cannot be empty."}},
+	{meetings.ErrKeywordAlertNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That keyword alert does not exist."}},
+	{meetings.ErrEmptyPhrase, statusError{http.StatusBadRequest, codeEmptyPhrase, "A keyword alert phrase cannot be empty."}},
+	{meetings.ErrInvalidChannel, statusError{http.StatusBadRequest, codeInvalidChannel, "That alert channel is not supported."}},
 }
 
 func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
