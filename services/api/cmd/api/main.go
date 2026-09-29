@@ -119,7 +119,7 @@ func run() error {
 		logger.Warn().Msg("credit adjustments are disabled: set ADMIN_TOKEN to enable them")
 	}
 
-	botJobServer, err := buildBotJobs(cfg, pool, components, logger)
+	botJobServer, err := buildBotJobs(cfg, pool, components, library, logger)
 	if err != nil {
 		return err
 	}
@@ -390,7 +390,7 @@ func buildBilling(cfg config.Config, billingCfg config.BillingConfig, pool *db.P
 	})
 }
 
-func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, logger zerolog.Logger) (*api.BotJobServer, error) {
+func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, library *meetings.Service, logger zerolog.Logger) (*api.BotJobServer, error) {
 	service, err := botjobs.NewService(botjobs.ServiceOptions{Pool: pool.Pool()})
 	if err != nil {
 		return nil, err
@@ -405,6 +405,7 @@ func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, lo
 		Entitlements: entitlements,
 		Middleware:   components.middleware,
 		WorkerAuth:   auth.NewWorkerAuth(os.Getenv("WORKER_TOKEN")),
+		Meetings:     library,
 	})
 }
 
