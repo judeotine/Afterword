@@ -36,7 +36,6 @@ export interface ModelConfig {
   whisperModel: string;
   apiKey?: string | null;
   ollamaEndpoint?: string | null;
-  // Custom OpenAI fields
   customOpenAIEndpoint?: string | null;
   customOpenAIModel?: string | null;
   customOpenAIApiKey?: string | null;
@@ -74,7 +73,6 @@ interface GroqModel {
   owned_by?: string;
 }
 
-// Fallback models for when API fetch fails or no API key provided
 const OPENAI_FALLBACK_MODELS = [
   'gpt-4o',
   'gpt-4o-mini',
@@ -105,7 +103,7 @@ interface ModelSettingsModalProps {
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
   onSave: (config: ModelConfig) => void;
-  skipInitialFetch?: boolean; // Optional: skip fetching config from backend if parent manages it
+  skipInitialFetch?: boolean;
   layout?: 'inline' | 'dialog';
 }
 
@@ -116,7 +114,6 @@ export function ModelSettingsModal({
   skipInitialFetch = false,
   layout = 'inline',
 }: ModelSettingsModalProps) {
-  // Use ConfigContext if available, fallback to props for backward compatibility
   const configContext = useConfig();
   const modelConfig = configContext?.modelConfig || propsModelConfig;
   const setModelConfig = configContext?.setModelConfig || propsSetModelConfig;
@@ -140,12 +137,11 @@ export function ModelSettingsModal({
   const [hasAutoFetched, setHasAutoFetched] = useState<boolean>(false);
   const hasSyncedFromParent = useRef<boolean>(false);
   const hasLoadedInitialConfig = useRef<boolean>(false);
-  const [autoGenerateEnabled, setAutoGenerateEnabled] = useState<boolean>(true); // Default to true
+  const [autoGenerateEnabled, setAutoGenerateEnabled] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isEndpointSectionCollapsed, setIsEndpointSectionCollapsed] = useState<boolean>(true); // Collapsed by default
-  const [ollamaNotInstalled, setOllamaNotInstalled] = useState<boolean>(false); // Track if Ollama is not installed
+  const [isEndpointSectionCollapsed, setIsEndpointSectionCollapsed] = useState<boolean>(true);
+  const [ollamaNotInstalled, setOllamaNotInstalled] = useState<boolean>(false);
 
-  // Custom OpenAI state
   const [customOpenAIEndpoint, setCustomOpenAIEndpoint] = useState<string>(modelConfig.customOpenAIEndpoint || '');
   const [customOpenAIModel, setCustomOpenAIModel] = useState<string>(modelConfig.customOpenAIModel || '');
   const [customOpenAIApiKey, setCustomOpenAIApiKey] = useState<string>(modelConfig.customOpenAIApiKey || '');
@@ -155,10 +151,8 @@ export function ModelSettingsModal({
   const [isCustomOpenAIAdvancedOpen, setIsCustomOpenAIAdvancedOpen] = useState<boolean>(false);
   const [isTestingConnection, setIsTestingConnection] = useState<boolean>(false);
 
-  // Combobox state
   const [modelComboboxOpen, setModelComboboxOpen] = useState<boolean>(false);
 
-  // Dynamic model fetching state for OpenAI, Claude, and Groq
   const [openaiModels, setOpenaiModels] = useState<string[]>([]);
   const [claudeModels, setClaudeModels] = useState<string[]>([]);
   const [groqModels, setGroqModels] = useState<string[]>([]);
@@ -166,18 +160,14 @@ export function ModelSettingsModal({
   const [isLoadingClaude, setIsLoadingClaude] = useState<boolean>(false);
   const [isLoadingGroq, setIsLoadingGroq] = useState<boolean>(false);
 
-  // Use global download context instead of local state
   const { isDownloading, getProgress, downloadingModels } = useOllamaDownload();
 
-  // Built-in AI models state
   const [builtinAiModels, setBuiltinAiModels] = useState<any[]>([]);
 
-  // Cache models by endpoint to avoid refetching when reverting endpoint changes
   const modelsCache = useRef<Map<string, OllamaModel[]>>(new Map());
 
-  // URL validation helper
   const validateOllamaEndpoint = (url: string): boolean => {
-    if (!url.trim()) return true; // Empty is valid (uses default)
+    if (!url.trim()) return true;
     try {
       const parsed = new URL(url);
       return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -186,7 +176,6 @@ export function ModelSettingsModal({
     }
   };
 
-  // Debounced URL validation with visual feedback
   useEffect(() => {
     const timer = setTimeout(() => {
       const trimmed = ollamaEndpoint.trim();
@@ -198,7 +187,7 @@ export function ModelSettingsModal({
       } else {
         setEndpointValidationState('invalid');
       }
-    }, 500); // 500ms debounce
+    }, 500);
 
     return () => clearTimeout(timer);
   }, [ollamaEndpoint]);
@@ -215,7 +204,6 @@ export function ModelSettingsModal({
     }
   };
 
-  // Auto-unlock when API key becomes empty, 
   useEffect(() => {
     const hasContent = !!apiKey?.trim();
     if (!hasContent) {
@@ -239,11 +227,9 @@ export function ModelSettingsModal({
     modelConfig.provider === 'openai' ||
     modelConfig.provider === 'openrouter';
 
-  // Check if Ollama endpoint has changed but models haven't been fetched yet
   const ollamaEndpointChanged = modelConfig.provider === 'ollama' &&
     ollamaEndpoint.trim() !== lastFetchedEndpoint.trim();
 
-  // Custom OpenAI validation
   const isCustomOpenAIInvalid = modelConfig.provider === 'custom-openai' && (
     !customOpenAIEndpoint.trim() ||
     !customOpenAIModel.trim()
@@ -256,7 +242,6 @@ export function ModelSettingsModal({
 
   useEffect(() => {
     const fetchModelConfig = async () => {
-      // If parent component manages config, skip fetch and just mark as loaded
       if (skipInitialFetch) {
         hasLoadedInitialConfig.current = true;
         return;
@@ -267,7 +252,6 @@ export function ModelSettingsModal({
         if (data && data.provider !== null) {
           setModelConfig(data);
 
-          // Fetch API key if not included in response and provider requires it
           if (data.provider !== 'ollama' && !data.apiKey) {
             try {
               const apiKeyData = await invoke('api_get_api_key', {
@@ -280,14 +264,12 @@ export function ModelSettingsModal({
             }
           }
 
-          // Sync ollamaEndpoint state with fetched config
           if (data.ollamaEndpoint) {
             setOllamaEndpoint(data.ollamaEndpoint);
             // Don't set lastFetchedEndpoint here - it will be set after successful model fetch
           }
-          hasLoadedInitialConfig.current = true; // Mark that initial config is loaded
+          hasLoadedInitialConfig.current = true;
 
-          // Fetch Custom OpenAI config if that's the active provider
           if (data.provider === 'custom-openai') {
             try {
               const customConfig = (await invoke('api_get_custom_openai_config')) as any;
@@ -306,14 +288,13 @@ export function ModelSettingsModal({
         }
       } catch (error) {
         console.error('Failed to fetch model config:', error);
-        hasLoadedInitialConfig.current = true; // Mark as loaded even on error
+        hasLoadedInitialConfig.current = true;
       }
     };
 
     fetchModelConfig();
   }, [skipInitialFetch]);
 
-  // Fetch auto-generate setting on mount
   useEffect(() => {
     const fetchAutoGenerateSetting = async () => {
       try {
@@ -329,20 +310,17 @@ export function ModelSettingsModal({
     fetchAutoGenerateSetting();
   }, []);
 
-  // Sync ollamaEndpoint state when modelConfig.ollamaEndpoint changes from parent
   useEffect(() => {
     const endpoint = modelConfig.ollamaEndpoint || '';
     if (endpoint !== ollamaEndpoint) {
       setOllamaEndpoint(endpoint);
       // Don't set lastFetchedEndpoint here - only after successful model fetch
     }
-    // Only mark as synced if we have a valid provider (prevents race conditions during init)
     if (modelConfig.provider) {
-      hasSyncedFromParent.current = true; // Mark that we've received prop value
+      hasSyncedFromParent.current = true;
     }
   }, [modelConfig.ollamaEndpoint, modelConfig.provider]);
 
-  // Sync custom OpenAI state from modelConfig (context or props)
   useEffect(() => {
     if (modelConfig.provider === 'custom-openai') {
       console.log('Syncing custom OpenAI fields from ConfigContext:', {
@@ -351,7 +329,6 @@ export function ModelSettingsModal({
         hasApiKey: !!modelConfig.customOpenAIApiKey,
       });
 
-      // Always sync from modelConfig (which comes from context if available)
       setCustomOpenAIEndpoint(modelConfig.customOpenAIEndpoint || '');
       setCustomOpenAIModel(modelConfig.customOpenAIModel || '');
       setCustomOpenAIApiKey(modelConfig.customOpenAIApiKey || '');
@@ -369,31 +346,26 @@ export function ModelSettingsModal({
     modelConfig.topP
   ]);
 
-  // Reset hasAutoFetched flag and clear models when switching away from Ollama
   useEffect(() => {
     if (modelConfig.provider !== 'ollama') {
-      setHasAutoFetched(false); // Reset flag so it can auto-fetch again if user switches back
-      setModels([]); // Clear models list
-      setError(''); // Clear any error state
-      setOllamaNotInstalled(false); // Reset installation status
+      setHasAutoFetched(false);
+      setModels([]);
+      setError('');
+      setOllamaNotInstalled(false);
     }
   }, [modelConfig.provider]);
 
-  // Handle endpoint changes - restore cached models or clear
   useEffect(() => {
     if (modelConfig.provider === 'ollama' &&
       ollamaEndpoint.trim() !== lastFetchedEndpoint.trim()) {
 
-      // Check if we have cached models for this endpoint (including empty endpoint = default)
       const cachedModels = modelsCache.current.get(ollamaEndpoint.trim());
 
       if (cachedModels && cachedModels.length > 0) {
-        // Restore cached models and update tracking
         setModels(cachedModels);
         setLastFetchedEndpoint(ollamaEndpoint.trim());
         setError('');
       } else {
-        // No cache - clear models and allow refetch
         setHasAutoFetched(false);
         setModels([]);
         setError('');
@@ -401,7 +373,6 @@ export function ModelSettingsModal({
     }
   }, [ollamaEndpoint, lastFetchedEndpoint, modelConfig.provider]);
 
-  // Sync local apiKey state when provider changes
   useEffect(() => {
     if (providerApiKeys && requiresApiKey && modelConfig.provider !== 'custom-openai') {
       const correctKey = providerApiKeys[modelConfig.provider as keyof typeof providerApiKeys];
@@ -412,11 +383,9 @@ export function ModelSettingsModal({
     }
   }, [modelConfig.provider, providerApiKeys, requiresApiKey]);
 
-  // Manual fetch function for Ollama models
   const fetchOllamaModels = async (silent = false) => {
     const trimmedEndpoint = ollamaEndpoint.trim();
 
-    // Validate URL if provided
     if (trimmedEndpoint && !validateOllamaEndpoint(trimmedEndpoint)) {
       const errorMsg = 'Invalid Ollama endpoint URL. Must start with http:// or https://';
       setError(errorMsg);
@@ -427,24 +396,21 @@ export function ModelSettingsModal({
     }
 
     setIsLoadingOllama(true);
-    setError(''); // Clear previous errors
+    setError('');
 
     try {
       const endpoint = trimmedEndpoint || null;
       const modelList = (await invoke('get_ollama_models', { endpoint })) as OllamaModel[];
       setModels(modelList);
-      setLastFetchedEndpoint(trimmedEndpoint); // Track successful fetch
+      setLastFetchedEndpoint(trimmedEndpoint);
 
-      // Cache the fetched models for this endpoint
       modelsCache.current.set(trimmedEndpoint, modelList);
 
-      // Successfully fetched models, Ollama is installed
       setOllamaNotInstalled(false);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to load Ollama models';
       setError(errorMsg);
 
-      // Check if error indicates Ollama is not installed
       if (isOllamaNotInstalledError(errorMsg)) {
         setOllamaNotInstalled(true);
       } else {
@@ -460,20 +426,14 @@ export function ModelSettingsModal({
     }
   };
 
-  // Auto-fetch models on initial load only (not on endpoint changes)
   useEffect(() => {
     let mounted = true;
 
     const initialLoad = async () => {
-      // Only auto-fetch on initial load if:
-      // 1. Provider is ollama
-      // 2. Haven't fetched yet
-      // 3. Component is still mounted
-      // If skipInitialFetch is true, fetch silently (no error toasts)
       if (modelConfig.provider === 'ollama' &&
         !hasAutoFetched &&
         mounted) {
-        await fetchOllamaModels(skipInitialFetch); // Silent if skipInitialFetch=true
+        await fetchOllamaModels(skipInitialFetch);
         setHasAutoFetched(true);
       }
     };
@@ -483,10 +443,10 @@ export function ModelSettingsModal({
     return () => {
       mounted = false;
     };
-  }, [modelConfig.provider]); // Only depend on provider, NOT endpoint
+  }, [modelConfig.provider]);
 
   const loadOpenRouterModels = async () => {
-    if (openRouterModels.length > 0) return; // Already loaded
+    if (openRouterModels.length > 0) return;
 
     try {
       setIsLoadingOpenRouter(true);
@@ -504,13 +464,12 @@ export function ModelSettingsModal({
   };
 
   const loadBuiltinAiModels = async () => {
-    if (builtinAiModels.length > 0) return; // Already loaded
+    if (builtinAiModels.length > 0) return;
 
     try {
       const data = (await invoke('builtin_ai_list_models')) as any[];
       setBuiltinAiModels(data);
 
-      // Auto-select first available model if none selected
       if (data.length > 0 && !modelConfig.model) {
         const firstAvailable = data.find((m: any) => m.status?.type === 'available');
         if (firstAvailable) {
@@ -523,10 +482,9 @@ export function ModelSettingsModal({
     }
   };
 
-  // Fetch OpenAI models from API
   const loadOpenAIModels = async (key: string | null) => {
     if (!key?.trim()) {
-      setOpenaiModels([]); // Will use fallback via modelOptions
+      setOpenaiModels([]);
       return;
     }
     setIsLoadingOpenAI(true);
@@ -535,16 +493,15 @@ export function ModelSettingsModal({
       setOpenaiModels(data.map((m) => m.id));
     } catch (err) {
       console.error('Error loading OpenAI models:', err);
-      setOpenaiModels([]); // Will use fallback via modelOptions
+      setOpenaiModels([]);
     } finally {
       setIsLoadingOpenAI(false);
     }
   };
 
-  // Fetch Anthropic (Claude) models from API
   const loadClaudeModels = async (key: string | null) => {
     if (!key?.trim()) {
-      setClaudeModels([]); // Will use fallback via modelOptions
+      setClaudeModels([]);
       return;
     }
     setIsLoadingClaude(true);
@@ -553,16 +510,15 @@ export function ModelSettingsModal({
       setClaudeModels(data.map((m) => m.id));
     } catch (err) {
       console.error('Error loading Claude models:', err);
-      setClaudeModels([]); // Will use fallback via modelOptions
+      setClaudeModels([]);
     } finally {
       setIsLoadingClaude(false);
     }
   };
 
-  // Fetch Groq models from API
   const loadGroqModels = async (key: string | null) => {
     if (!key?.trim()) {
-      setGroqModels([]); // Will use fallback via modelOptions
+      setGroqModels([]);
       return;
     }
     setIsLoadingGroq(true);
@@ -571,42 +527,36 @@ export function ModelSettingsModal({
       setGroqModels(data.map((m) => m.id));
     } catch (err) {
       console.error('Error loading Groq models:', err);
-      setGroqModels([]); // Will use fallback via modelOptions
+      setGroqModels([]);
     } finally {
       setIsLoadingGroq(false);
     }
   };
 
-  // Auto-fetch OpenAI models when provider is openai and we have an API key
   useEffect(() => {
     if (modelConfig.provider === 'openai' && apiKey?.trim()) {
       loadOpenAIModels(apiKey);
     }
   }, [modelConfig.provider, apiKey]);
 
-  // Auto-fetch Claude models when provider is claude and we have an API key
   useEffect(() => {
     if (modelConfig.provider === 'claude' && apiKey?.trim()) {
       loadClaudeModels(apiKey);
     }
   }, [modelConfig.provider, apiKey]);
 
-  // Auto-fetch Groq models when provider is groq and we have an API key
   useEffect(() => {
     if (modelConfig.provider === 'groq' && apiKey?.trim()) {
       loadGroqModels(apiKey);
     }
   }, [modelConfig.provider, apiKey]);
 
-  // Restore cached model when async model lists become available
   useEffect(() => {
     const providerModels = modelOptions[modelConfig.provider];
     if (!providerModels || providerModels.length === 0) return;
 
-    // If current model is already valid, nothing to do
     if (modelConfig.model && providerModels.includes(modelConfig.model)) return;
 
-    // Try to restore from localStorage cache
     const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
     const cachedModel = map[modelConfig.provider];
     if (cachedModel && providerModels.includes(cachedModel)) {
@@ -615,7 +565,6 @@ export function ModelSettingsModal({
   }, [models, openRouterModels, builtinAiModels, openaiModels, claudeModels, groqModels, modelConfig.provider]);
 
   const handleSave = async () => {
-    // For custom-openai provider, save the custom config first
     if (modelConfig.provider === 'custom-openai') {
       try {
         await invoke('api_save_custom_openai_config', {
@@ -640,27 +589,23 @@ export function ModelSettingsModal({
       ollamaEndpoint: modelConfig.provider === 'ollama'
         ? (ollamaEndpoint.trim() || null)
         : (modelConfig.ollamaEndpoint || null),
-      // Include custom OpenAI fields
       customOpenAIEndpoint: modelConfig.provider === 'custom-openai' ? customOpenAIEndpoint.trim() : null,
       customOpenAIModel: modelConfig.provider === 'custom-openai' ? customOpenAIModel.trim() : null,
       customOpenAIApiKey: modelConfig.provider === 'custom-openai' && customOpenAIApiKey.trim() ? customOpenAIApiKey.trim() : null,
       maxTokens: modelConfig.provider === 'custom-openai' && customMaxTokens ? parseInt(customMaxTokens, 10) : null,
       temperature: modelConfig.provider === 'custom-openai' && customTemperature ? parseFloat(customTemperature) : null,
       topP: modelConfig.provider === 'custom-openai' && customTopP ? parseFloat(customTopP) : null,
-      // For custom-openai, use the customOpenAIModel as the model field
       model: modelConfig.provider === 'custom-openai' ? customOpenAIModel.trim() : modelConfig.model,
     };
     setModelConfig(updatedConfig);
     console.log('ModelSettingsModal - handleSave - Updated ModelConfig:', updatedConfig);
 
-    // Persist confirmed model choice to per-provider cache
     if (updatedConfig.model) {
       const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
       map[updatedConfig.provider] = updatedConfig.model;
       localStorage.setItem('providerModelMap', JSON.stringify(map));
     }
 
-    // Update provider-specific key in context
     if (updateProviderApiKey && updatedConfig.apiKey && updatedConfig.provider !== 'custom-openai') {
       updateProviderApiKey(updatedConfig.provider, updatedConfig.apiKey);
     }
@@ -668,7 +613,6 @@ export function ModelSettingsModal({
     onSave(updatedConfig);
   };
 
-  // Test custom OpenAI connection
   const testCustomOpenAIConnection = async () => {
     if (!customOpenAIEndpoint.trim() || !customOpenAIModel.trim()) {
       toast.error('Please enter endpoint URL and model name first');
@@ -698,11 +642,9 @@ export function ModelSettingsModal({
     }
   };
 
-  // Function to download recommended model
   const downloadRecommendedModel = async () => {
     const recommendedModel = 'gemma3:1b';
 
-    // Prevent duplicate downloads (defense in depth - backend also checks)
     if (isDownloading(recommendedModel)) {
       toast.info(`${recommendedModel} is already downloading`, {
         description: `Progress: ${Math.round(getProgress(recommendedModel) || 0)}%`
@@ -713,14 +655,11 @@ export function ModelSettingsModal({
     try {
       const endpoint = ollamaEndpoint.trim() || null;
 
-      // The download will be tracked by the global context via events
-      // Progress toasts are shown automatically by OllamaDownloadContext
       await invoke('pull_ollama_model', {
         modelName: recommendedModel,
         endpoint
       });
 
-      // Refresh the models list after successful download
       await fetchOllamaModels(true);
 
       // Note: Model is NOT auto-selected - user must explicitly choose it
@@ -729,7 +668,6 @@ export function ModelSettingsModal({
       const errorMsg = err instanceof Error ? err.message : 'Failed to download model';
       console.error('Error downloading model:', err);
 
-      // Check if Ollama is not installed and show appropriate error
       if (isOllamaNotInstalledError(errorMsg)) {
         toast.error('Ollama is not installed', {
           description: 'Please download and install Ollama before downloading models.',
@@ -739,14 +677,12 @@ export function ModelSettingsModal({
             onClick: () => invoke('open_external_url', { url: 'https://ollama.com/download' })
           }
         });
-        // Update the installation status flag
         setOllamaNotInstalled(true);
       }
       // Other errors are handled by the context
     }
   };
 
-  // Function to delete Ollama model
   const deleteOllamaModel = async (modelName: string) => {
     try {
       const endpoint = ollamaEndpoint.trim() || null;
@@ -756,7 +692,7 @@ export function ModelSettingsModal({
       });
 
       toast.success(`Model ${modelName} deleted`);
-      await fetchOllamaModels(true); // Refresh list
+      await fetchOllamaModels(true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to delete model';
       toast.error(errorMsg);
@@ -764,29 +700,23 @@ export function ModelSettingsModal({
     }
   };
 
-  // Track previous downloading models to detect completions
   const previousDownloadingRef = useRef<Set<string>>(new Set());
 
-  // Refresh models list when download completes
   useEffect(() => {
     const current = downloadingModels;
     const previous = previousDownloadingRef.current;
 
-    // Check if any downloads completed (were in previous, not in current)
     for (const modelName of previous) {
       if (!current.has(modelName)) {
-        // Download completed, refresh models list
         console.log(`[ModelSettingsModal] Download completed for ${modelName}, refreshing list`);
         fetchOllamaModels(true);
-        break; // Only refresh once even if multiple completed
+        break;
       }
     }
 
-    // Update ref for next comparison
     previousDownloadingRef.current = new Set(current);
   }, [downloadingModels]);
 
-  // Filter Ollama models based on search query
   const filteredModels = models.filter((model) => {
     if (!searchQuery.trim()) return true;
 
@@ -816,17 +746,14 @@ export function ModelSettingsModal({
               onValueChange={(value) => {
                 const provider = value as ModelConfig['provider'];
 
-                // Clear error state when switching providers
                 setError('');
 
-                // Save current provider's model to localStorage before switching
                 const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
                 if (modelConfig.model) {
                   map[modelConfig.provider] = modelConfig.model;
                   localStorage.setItem('providerModelMap', JSON.stringify(map));
                 }
 
-                // Try to restore cached model for the new provider
                 const savedModel = map[provider];
                 const providerModels = modelOptions[provider];
                 const defaultModel = providerModels && providerModels.length > 0
@@ -841,19 +768,15 @@ export function ModelSettingsModal({
                   provider,
                   model,
                 });
-                // API key is now synced automatically via useEffect watching providerApiKeys
 
-                // Load OpenRouter models only when OpenRouter is selected
                 if (provider === 'openrouter') {
                   loadOpenRouterModels();
                 }
 
-                // Load Built-in AI models when selected
                 if (provider === 'builtin-ai') {
                   loadBuiltinAiModels();
                 }
 
-                // Load custom OpenAI config when selected
                 if (provider === 'custom-openai') {
                   invoke<any>('api_get_custom_openai_config').then((config) => {
                     if (config) {
@@ -1140,10 +1063,9 @@ export function ModelSettingsModal({
                       value={ollamaEndpoint}
                       onChange={(e) => {
                         setOllamaEndpoint(e.target.value);
-                        // Clear models and errors when endpoint changes to avoid showing stale data
                         if (e.target.value.trim() !== lastFetchedEndpoint.trim()) {
                           setModels([]);
-                          setError(''); // Clear error state
+                          setError('');
                         }
                       }}
                       placeholder="http://localhost:11434"
@@ -1223,7 +1145,6 @@ export function ModelSettingsModal({
             ) : models.length === 0 ? (
               <div className="space-y-3">
                 {ollamaNotInstalled ? (
-                  /* Show Ollama download link when not installed */
                   <div className="space-y-4">
                     <Alert className="border-orange-500 bg-orange-50">
                       <AlertDescription className="text-orange-800">
@@ -1244,7 +1165,6 @@ export function ModelSettingsModal({
                     </div>
                   </div>
                 ) : (
-                  /* Show model download option when Ollama is installed but no models */
                   <>
                     <Alert className="mb-4">
                       <AlertDescription>
