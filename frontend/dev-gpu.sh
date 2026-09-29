@@ -1,28 +1,23 @@
 #!/bin/bash
-# GPU-accelerated development script for Afterword
-# Automatically detects and runs in development mode with optimal GPU features
 
 set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo -e "${BLUE}🚀 Afterword GPU-Accelerated Development Mode${NC}"
 echo ""
 
-# Export CUDA flags for Linux/NVIDIA
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     export CMAKE_CUDA_ARCHITECTURES=75
     export CMAKE_CUDA_STANDARD=17
     export CMAKE_POSITION_INDEPENDENT_CODE=ON
 fi
 
-# Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -32,12 +27,10 @@ else
     exit 1
 fi
 
-# Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Find the correct directory - we need to be in frontend root for npm commands
 if [ -f "package.json" ]; then
     FRONTEND_DIR="."
 elif [ -f "frontend/package.json" ]; then
@@ -53,7 +46,6 @@ echo ""
 echo -e "${BLUE}📦 Starting Afterword in development mode...${NC}"
 echo ""
 
-# Check for pnpm or npm
 if command_exists pnpm; then
     PKG_MGR="pnpm"
 elif command_exists npm; then
@@ -63,7 +55,6 @@ else
     exit 1
 fi
 
-# Detect GPU feature if not already set
 if [ -z "$TAURI_GPU_FEATURE" ]; then
     echo -e "${BLUE}🔍 Detecting GPU features...${NC}"
     TAURI_GPU_FEATURE=$(node scripts/auto-detect-gpu.js)
@@ -80,13 +71,12 @@ else
     echo -e "${YELLOW}⚠️ No specific GPU feature detected or forced${NC}"
 fi
 
-# Build llama-helper
 echo ""
 echo -e "${BLUE}🦙 Building llama-helper sidecar (debug)...${NC}"
 
 HELPER_DIR="llama-helper"
 if [ ! -d "$HELPER_DIR" ]; then
-    # Try to find it relative to script location
+
     SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
     HELPER_DIR="$SCRIPT_DIR/../llama-helper"
 fi
@@ -96,9 +86,6 @@ if [ ! -d "$HELPER_DIR" ]; then
     exit 1
 fi
 
-# Determine llama-helper features
-# Note: llama-cpp-2 does NOT support coreml, only metal/cuda/vulkan
-# So for macOS Apple Silicon (which returns 'coreml' for Whisper), use 'metal' for llama-helper
 HELPER_FEATURES=""
 if [ -n "$TAURI_GPU_FEATURE" ] && [ "$TAURI_GPU_FEATURE" != "none" ]; then
     LLAMA_FEATURE="$TAURI_GPU_FEATURE"
@@ -119,17 +106,14 @@ fi
 
 echo -e "${GREEN}✅ llama-helper built successfully${NC}"
 
-# Detect target triple
 echo ""
 echo -e "${BLUE}🎯 Detecting target triple...${NC}"
 TARGET_TRIPLE=$(rustc -vV | grep "host:" | awk '{print $2}')
 echo -e "   Target: $TARGET_TRIPLE"
 
-# Copy binary
 BINARIES_DIR="$FRONTEND_DIR/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-# Clean old binaries
 find "$BINARIES_DIR" -name "llama-helper*" -delete
 
 BASE_BINARY="llama-helper"
@@ -140,14 +124,12 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE.exe"
 fi
 
-# The binary is in the workspace target directory, which is one level up from frontend
-# if we are in frontend dir.
 WORKSPACE_ROOT="$FRONTEND_DIR/.."
 SRC_PATH="$WORKSPACE_ROOT/target/debug/$BASE_BINARY"
 DEST_PATH="$BINARIES_DIR/$SIDECAR_BINARY"
 
 if [ ! -f "$SRC_PATH" ]; then
-    # Fallback: check if we are running from root and target is in root
+
     SRC_PATH="target/debug/$BASE_BINARY"
 fi
 
@@ -156,13 +138,12 @@ if [ -f "$SRC_PATH" ]; then
     echo -e "${GREEN}✅ Copied binary to $DEST_PATH${NC}"
 else
     echo -e "${RED}❌ Binary not found at $SRC_PATH${NC}"
-    # List contents of target/debug to help debugging
+
     echo -e "${YELLOW}Contents of target/debug:${NC}"
     ls -la "$WORKSPACE_ROOT/target/debug/" || ls -la "target/debug/"
     exit 1
 fi
 
-# Run tauri dev using npm scripts
 echo ""
 echo -e "${CYAN}Starting complete Tauri application...${NC}"
 echo ""
