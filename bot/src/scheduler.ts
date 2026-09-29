@@ -1,11 +1,3 @@
-/**
- * In-memory job store and scheduler.
- *
- * The scheduler never touches Playwright or PulseAudio: it owns job records,
- * timers and the newline-delimited JSON protocol spoken by worker.ts. The
- * actual spawning sits behind the JobRunner interface so the transitions and
- * the parser can be unit-tested without a child process.
- */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -51,7 +43,6 @@ export interface CreateJobInput {
   consentMessage?: string | undefined;
 }
 
-/** One line of the worker's stdout protocol. */
 export interface WorkerEvent {
   type: 'status' | 'log';
   status?: JobStatus;
@@ -63,7 +54,6 @@ export interface WorkerEvent {
 }
 
 export interface JobRunHandle {
-  /** Ask the worker to leave the meeting and shut down. */
   cancel(): void;
 }
 
@@ -76,14 +66,12 @@ export interface JobRunner {
   start(job: JobRecord, hooks: JobRunHooks): JobRunHandle;
 }
 
-/** setTimeout stores its delay in a 32-bit signed int; anything larger fires at once. */
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
 const LIVE_STATUSES: readonly JobStatus[] = ['scheduled', 'joining', 'recording', 'transcribing'];
 
 export const TERMINAL_STATUSES: readonly JobStatus[] = ['done', 'failed', 'cancelled'];
 
-/** Legal status moves. Anything else is dropped, so a noisy worker cannot corrupt a record. */
 export const ALLOWED_TRANSITIONS: Record<JobStatus, readonly JobStatus[]> = {
   scheduled: ['joining', 'failed', 'cancelled'],
   joining: ['recording', 'failed', 'cancelled'],
@@ -102,7 +90,6 @@ export function isTerminal(status: JobStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
 }
 
-/** Split a stdout buffer into events, returning the unterminated tail. */
 export function parseEventLines(buffer: string): { events: WorkerEvent[]; rest: string } {
   const parts = buffer.split('\n');
   const rest = parts.pop() ?? '';
@@ -126,7 +113,6 @@ export function parseEventLines(buffer: string): { events: WorkerEvent[]; rest: 
   return { events, rest };
 }
 
-/** Fold one worker event into a job record. Pure: returns a new record. */
 export function applyEvent(job: JobRecord, event: WorkerEvent, now: string): JobRecord {
   if (event.type !== 'status' || !event.status) {
     return job;
@@ -177,7 +163,6 @@ export class Scheduler {
     this.idFactory = idFactory;
   }
 
-  /** Validate the URL, record the job, and run it now or at startAt. */
   create(input: CreateJobInput): JobRecord {
     const platform = detectPlatform(input.meetingUrl);
     if (!platform) {
@@ -228,7 +213,6 @@ export class Scheduler {
     return [...this.jobs.values()].map((slot) => ({ ...slot.record }));
   }
 
-  /** Cancel a pending or live job. Returns false when it is unknown or finished. */
   cancel(id: string): boolean {
     const slot = this.jobs.get(id);
     if (!slot || isTerminal(slot.record.status)) {
@@ -252,10 +236,6 @@ export class Scheduler {
     return true;
   }
 
-  /**
-   * Sleep until `startAtMs`, in hops no longer than setTimeout can represent —
-   * a longer delay overflows the 32-bit timer and fires immediately.
-   */
   private arm(slot: JobSlot, startAtMs: number): void {
     const remaining = startAtMs - this.now().getTime();
     if (remaining <= 0) {
@@ -305,7 +285,6 @@ export class Scheduler {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isCompiled = here.split(path.sep).includes('dist');
 
-/** Command used to run one job: compiled worker in production, tsx in dev. */
 export function buildWorkerCommand(job: JobRecord, options?: { compiled?: boolean; dir?: string }): {
   command: string;
   args: string[];
@@ -319,22 +298,13 @@ export function buildWorkerCommand(job: JobRecord, options?: { compiled?: boolea
     : { command: 'tsx', args: [path.join(dir, 'worker.ts'), payload] };
 }
 
-/** How long a cancelled worker gets to leave the meeting before it is killed. */
 export const DEFAULT_KILL_GRACE_MS = 30_000;
 
-/** The slice of ChildProcess escalatingKill needs, so it can be unit-tested. */
 export interface KillableChild {
   kill(signal: NodeJS.Signals): boolean;
   once(event: 'exit', listener: () => void): unknown;
 }
 
-/**
- * Ask a worker to shut down, then insist.
- *
- * SIGTERM lets the worker leave the meeting and flush the wav; if it is stuck
- * (a hung Chromium, a wedged parecord) it would otherwise sit in the call
- * forever, so escalate to SIGKILL once the grace period is up.
- */
 export function escalatingKill(child: KillableChild, graceMs = DEFAULT_KILL_GRACE_MS): void {
   child.kill('SIGTERM');
 
@@ -351,11 +321,9 @@ export function escalatingKill(child: KillableChild, graceMs = DEFAULT_KILL_GRAC
 }
 
 export interface ChildProcessRunnerOptions {
-  /** Grace period between SIGTERM and SIGKILL on cancel. */
   killGraceMs?: number;
 }
 
-/** Runs each job as a child process and forwards its stdout protocol. */
 export class ChildProcessRunner implements JobRunner {
   private readonly killGraceMs: number;
 
