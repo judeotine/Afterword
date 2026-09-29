@@ -1,13 +1,3 @@
-//! `afterword-transcribe` — headless batch transcription.
-//!
-//! Runs the same pipeline as the desktop app's "import audio file" flow
-//! (decode → 16 kHz mono → Silero VAD → Whisper/Parakeet → `transcripts.json`)
-//! without Tauri, a database, or a UI, so the meeting-bot service can produce
-//! transcripts in the desktop's `TranscriptSegment` shape.
-//!
-//! Models are never downloaded here: bots run offline in containers with a
-//! pre-provisioned models directory.
-
 use std::path::{Path, PathBuf};
 
 use afterword_core::audio::constants::AUDIO_EXTENSIONS;
@@ -20,23 +10,11 @@ use afterword_core::whisper_engine::WhisperEngine;
 use clap::{Parser, ValueEnum};
 use log::{debug, info, warn};
 
-/// VAD redemption time for batch processing, in milliseconds.
-///
-/// Matches `audio::import::VAD_REDEMPTION_TIME_MS` in the desktop app: whole-file
-/// VAD needs a longer redemption than the live pipeline (400 ms), which would
-/// otherwise fragment speech at every natural sentence pause.
 const VAD_REDEMPTION_TIME_MS: u32 = 2000;
 
-/// Longest segment handed to the engine before splitting at a silence boundary
-/// (25 s at 16 kHz), same as the desktop import path.
 const MAX_SEGMENT_SAMPLES: usize = 25 * 16000;
 
-/// Segments shorter than 100 ms are noise, not speech; the import path skips them too.
 const MIN_SEGMENT_SAMPLES: usize = 1600;
-
-// ---------------------------------------------------------------------------
-// CLI surface
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum EngineKind {
@@ -83,45 +61,35 @@ Exit codes:
   3  requested model is not present locally"
 )]
 struct Cli {
-    /// Audio file to transcribe.
     #[arg(long)]
     input: PathBuf,
 
-    /// Directory to write transcripts.json and metadata.json into (created if missing).
     #[arg(long)]
     out: PathBuf,
 
-    /// Transcription engine.
     #[arg(long, value_enum, default_value_t = EngineKind::Whisper)]
     engine: EngineKind,
 
-    /// Model name (defaults to the engine's default model).
     #[arg(long)]
     model: Option<String>,
 
-    /// Models directory (defaults to $AFTERWORD_MODELS_DIR, then this CLI's own
-    /// <data dir>/Afterword/models, which is not where the desktop app keeps its models).
     #[arg(long = "models-dir")]
     models_dir: Option<PathBuf>,
 
-    /// Language code, "auto", or "auto-translate" (translate to English).
     #[arg(long, default_value = "auto")]
     language: String,
 
-    /// Title recorded in metadata.json (defaults to the input file stem).
     #[arg(long)]
     title: Option<String>,
 }
 
 impl Cli {
-    /// The model actually used: `--model` if given, else the engine default.
     fn resolved_model(&self) -> String {
         self.model
             .clone()
             .unwrap_or_else(|| self.engine.default_model().to_string())
     }
 
-    /// The title actually used: `--title` if given, else the input file stem.
     fn resolved_title(&self) -> String {
         if let Some(title) = self.title.as_ref().map(|t| t.trim()) {
             if !title.is_empty() {
@@ -137,18 +105,12 @@ impl Cli {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Errors and exit codes
-// ---------------------------------------------------------------------------
-
-/// Failure modes with their documented exit codes.
 #[derive(Debug)]
 enum CliError {
-    /// Bad arguments, unreadable input, or any other failure: exit code 1.
     Usage(String),
-    /// The audio file could not be decoded: exit code 2.
+
     Decode(String),
-    /// The requested model is not present in the models directory: exit code 3.
+
     ModelMissing(String),
 }
 
@@ -172,15 +134,6 @@ impl std::fmt::Display for CliError {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
-
-/// Resolve the models directory: `--models-dir`, else `$AFTERWORD_MODELS_DIR`,
-/// else `<system data dir>/Afterword/models`. That last one is this CLI's own
-/// default; the desktop app stores models under its bundle identifier
-/// (`<app data dir>/com.afterword.app/models`), so point `--models-dir` there
-/// to share a download with it.
 fn resolve_models_dir(
     flag: Option<&Path>,
     env_value: Option<&str>,
@@ -202,10 +155,6 @@ fn resolve_models_dir(
         })
 }
 
-/// Map the `--language` flag onto the engine's language argument.
-///
-/// `auto` (and an empty value) mean automatic detection, which the engine
-/// expresses as `None`; `auto-translate` and explicit codes are passed through.
 fn whisper_language_arg(language: &str) -> Option<String> {
     match language.trim() {
         "" | "auto" => None,
@@ -213,7 +162,6 @@ fn whisper_language_arg(language: &str) -> Option<String> {
     }
 }
 
-/// Validate that the input exists and has a supported audio extension.
 fn validate_input(path: &Path) -> Result<(), CliError> {
     if !path.exists() {
         return Err(CliError::Usage(format!(
@@ -241,7 +189,6 @@ fn validate_input(path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Split VAD segments longer than `MAX_SEGMENT_SAMPLES` at silence boundaries.
 fn prepare_segments(segments: &[SpeechSegment]) -> Vec<SpeechSegment> {
     let mut processable = Vec::with_capacity(segments.len());
     for segment in segments {
@@ -262,7 +209,6 @@ fn prepare_segments(segments: &[SpeechSegment]) -> Vec<SpeechSegment> {
     processable
 }
 
-/// The advice printed when a model is missing; the CLI never downloads.
 fn model_missing_message(engine: EngineKind, model: &str, expected_path: &Path) -> String {
     format!(
         "{} model '{}' is not available at {}. afterword-transcribe never downloads models — \
@@ -275,19 +221,11 @@ which runs the `{}_download_model` command) and point --models-dir at that direc
     )
 }
 
-// ---------------------------------------------------------------------------
-// Engines
-// ---------------------------------------------------------------------------
-
 enum LoadedEngine {
     Whisper(Box<WhisperEngine>),
     Parakeet(Box<ParakeetEngine>),
 }
 
-/// Build the engine and fail fast (exit code 3) when the model is not on disk.
-///
-/// Discovery is cheap (a stat per catalog entry), so this runs before decoding:
-/// an offline bot with a missing model should not spend minutes decoding first.
 async fn prepare_engine(
     engine: EngineKind,
     models_dir: &Path,
@@ -381,11 +319,6 @@ impl LoadedEngine {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline
-// ---------------------------------------------------------------------------
-
-/// Metadata written alongside transcripts.json, in the bot's shape.
 #[allow(clippy::too_many_arguments)]
 fn write_metadata_json(
     out_dir: &Path,
@@ -440,13 +373,11 @@ async fn run(cli: Cli) -> Result<String, CliError> {
         models_dir.display()
     );
 
-    // Fail fast on a missing model, before spending time decoding.
     let engine = prepare_engine(cli.engine, &models_dir, &model).await?;
 
     std::fs::create_dir_all(&cli.out)
         .map_err(|e| CliError::Usage(format!("Failed to create {}: {e}", cli.out.display())))?;
 
-    // 1. Decode to PCM, then to Whisper's 16 kHz mono format.
     let input_path = cli.input.clone();
     let decoded = tokio::task::spawn_blocking(move || decode_audio_file(&input_path))
         .await
@@ -462,7 +393,6 @@ async fn run(cli: Cli) -> Result<String, CliError> {
         .await
         .map_err(|e| CliError::Usage(format!("Resample task panicked: {e}")))?;
 
-    // 2. VAD with the desktop app's batch parameters.
     let speech_segments = tokio::task::spawn_blocking(move || {
         get_speech_chunks(&audio_samples, VAD_REDEMPTION_TIME_MS)
     })
@@ -478,12 +408,10 @@ async fn run(cli: Cli) -> Result<String, CliError> {
         warn!("No speech detected in {}", cli.input.display());
     }
 
-    // 3. Split long segments at silence boundaries.
     let processable = prepare_segments(&speech_segments);
     let processable_count = processable.len();
     info!("Processing {processable_count} segments (after splitting)");
 
-    // 4. Transcribe sequentially.
     let language = whisper_language_arg(&cli.language);
     let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new();
     if processable_count > 0 {
@@ -518,7 +446,6 @@ async fn run(cli: Cli) -> Result<String, CliError> {
         processable_count
     );
 
-    // 5. Write transcripts.json + metadata.json.
     let segments = create_transcript_segments(&all_transcripts);
     write_transcripts_json(&cli.out, &segments)
         .map_err(|e| CliError::Usage(format!("Failed to write transcripts.json: {e}")))?;
@@ -559,10 +486,6 @@ async fn main() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
