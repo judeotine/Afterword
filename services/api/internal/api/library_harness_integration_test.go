@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
@@ -20,6 +21,8 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/api"
 	"github.com/judeotine/afterword/services/api/internal/askprovider"
 	"github.com/judeotine/afterword/services/api/internal/auth"
+	"github.com/judeotine/afterword/services/api/internal/billing"
+	"github.com/judeotine/afterword/services/api/internal/botjobs"
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
@@ -40,6 +43,7 @@ type libraryHarness struct {
 	ledger    *credits.Ledger
 	service   *meetings.Service
 	slackFake *integrations.FakeProvider
+	botJobs   *botjobs.Service
 }
 
 func newLibraryHarness(t *testing.T) *libraryHarness {
@@ -154,6 +158,15 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		t.Fatalf("register fake integration: %v", err)
 	}
 
+	botJobs, err := botjobs.NewService(botjobs.ServiceOptions{Pool: pool})
+	if err != nil {
+		t.Fatalf("new bot job service: %v", err)
+	}
+	entitlements, err := billing.NewEntitlements(ledger, "http://localhost:3000")
+	if err != nil {
+		t.Fatalf("new entitlements: %v", err)
+	}
+
 	server, err := api.NewServer(api.ServerOptions{
 		Accounts:     accountsService,
 		OTP:          otp,
@@ -169,6 +182,22 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		t.Fatalf("new api server: %v", err)
 	}
 
+	botJobServer, err := api.NewBotJobServer(api.BotJobOptions{
+		BotJobs:      botJobs,
+		Entitlements: entitlements,
+		Middleware:   middleware,
+		WorkerAuth:   auth.NewWorkerAuth("test-worker-token"),
+		Meetings:     library,
+	})
+	if err != nil {
+		t.Fatalf("new bot job server: %v", err)
+	}
+
+	mount := func(router chi.Router) {
+		server.Routes(router)
+		botJobServer.Routes(router)
+	}
+
 	return &libraryHarness{
 		harness: &harness{
 			t:      t,
@@ -177,7 +206,7 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 				Logger:         zerolog.Nop(),
 				AllowedOrigin:  "http://localhost:3000",
 				TrustedProxies: trustedProxies(t, limits.TrustedProxies),
-				Mount:          server.Routes,
+				Mount:          mount,
 			}),
 		},
 		pool:      pool,
@@ -189,6 +218,7 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		ledger:    ledger,
 		service:   library,
 		slackFake: slackFake,
+		botJobs:   botJobs,
 	}
 }
 
