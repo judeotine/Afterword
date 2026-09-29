@@ -1,7 +1,7 @@
-#[cfg(target_os = "windows")]
-use std::ptr;
 #[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::ptr;
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
@@ -24,38 +24,34 @@ pub fn show_console() -> Result<String, String> {
     unsafe {
         let console_window = GetConsoleWindow();
         if console_window == ptr::null_mut() {
-            // If no console exists, allocate one
             if AllocConsole() == 0 {
                 return Err("Failed to allocate console".to_string());
             }
-            // Logging is already initialized by tauri-plugin-log; the new
-            // console just picks up the plugin's stdout target.
         } else {
-            // Show existing console window
             ShowWindow(console_window, SW_SHOW);
         }
         Ok("Console shown".to_string())
     }
-    
+
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we'll open Terminal.app with our app's logs
-        // First, get the app name from the bundle
         match Command::new("osascript")
             .arg("-e")
-            .arg(r#"
+            .arg(
+                r#"
                 tell application "Terminal"
                     activate
                     do script "log stream --process afterword --level info --style compact"
                 end tell
-            "#)
+            "#,
+            )
             .spawn()
         {
             Ok(_) => Ok("Console opened in Terminal".to_string()),
             Err(e) => Err(format!("Failed to open console: {}", e)),
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Ok("Console control is only available on Windows and macOS".to_string())
@@ -74,10 +70,9 @@ pub fn hide_console() -> Result<String, String> {
             Err("No console window found".to_string())
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we'll close the Terminal window that's showing our logs
         match Command::new("osascript")
             .arg("-e")
             .arg(r#"
@@ -96,7 +91,7 @@ pub fn hide_console() -> Result<String, String> {
             Err(e) => Err(format!("Failed to close console: {}", e)),
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Ok("Console control is only available on Windows and macOS".to_string())
@@ -111,15 +106,12 @@ pub fn toggle_console() -> Result<String, String> {
         if console_window == ptr::null_mut() {
             show_console()
         } else {
-            // Check if window is visible (this is a simplified approach)
-            // In a real implementation, you might want to use GetWindowLong to check visibility
             hide_console()
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
-        // On macOS, check if Terminal is running with our log stream
         let check_result = Command::new("osascript")
             .arg("-e")
             .arg(r#"
@@ -134,7 +126,7 @@ pub fn toggle_console() -> Result<String, String> {
                 end tell
             "#)
             .output();
-            
+
         match check_result {
             Ok(output) => {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -144,10 +136,10 @@ pub fn toggle_console() -> Result<String, String> {
                     show_console()
                 }
             }
-            Err(_) => show_console()
+            Err(_) => show_console(),
         }
     }
-    
+
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         Ok("Console control is only available on Windows and macOS".to_string())
