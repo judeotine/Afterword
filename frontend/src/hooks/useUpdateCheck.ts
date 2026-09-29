@@ -19,7 +19,6 @@ export function useUpdateCheck(options: UseUpdateCheckOptions = {}) {
   const [isChecking, setIsChecking] = useState(false);
 
   const checkForUpdates = async (force = false) => {
-    // Skip if checked recently (unless forced)
     if (!force && updateService.wasCheckedRecently()) {
       return;
     }
@@ -48,10 +47,9 @@ export function useUpdateCheck(options: UseUpdateCheckOptions = {}) {
 
   useEffect(() => {
     if (checkOnMount) {
-      // Delay the check slightly to avoid blocking app startup
       const timer = setTimeout(() => {
         checkForUpdates(false);
-      }, 2000); // Check 2 seconds after mount
+      }, 2000);
 
       return () => clearTimeout(timer);
     }
