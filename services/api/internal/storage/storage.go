@@ -96,6 +96,10 @@ func TranscriptKey(workspaceID, meetingID uuid.UUID) string {
 	return MeetingPrefix(workspaceID, meetingID) + TranscriptFileName
 }
 
+func ClipKey(workspaceID, meetingID, clipID uuid.UUID) string {
+	return MeetingPrefix(workspaceID, meetingID) + "clips/" + clipID.String() + ".opus"
+}
+
 func NormalizeAudioExtension(extension string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(extension))
 	trimmed = strings.TrimPrefix(trimmed, ".")
