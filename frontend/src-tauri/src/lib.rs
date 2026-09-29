@@ -5,6 +5,7 @@ use std::sync::Mutex as StdMutex;
 pub(crate) use afterword_core::perf_debug;
 
 pub mod analytics;
+pub mod account;
 pub mod api;
 pub mod audio;
 pub use afterword_core::config;
@@ -541,6 +542,14 @@ pub fn run() {
             get_transcription_status,
             read_audio_file,
             save_transcript,
+            account::commands::account_store_refresh_token,
+            account::commands::account_get_refresh_token,
+            account::commands::account_clear_refresh_token,
+            account::sync::sync_enqueue,
+            account::sync::sync_pending,
+            account::sync::sync_mark_done,
+            account::sync::sync_mark_failed,
+            account::sync::sync_status_counts,
             analytics::commands::init_analytics,
             analytics::commands::disable_analytics,
             analytics::commands::track_event,
