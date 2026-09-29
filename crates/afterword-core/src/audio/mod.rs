@@ -1,8 +1,3 @@
-// crates/afterword-core/src/audio/mod.rs
-//
-// Tauri-free audio processing: decoding, resampling, VAD, encoding and
-// hardware capability detection.
-
 pub mod audio_processing;
 pub mod constants;
 pub mod decoder;
