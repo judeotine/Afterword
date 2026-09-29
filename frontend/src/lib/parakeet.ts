@@ -1,4 +1,3 @@
-// Types for Parakeet (NVIDIA NeMo) integration
 export interface ParakeetModelInfo {
   name: string;
   path: string;
@@ -28,7 +27,6 @@ export interface ParakeetEngineState {
   error: string | null;
 }
 
-// User-friendly model display configuration
 export interface ModelDisplayInfo {
   friendlyName: string;
   icon: string;
@@ -59,9 +57,6 @@ export const MODEL_DISPLAY_CONFIG: Record<string, ModelDisplayInfo> = {
   }
 };
 
-// Model configuration for Parakeet models (matching Rust implementation)
-// Supported models: parakeet-tdt-0.6b in v2 and v3 variants
-// Source: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx
 export const PARAKEET_MODEL_CONFIGS: Record<string, Partial<ParakeetModelInfo>> = {
   'parakeet-tdt-0.6b-v3-int8': {
     description: 'Real time on M4 Max, optimized for speed',
@@ -86,7 +81,6 @@ export const PARAKEET_MODEL_CONFIGS: Record<string, Partial<ParakeetModelInfo>> 
   }
 };
 
-// Helper functions
 export function getModelIcon(accuracy: ModelAccuracy): string {
   switch (accuracy) {
     case 'High': return '🔥';
@@ -96,13 +90,11 @@ export function getModelIcon(accuracy: ModelAccuracy): string {
   }
 }
 
-// Get user-friendly display name for a model
 export function getModelDisplayName(modelName: string): string {
   const displayInfo = MODEL_DISPLAY_CONFIG[modelName];
   return displayInfo?.friendlyName || modelName;
 }
 
-// Get model display info (icon, tagline, etc.)
 export function getModelDisplayInfo(modelName: string): ModelDisplayInfo | null {
   return MODEL_DISPLAY_CONFIG[modelName] || null;
 }
@@ -122,12 +114,10 @@ export function formatFileSize(sizeMb: number): string {
   return `${sizeMb}MB`;
 }
 
-// Helper function to check if model is quantized
 export function isQuantizedModel(modelName: string): boolean {
   return modelName.includes('int8');
 }
 
-// Helper function to get model performance badge
 export function getModelPerformanceBadge(quantization: QuantizationType): { label: string; color: string } {
   switch (quantization) {
     case 'FP32':
@@ -140,15 +130,11 @@ export function getModelPerformanceBadge(quantization: QuantizationType): { labe
 }
 
 export function getRecommendedModel(systemSpecs?: { ram: number; cores: number }): string {
-  // Default to Int8 quantized model (fastest)
   if (!systemSpecs) return 'parakeet-tdt-0.6b-v3-int8';
 
-  // For any system, prefer Int8 for speed
-  // FP32 can be used if user explicitly wants higher precision
   return 'parakeet-tdt-0.6b-v3-int8';
 }
 
-// Tauri command wrappers for Parakeet backend
 import { invoke } from '@tauri-apps/api/core';
 
 export class ParakeetAPI {
