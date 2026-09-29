@@ -1,14 +1,3 @@
-/**
- * Transcription via the `afterword-transcribe` Rust CLI — the same pipeline the
- * desktop app uses. The CLI writes `transcripts.json` as `{ version,
- * last_updated, total_segments, segments: [...] }`, where each segment
- * mirrors `ApiTranscriptSegment` (crates/afterword-core/src/transcript.rs;
- * see {@link TranscriptSegment} below) plus a positional `sequence_id`. It
- * also writes `metadata.json` (`{ id, title, source: "bot", duration_seconds,
- * engine, model, language, created_at, segments_count }`) and prints one
- * summary line to stdout: `{"transcript","metadata","segments",
- * "duration_seconds"}` (parsed by {@link parseTranscribeSummary}).
- */
 import path from 'node:path';
 import { execa } from 'execa';
 import { config, type BotConfig } from './config.js';
@@ -21,13 +10,6 @@ export interface TranscribeArgsInput {
   modelsDir: string;
 }
 
-/**
- * One entry in `transcripts.json`'s `segments` array, matching
- * `ApiTranscriptSegment` (crates/afterword-core/src/transcript.rs) field for
- * field. The three timing fields are optional on the Rust struct;
- * `afterword-transcribe` always populates them from VAD timestamps, so in
- * practice they are always present in bot output.
- */
 export interface TranscriptSegment {
   id: string;
   text: string;
@@ -39,20 +21,16 @@ export interface TranscriptSegment {
 
 export interface TranscribeResult {
   transcriptPath: string;
-  /** From the CLI's stdout summary line. */
   segments: number;
-  /** From the CLI's stdout summary line. */
   durationSeconds: number;
 }
 
-/** Documented exit codes of the CLI. */
 export const TRANSCRIBE_EXIT = {
   OK: 0,
   DECODE_FAILURE: 2,
   MODEL_MISSING: 3,
 } as const;
 
-/** `--input <wav> --out <dir> --engine <engine> --model <model> --models-dir <dir>` */
 export function buildTranscribeArgs({
   wav,
   outDir,
@@ -74,12 +52,10 @@ export function buildTranscribeArgs({
   ];
 }
 
-/** The CLI always writes its segments to `<outDir>/transcripts.json`. */
 export function transcriptPathFor(outDir: string): string {
   return path.join(outDir, 'transcripts.json');
 }
 
-/** Human-readable reason for a non-zero exit code. */
 export function describeTranscribeFailure(code: number): string {
   switch (code) {
     case TRANSCRIBE_EXIT.DECODE_FAILURE:
@@ -91,19 +67,11 @@ export function describeTranscribeFailure(code: number): string {
   }
 }
 
-/** The fields `runTranscribe` needs out of the CLI's stdout summary line. */
 export interface TranscribeSummary {
   segments: number;
   durationSeconds: number;
 }
 
-/**
- * Parse the CLI's one-line JSON summary
- * (`{"transcript","metadata","segments","duration_seconds"}`) out of its
- * stdout. Only the last non-empty line is considered, so trailing blank
- * lines are tolerated; anything that isn't valid JSON with the expected
- * fields is a hard error, since it means the CLI's output contract changed.
- */
 export function parseTranscribeSummary(stdout: string): TranscribeSummary {
   const lines = stdout
     .split('\n')
@@ -137,11 +105,9 @@ export function parseTranscribeSummary(stdout: string): TranscribeSummary {
 export interface RunTranscribeInput {
   wav: string;
   outDir: string;
-  /** Aborted when the job is cancelled; kills the CLI instead of waiting it out. */
   signal?: AbortSignal;
 }
 
-/** Run the CLI over a recorded wav and return where the transcript landed. */
 export async function runTranscribe(
   { wav, outDir, signal }: RunTranscribeInput,
   settings: BotConfig = config,
