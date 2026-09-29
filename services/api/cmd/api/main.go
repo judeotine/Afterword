@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/api"
+	"github.com/judeotine/afterword/services/api/internal/askprovider"
 	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/billing"
 	"github.com/judeotine/afterword/services/api/internal/botjobs"
@@ -220,6 +222,7 @@ func buildLibrary(cfg config.Config, pool *db.Pool, logger zerolog.Logger) (*mee
 		ShareRateWindow:    cfg.ShareRateWindow,
 		ShareRateLimit:     cfg.ShareRateLimit,
 		AbandonedUploadTTL: cfg.AbandonedUploadTTL,
+		Ask:                askprovider.ForMeetings(askprovider.FromEnv(os.Getenv("ASK_PROVIDER"), fallbackEnv("OLLAMA_URL", "http://localhost:11434"), fallbackEnv("ASK_MODEL", "llama3"))),
 	})
 }
 
@@ -519,4 +522,11 @@ func newLogger(level string) zerolog.Logger {
 		Timestamp().
 		Str("service", "afterword-api").
 		Logger()
+}
+
+func fallbackEnv(key, alternative string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return alternative
 }
