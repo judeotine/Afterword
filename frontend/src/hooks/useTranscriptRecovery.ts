@@ -1,9 +1,3 @@
-/**
- * useTranscriptRecovery Hook
- *
- * Orchestrates transcript recovery operations for interrupted meetings.
- * Provides functionality to detect, preview, and recover meetings from IndexedDB.
- */
 
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -13,7 +7,7 @@ import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-pref
 import { toast } from 'sonner';
 
 interface AudioRecoveryStatus {
-  status: string; // "success" | "partial" | "failed" | "none"
+  status: string;
   chunk_count: number;
   estimated_duration_seconds: number;
   audio_file_path?: string;
@@ -35,27 +29,20 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
 
-  /**
-   * Check for recoverable meetings in IndexedDB
-   */
   const checkForRecoverableTranscripts = useCallback(async () => {
     setIsLoading(true);
     try {
       const meetings = await indexedDBService.getAllMeetings();
 
-      // Filter out meetings older than 7 days and newer than 15 seconds
-      // The 15 seconds threshold prevents showing meetings from the current session(jus in case)
-      // where recording just stopped but hasn't been fully saved yet
       const cutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000);
       const secondsAgo = Date.now() - (2 * 1000);
 
       const recentMeetings = meetings.filter(m => {
-        const isWithinRetention = m.lastUpdated > cutoffTime; // Not older than 7 days
-        const isOldEnough = m.lastUpdated < secondsAgo; // Older than 15 seconds
+        const isWithinRetention = m.lastUpdated > cutoffTime;
+        const isOldEnough = m.lastUpdated < secondsAgo;
         return isWithinRetention && isOldEnough;
       });
 
-      // Verify audio checkpoint availability for each meeting
       const meetingsWithAudioStatus = await Promise.all(
         recentMeetings.map(async (meeting) => {
           if (meeting.folderPath) {
@@ -64,21 +51,18 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
                 meetingFolder: meeting.folderPath
               });
 
-              // If no audio files, clear folderPath to show "No audio" in UI
               return {
                 ...meeting,
                 folderPath: hasAudio ? meeting.folderPath : undefined
               };
             } catch (error) {
               console.warn('Failed to check audio for meeting:', error);
-              // On error, assume no audio to be safe
               return { ...meeting, folderPath: undefined };
             }
           }
           return meeting;
         })
       );
-
 
       setRecoverableMeetings(meetingsWithAudioStatus);
     } catch (error) {
@@ -89,13 +73,9 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
     }
   }, []);
 
-  /**
-   * Load transcripts for preview
-   */
   const loadMeetingTranscripts = useCallback(async (meetingId: string): Promise<StoredTranscript[]> => {
     try {
       const transcripts = await indexedDBService.getTranscripts(meetingId);
-      // Sort by sequence ID
       transcripts.sort((a, b) => (a.sequenceId || 0) - (b.sequenceId || 0));
       return transcripts;
     } catch (error) {
@@ -104,30 +84,22 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
     }
   }, []);
 
-  /**
-   * Recover a meeting from IndexedDB
-   */
   const recoverMeeting = useCallback(async (meetingId: string): Promise<{ success: boolean; audioRecoveryStatus?: AudioRecoveryStatus | null; meetingId?: string }> => {
     setIsRecovering(true);
     try {
-      // 1. Load meeting metadata
       const metadata = await indexedDBService.getMeetingMetadata(meetingId);
       if (!metadata) {
         throw new Error('Meeting metadata not found');
       }
 
-      // 2. Load all transcripts
       const transcripts = await loadMeetingTranscripts(meetingId);
       if (transcripts.length === 0) {
         throw new Error('No transcripts found for this meeting');
       }
 
-      // 3. Check for folder path
       let folderPath = metadata.folderPath;
 
-
       if (!folderPath) {
-        // Try to get from backend (might exist if only app crashed, not system)
         try {
           folderPath = await invoke<string>('get_meeting_folder_path');
         } catch (error) {
@@ -135,7 +107,6 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         }
       }
 
-      // 4. Attempt audio recovery if folder path exists
       let audioRecoveryStatus: AudioRecoveryStatus | null = null;
       if (folderPath) {
         try {
@@ -161,7 +132,6 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         };
       }
 
-      // 5. Convert StoredTranscripts to the format expected by storageService
       const formattedTranscripts = transcripts.map((t, index) => ({
         id: t.id?.toString() || `${Date.now()}-${index}`,
         text: t.text,
@@ -175,7 +145,6 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         duration: (t as any).duration,
       }));
 
-      // 6. Save to backend database using existing save utilities
       const saveResponse = await storageService.saveMeeting(
         metadata.title,
         formattedTranscripts,
@@ -193,21 +162,16 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         });
       }
 
-      // 7. Mark as saved in IndexedDB
       await indexedDBService.markMeetingSaved(meetingId);
 
-
-      // 8. Clean up checkpoint files
       if (folderPath) {
         try {
           await invoke('cleanup_checkpoints', { meetingFolder: folderPath });
         } catch (error) {
-          // Non-fatal - don't fail recovery if cleanup fails
           console.warn('Checkpoint cleanup failed (non-fatal):', error);
         }
       }
 
-      // 9. Remove from recoverable list
       setRecoverableMeetings(prev => prev.filter(m => m.meetingId !== meetingId));
 
       return {
@@ -223,9 +187,6 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
     }
   }, [loadMeetingTranscripts]);
 
-  /**
-   * Delete a recoverable meeting
-   */
   const deleteRecoverableMeeting = useCallback(async (meetingId: string): Promise<void> => {
     try {
       await indexedDBService.deleteMeeting(meetingId);
