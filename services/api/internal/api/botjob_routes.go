@@ -17,18 +17,23 @@ const (
 	botJobPath    = "/v1/bot-jobs/{" + botJobParam + "}"
 	botJobParam   = "botJobID"
 	codeBadJobURL = "invalid_meeting_url"
+
+	workerClaimPath  = "/v1/worker/bot-jobs/claim"
+	workerStatusPath = "/v1/worker/bot-jobs/{" + botJobParam + "}/status"
 )
 
 type BotJobOptions struct {
 	BotJobs      *botjobs.Service
 	Entitlements *billing.Entitlements
 	Middleware   *auth.Middleware
+	WorkerAuth   *auth.WorkerAuth
 }
 
 type BotJobServer struct {
 	botJobs      *botjobs.Service
 	entitlements *billing.Entitlements
 	middleware   *auth.Middleware
+	workerAuth   *auth.WorkerAuth
 }
 
 func NewBotJobServer(options BotJobOptions) (*BotJobServer, error) {
@@ -44,6 +49,7 @@ func NewBotJobServer(options BotJobOptions) (*BotJobServer, error) {
 		botJobs:      options.BotJobs,
 		entitlements: options.Entitlements,
 		middleware:   options.Middleware,
+		workerAuth:   options.WorkerAuth,
 	}, nil
 }
 
@@ -59,6 +65,14 @@ func (b *BotJobServer) Routes(router chi.Router) {
 			r.Post(botJobsPath, b.handleCreateBotJob)
 		})
 	})
+
+	if b.workerAuth != nil && b.workerAuth.Enabled() {
+		router.Group(func(r chi.Router) {
+			r.Use(b.workerAuth.Require)
+			r.Post(workerClaimPath, b.handleWorkerClaim)
+			r.Post(workerStatusPath, b.handleWorkerStatus)
+		})
+	}
 }
 
 func RegisterBotJobRoutes(router chi.Router, options BotJobOptions) error {
