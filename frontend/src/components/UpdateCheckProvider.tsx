@@ -26,23 +26,20 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
     checkOnMount: true,
     showNotification: true,
     onUpdateAvailable: (info) => {
-      // Show notification, dialog will be shown when user clicks notification
       showUpdateNotification(info, handleShowDialog);
     },
   });
 
   useEffect(() => {
-    // Register the callback so UpdateNotification can trigger the dialog
     setUpdateDialogCallback(handleShowDialog);
     return () => {
       setUpdateDialogCallback(() => {});
     };
   }, [handleShowDialog]);
 
-  // Listen for tray menu events
   useEffect(() => {
     const handleTrayCheck = () => {
-      checkForUpdates(true); // Force check from tray
+      checkForUpdates(true);
       setShowDialog(true);
     };
 
