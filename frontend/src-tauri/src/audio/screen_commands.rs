@@ -27,7 +27,7 @@ pub async fn start_screen_recording<R: Runtime>(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    screen_recorder::start_screen_recording(path.clone(), screen_index.unwrap_or(1), audio_index)
+    screen_recorder::start_screen_recording(path.clone(), screen_index, audio_index)
         .map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
 }
