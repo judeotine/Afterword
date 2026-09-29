@@ -48,12 +48,6 @@ function writeToStorage(values: string[]): void {
   }
 }
 
-/**
- * MRU list of recently used summary languages (max 5, localStorage).
- * Shared by SummaryLanguageSettings (chips) and LanguagePickerPopover (recents).
- *
- * addRecent: push to front, dedupe, trim to MAX_RECENTS, persist.
- */
 export function useRecentLanguages() {
   const [recents, setRecents] = useState<string[]>(() => readFromStorage());
   const [pinned, setPinnedState] = useState<string | null>(() => readPinnedFromStorage());
