@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AccountApi, AccountApiError, WorkspaceSummary } from '@/services/accountApi';
+import { AccountApi, AccountApiError, WorkspaceSummary, BotJobSummary } from '@/services/accountApi';
 
 export type AccountMode = 'local' | 'signedIn';
 
@@ -18,6 +18,8 @@ export interface AccountContextValue {
   verifyCode: (destination: string, code: string) => Promise<void>;
   switchWorkspace: (workspaceId: string) => Promise<void>;
   refreshBalance: () => Promise<void>;
+  sendBot: (meetingUrl: string, botName?: string) => Promise<BotJobSummary>;
+  listBotJobs: () => Promise<BotJobSummary[]>;
   signOut: () => Promise<void>;
 }
 
@@ -166,6 +168,24 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     setMode('local');
   }, []);
 
+  const sendBot = useCallback(
+    async (meetingUrl: string, botName?: string) => {
+      if (!accessToken || !workspaceId) {
+        throw new Error('Sign in to send the notetaker to a meeting.');
+      }
+      return api.sendBot(accessToken, workspaceId, meetingUrl, botName);
+    },
+    [api, accessToken, workspaceId],
+  );
+
+  const listBotJobs = useCallback(async () => {
+    if (!accessToken || !workspaceId) {
+      return [];
+    }
+    const { items } = await api.listBotJobs(accessToken, workspaceId);
+    return items;
+  }, [api, accessToken, workspaceId]);
+
   const value = useMemo<AccountContextValue>(
     () => ({
       mode,
@@ -179,9 +199,11 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       verifyCode,
       switchWorkspace,
       refreshBalance,
+      sendBot,
+      listBotJobs,
       signOut,
     }),
-    [mode, loading, workspaceId, workspaceName, workspaces, credits, sendCode, verifyCode, switchWorkspace, refreshBalance, signOut],
+    [mode, loading, workspaceId, workspaceName, workspaces, credits, sendCode, verifyCode, switchWorkspace, refreshBalance, sendBot, listBotJobs, signOut],
   );
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
