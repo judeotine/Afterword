@@ -23,6 +23,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
+	"github.com/judeotine/afterword/services/api/internal/integrations"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
 	"github.com/judeotine/afterword/services/api/internal/meetings"
 	"github.com/judeotine/afterword/services/api/internal/storage"
@@ -30,14 +31,15 @@ import (
 
 type libraryHarness struct {
 	*harness
-	pool     *pgxpool.Pool
-	store    storage.Client
-	memory   *storage.Memory
-	buckets  storage.Buckets
-	queue    *jobs.Queue
-	enqueuer *flakyEnqueuer
-	ledger   *credits.Ledger
-	service  *meetings.Service
+	pool      *pgxpool.Pool
+	store     storage.Client
+	memory    *storage.Memory
+	buckets   storage.Buckets
+	queue     *jobs.Queue
+	enqueuer  *flakyEnqueuer
+	ledger    *credits.Ledger
+	service   *meetings.Service
+	slackFake *integrations.FakeProvider
 }
 
 func newLibraryHarness(t *testing.T) *libraryHarness {
@@ -146,15 +148,22 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		t.Fatalf("new meetings service: %v", err)
 	}
 
+	slackFake := integrations.NewFakeProvider("slack")
+	integrationRegistry := integrations.NewRegistry()
+	if err := integrationRegistry.Register(slackFake); err != nil {
+		t.Fatalf("register fake integration: %v", err)
+	}
+
 	server, err := api.NewServer(api.ServerOptions{
-		Accounts:   accountsService,
-		OTP:        otp,
-		Tokens:     tokens,
-		Refresh:    refresh,
-		Middleware: middleware,
-		Meetings:   library,
-		Email:      sender,
-		AppBaseURL: "http://localhost:3000",
+		Accounts:     accountsService,
+		OTP:          otp,
+		Tokens:       tokens,
+		Refresh:      refresh,
+		Middleware:   middleware,
+		Meetings:     library,
+		Integrations: integrationRegistry,
+		Email:        sender,
+		AppBaseURL:   "http://localhost:3000",
 	})
 	if err != nil {
 		t.Fatalf("new api server: %v", err)
@@ -171,14 +180,15 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 				Mount:          server.Routes,
 			}),
 		},
-		pool:     pool,
-		store:    client,
-		memory:   memory,
-		buckets:  buckets,
-		queue:    queue,
-		enqueuer: enqueuer,
-		ledger:   ledger,
-		service:  library,
+		pool:      pool,
+		store:     client,
+		memory:    memory,
+		buckets:   buckets,
+		queue:     queue,
+		enqueuer:  enqueuer,
+		ledger:    ledger,
+		service:   library,
+		slackFake: slackFake,
 	}
 }
 
