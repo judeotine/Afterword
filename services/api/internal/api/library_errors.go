@@ -19,6 +19,7 @@ const (
 	codeShareExpired    = "share_link_expired"
 	codeShareClosed     = "share_link_closed"
 	codeFinalized       = "meeting_finalized"
+	codeEmptyComment    = "empty_comment"
 )
 
 var libraryErrors = []struct {
@@ -41,6 +42,8 @@ var libraryErrors = []struct {
 	{meetings.ErrTooManySegments, statusError{http.StatusRequestEntityTooLarge, codeTooManySegments, "A transcript may hold at most 20000 segments."}},
 	{meetings.ErrDuplicateSequence, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "Transcript segment sequence numbers must be unique."}},
 	{meetings.ErrInvalidCursor, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "That page cursor is not valid."}},
+	{meetings.ErrCommentNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That comment does not exist."}},
+	{meetings.ErrEmptyComment, statusError{http.StatusBadRequest, codeEmptyComment, "A comment cannot be empty."}},
 }
 
 func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
