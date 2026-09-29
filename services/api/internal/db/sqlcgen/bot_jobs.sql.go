@@ -7,6 +7,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimNextBotJob = `-- name: ClaimNextBotJob :one
+UPDATE bot_jobs SET
+    status = 'claimed',
+    worker_id = $1
+WHERE id = (
+    SELECT candidate.id FROM bot_jobs candidate
+    WHERE candidate.status = 'scheduled' AND candidate.scheduled_at <= $2
+    ORDER BY candidate.scheduled_at, candidate.id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+`
+
+type ClaimNextBotJobParams struct {
+	WorkerID *string            `json:"worker_id"`
+	Now      pgtype.Timestamptz `json:"now"`
+}
+
+func (q *Queries) ClaimNextBotJob(ctx context.Context, arg ClaimNextBotJobParams) (BotJob, error) {
+	row := q.db.QueryRow(ctx, claimNextBotJob, arg.WorkerID, arg.Now)
+	var i BotJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.MeetingUrl,
+		&i.Platform,
+		&i.ScheduledAt,
+		&i.Status,
+		&i.WorkerID,
+		&i.MinutesUsed,
+		&i.ConsentAnnouncedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
+	)
+	return i, err
+}
+
 const createBotJob = `-- name: CreateBotJob :one
 INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status, worker_id,
                       estimated_minutes, bot_name)
@@ -86,6 +126,31 @@ type GetBotJobParams struct {
 
 func (q *Queries) GetBotJob(ctx context.Context, arg GetBotJobParams) (BotJob, error) {
 	row := q.db.QueryRow(ctx, getBotJob, arg.ID, arg.WorkspaceID)
+	var i BotJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.MeetingUrl,
+		&i.Platform,
+		&i.ScheduledAt,
+		&i.Status,
+		&i.WorkerID,
+		&i.MinutesUsed,
+		&i.ConsentAnnouncedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
+	)
+	return i, err
+}
+
+const getBotJobByID = `-- name: GetBotJobByID :one
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs WHERE id = $1
+`
+
+func (q *Queries) GetBotJobByID(ctx context.Context, id uuid.UUID) (BotJob, error) {
+	row := q.db.QueryRow(ctx, getBotJobByID, id)
 	var i BotJob
 	err := row.Scan(
 		&i.ID,
@@ -192,6 +257,53 @@ func (q *Queries) UpdateBotJob(ctx context.Context, arg UpdateBotJobParams) (Bot
 		arg.Error,
 		arg.ID,
 		arg.WorkspaceID,
+	)
+	var i BotJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.MeetingUrl,
+		&i.Platform,
+		&i.ScheduledAt,
+		&i.Status,
+		&i.WorkerID,
+		&i.MinutesUsed,
+		&i.ConsentAnnouncedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
+	)
+	return i, err
+}
+
+const updateBotJobByWorker = `-- name: UpdateBotJobByWorker :one
+UPDATE bot_jobs SET
+    status = COALESCE($1, status),
+    minutes_used = COALESCE($2, minutes_used),
+    consent_announced_at = COALESCE($3, consent_announced_at),
+    error = COALESCE($4, error)
+WHERE id = $5 AND worker_id = $6
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+`
+
+type UpdateBotJobByWorkerParams struct {
+	Status             *string            `json:"status"`
+	MinutesUsed        *int32             `json:"minutes_used"`
+	ConsentAnnouncedAt pgtype.Timestamptz `json:"consent_announced_at"`
+	Error              *string            `json:"error"`
+	ID                 uuid.UUID          `json:"id"`
+	WorkerID           *string            `json:"worker_id"`
+}
+
+func (q *Queries) UpdateBotJobByWorker(ctx context.Context, arg UpdateBotJobByWorkerParams) (BotJob, error) {
+	row := q.db.QueryRow(ctx, updateBotJobByWorker,
+		arg.Status,
+		arg.MinutesUsed,
+		arg.ConsentAnnouncedAt,
+		arg.Error,
+		arg.ID,
+		arg.WorkerID,
 	)
 	var i BotJob
 	err := row.Scan(

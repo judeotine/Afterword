@@ -10,6 +10,7 @@ import (
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, arg AcceptWorkspaceInviteParams) (WorkspaceInvite, error)
 	ClaimAuthOTPAttempt(ctx context.Context, arg ClaimAuthOTPAttemptParams) (int32, error)
+	ClaimNextBotJob(ctx context.Context, arg ClaimNextBotJobParams) (BotJob, error)
 	ConsumeAuthOTP(ctx context.Context, arg ConsumeAuthOTPParams) (int64, error)
 	ConsumeOAuthState(ctx context.Context, arg ConsumeOAuthStateParams) (OauthState, error)
 	CountAuthOTPsByDestination(ctx context.Context, arg CountAuthOTPsByDestinationParams) (int64, error)
@@ -81,6 +82,7 @@ type Querier interface {
 	GetActiveCreditPack(ctx context.Context, id uuid.UUID) (CreditPack, error)
 	GetAuditLogEntry(ctx context.Context, arg GetAuditLogEntryParams) (AuditLog, error)
 	GetBotJob(ctx context.Context, arg GetBotJobParams) (BotJob, error)
+	GetBotJobByID(ctx context.Context, id uuid.UUID) (BotJob, error)
 	GetCalendarConnection(ctx context.Context, arg GetCalendarConnectionParams) (CalendarConnection, error)
 	GetClip(ctx context.Context, arg GetClipParams) (Clip, error)
 	GetComment(ctx context.Context, arg GetCommentParams) (Comment, error)
@@ -170,6 +172,7 @@ type Querier interface {
 	UpdateAPIToken(ctx context.Context, arg UpdateAPITokenParams) (ApiToken, error)
 	UpdateAuditLogEntry(ctx context.Context, arg UpdateAuditLogEntryParams) (AuditLog, error)
 	UpdateBotJob(ctx context.Context, arg UpdateBotJobParams) (BotJob, error)
+	UpdateBotJobByWorker(ctx context.Context, arg UpdateBotJobByWorkerParams) (BotJob, error)
 	UpdateCalendarConnection(ctx context.Context, arg UpdateCalendarConnectionParams) (CalendarConnection, error)
 	UpdateClip(ctx context.Context, arg UpdateClipParams) (Clip, error)
 	UpdateComment(ctx context.Context, arg UpdateCommentParams) (Comment, error)
