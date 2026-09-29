@@ -1,13 +1,12 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
-use reqwest::Client;
-use regex::Regex;
-use once_cell::sync::Lazy;
 
-/// Model metadata containing context size and other details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
     pub name: String,
@@ -16,7 +15,6 @@ pub struct ModelMetadata {
     pub family: String,
 }
 
-/// Response structure from Ollama /api/show endpoint
 #[derive(Debug, Deserialize)]
 struct OllamaShowResponse {
     modelfile: String,
@@ -34,20 +32,17 @@ struct ModelDetails {
     parameter_size: String,
 }
 
-/// Cache entry with timestamp for TTL management
 struct CacheEntry {
     metadata: ModelMetadata,
     fetched_at: Instant,
 }
 
-/// Thread-safe cache for model metadata with TTL
 pub struct ModelMetadataCache {
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
     ttl: Duration,
 }
 
 impl ModelMetadataCache {
-    /// Create a new metadata cache with the specified TTL
     pub fn new(ttl: Duration) -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
@@ -55,14 +50,6 @@ impl ModelMetadataCache {
         }
     }
 
-    /// Get metadata from cache or fetch from API
-    ///
-    /// # Arguments
-    /// * `model_name` - Name of the model (e.g., "llama3.2:1b")
-    /// * `endpoint` - Optional custom Ollama endpoint
-    ///
-    /// # Returns
-    /// ModelMetadata on success, error message on failure
     pub async fn get_or_fetch(
         &self,
         model_name: &str,
@@ -70,11 +57,9 @@ impl ModelMetadataCache {
     ) -> Result<ModelMetadata, String> {
         let cache_key = format!("{}::{}", model_name, endpoint.unwrap_or("default"));
 
-        // Check cache first
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&cache_key) {
-                // Check if entry is still valid (within TTL)
                 if entry.fetched_at.elapsed() < self.ttl {
                     tracing::debug!(
                         "Cache hit for model {}: context_size={}",
@@ -86,11 +71,9 @@ impl ModelMetadataCache {
             }
         }
 
-        // Cache miss or expired - fetch from API
         tracing::info!("Fetching metadata for model: {}", model_name);
         let metadata = fetch_model_info(model_name, endpoint).await?;
 
-        // Store in cache
         {
             let mut cache = self.cache.write().await;
             cache.insert(
@@ -105,7 +88,6 @@ impl ModelMetadataCache {
         Ok(metadata)
     }
 
-    /// Clear all cached entries (useful for testing or manual refresh)
     #[allow(dead_code)]
     pub async fn clear(&self) {
         let mut cache = self.cache.write().await;
@@ -114,7 +96,6 @@ impl ModelMetadataCache {
     }
 }
 
-/// Default context sizes for common model families (fallback when API fails)
 const DEFAULT_CONTEXT_SIZES: &[(&str, usize)] = &[
     ("llama", 4096),
     ("mistral", 8192),
@@ -126,17 +107,8 @@ const DEFAULT_CONTEXT_SIZES: &[(&str, usize)] = &[
     ("neural-chat", 4096),
 ];
 
-/// Ultimate fallback context size when model family is unknown
 const ULTIMATE_FALLBACK: usize = 4000;
 
-/// Fetch model information from Ollama API
-///
-/// # Arguments
-/// * `model_name` - Name of the model
-/// * `endpoint` - Optional custom Ollama endpoint
-///
-/// # Returns
-/// ModelMetadata on success, error string on failure
 async fn fetch_model_info(
     model_name: &str,
     endpoint: Option<&str>,
@@ -158,16 +130,21 @@ async fn fetch_model_info(
         .await
         .map_err(|e| {
             if e.is_timeout() {
-                format!("Request timed out while fetching metadata for {}", model_name)
+                format!(
+                    "Request timed out while fetching metadata for {}",
+                    model_name
+                )
             } else if e.is_connect() {
-                format!("Cannot connect to {}. Ollama server may not be running.", base_url)
+                format!(
+                    "Cannot connect to {}. Ollama server may not be running.",
+                    base_url
+                )
             } else {
                 format!("Network error: {}", e)
             }
         })?;
 
     if !response.status().is_success() {
-        // Try fallback based on model name
         return Ok(get_fallback_metadata(model_name));
     }
 
@@ -176,15 +153,13 @@ async fn fetch_model_info(
         .await
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
-    // Try to get context size from model_info (verbose mode) first
-    let mut context_size = extract_context_from_model_info(&show_response.model_info, &show_response.details.family);
+    let mut context_size =
+        extract_context_from_model_info(&show_response.model_info, &show_response.details.family);
 
-    // If not found in model_info, try parsing modelfile
     if context_size == ULTIMATE_FALLBACK {
         context_size = parse_num_ctx_from_modelfile(&show_response.modelfile);
     }
 
-    // If still not found, try family-based fallback
     if context_size == ULTIMATE_FALLBACK {
         let family = if !show_response.details.family.is_empty() {
             &show_response.details.family
@@ -192,7 +167,6 @@ async fn fetch_model_info(
             model_name
         };
 
-        // Check if this model family has a known context size
         if let Some((_, size)) = DEFAULT_CONTEXT_SIZES
             .iter()
             .find(|(fam, _)| family.to_lowercase().contains(fam))
@@ -214,20 +188,10 @@ async fn fetch_model_info(
     })
 }
 
-/// Extract context size from model_info (verbose mode)
-///
-/// # Arguments
-/// * `model_info` - The model_info HashMap from /api/show with verbose=true
-/// * `family` - The model family name
-///
-/// # Returns
-/// Context size in tokens, or ULTIMATE_FALLBACK if not found
 fn extract_context_from_model_info(
     model_info: &std::collections::HashMap<String, serde_json::Value>,
     family: &str,
 ) -> usize {
-    // Try to find context_length key with family prefix
-    // Examples: "gemma3.context_length", "llama.context_length", etc.
     let possible_keys = vec![
         format!("{}.context_length", family),
         format!("{}.context_size", family),
@@ -247,18 +211,9 @@ fn extract_context_from_model_info(
     ULTIMATE_FALLBACK
 }
 
-/// Parse num_ctx parameter from Ollama modelfile
-///
-/// # Arguments
-/// * `modelfile` - The modelfile string from /api/show response
-///
-/// # Returns
-/// Context size in tokens, defaults to 4000 if not found
 fn parse_num_ctx_from_modelfile(modelfile: &str) -> usize {
-    // Regex to match: PARAMETER num_ctx <number>
-    static RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"PARAMETER\s+num_ctx\s+(\d+)").expect("Invalid regex pattern")
-    });
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"PARAMETER\s+num_ctx\s+(\d+)").expect("Invalid regex pattern"));
 
     RE.captures(modelfile)
         .and_then(|caps| caps.get(1))
@@ -272,24 +227,15 @@ fn parse_num_ctx_from_modelfile(modelfile: &str) -> usize {
         })
 }
 
-/// Get fallback metadata based on model name pattern matching
-///
-/// # Arguments
-/// * `model_name` - Name of the model
-///
-/// # Returns
-/// ModelMetadata with estimated context size
 fn get_fallback_metadata(model_name: &str) -> ModelMetadata {
     let model_lower = model_name.to_lowercase();
 
-    // Try to match against known model families
     let context_size = DEFAULT_CONTEXT_SIZES
         .iter()
         .find(|(family, _)| model_lower.contains(family))
         .map(|(_, size)| *size)
         .unwrap_or(ULTIMATE_FALLBACK);
 
-    // Extract family name from model name (first part before colon or hyphen)
     let family = model_name
         .split(':')
         .next()
