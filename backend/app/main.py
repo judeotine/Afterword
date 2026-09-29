@@ -12,25 +12,20 @@ from threading import Lock
 from transcript_processor import TranscriptProcessor
 import time
 
-# Load environment variables
 load_dotenv()
 
-# Configure logger with line numbers and function names
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# Create console handler with formatting
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
 
-# Create formatter with line numbers and function names
 formatter = logging.Formatter(
     '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d - %(funcName)s()] - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 console_handler.setFormatter(formatter)
 
-# Add handler to logger if not already added
 if not logger.handlers:
     logger.addHandler(console_handler)
 
@@ -40,25 +35,22 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],     # Allow all origins for testing
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],     # Allow all methods
-    allow_headers=["*"],     # Allow all headers
-    max_age=3600,            # Cache preflight requests for 1 hour
+    allow_methods=["*"],
+    allow_headers=["*"],
+    max_age=3600,
 )
 
-# Global database manager instance for meeting management endpoints
 db = DatabaseManager()
 
-# New Pydantic models for meeting management
 class Transcript(BaseModel):
     id: str
     text: str
     timestamp: str
-    # Recording-relative timestamps for audio-transcript synchronization
+
     audio_start_time: Optional[float] = None
     audio_end_time: Optional[float] = None
     duration: Optional[float] = None
@@ -84,7 +76,7 @@ class DeleteMeetingRequest(BaseModel):
 class SaveTranscriptRequest(BaseModel):
     meeting_title: str
     transcripts: List[Transcript]
-    folder_path: Optional[str] = None  # NEW: Path to meeting folder (for new folder structure)
+    folder_path: Optional[str] = None
 
 class SaveModelConfigRequest(BaseModel):
     provider: str
@@ -126,18 +118,16 @@ class SummaryProcessor:
             if not text:
                 raise ValueError("Empty transcript text provided")
 
-            # Validate chunk_size and overlap
             if chunk_size <= 0:
                 raise ValueError("chunk_size must be positive")
             if overlap < 0:
                 raise ValueError("overlap must be non-negative")
             if overlap >= chunk_size:
-                overlap = chunk_size - 1  # Ensure overlap is less than chunk_size
+                overlap = chunk_size - 1
 
-            # Ensure step size is positive
             step_size = chunk_size - overlap
             if step_size <= 0:
-                chunk_size = overlap + 1  # Adjust chunk_size to ensure positive step
+                chunk_size = overlap + 1
 
             logger.info(f"Processing transcript of length {len(text)} with chunk_size={chunk_size}, overlap={overlap}")
             num_chunks, all_json_data = await self.transcript_processor.process_transcript(
@@ -165,10 +155,8 @@ class SummaryProcessor:
         except Exception as e:
             logger.error(f"Error during cleanup: {str(e)}", exc_info=True)
 
-# Initialize processor
 processor = SummaryProcessor()
 
-# New meeting management endpoints
 @app.get("/get-meetings", response_model=List[MeetingResponse])
 async def get_meetings():
     """Get all meetings with their basic information"""
@@ -220,13 +208,12 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
     """Background task to process transcript"""
     try:
         logger.info(f"Starting background processing for process_id: {process_id}")
-        
-        # Early validation for common issues
+
         if not transcript.text or not transcript.text.strip():
             raise ValueError("Empty transcript text provided")
-        
+
         if transcript.model in ["claude", "groq", "openai"]:
-            # Check if API key is available for cloud providers
+
             api_key = await processor.db.get_api_key(transcript.model)
             if not api_key:
                 provider_names = {"claude": "Anthropic", "groq": "Groq", "openai": "OpenAI"}
@@ -241,7 +228,6 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
             custom_prompt=custom_prompt
         )
 
-        # Create final summary structure by aggregating chunk results
         final_summary = {
             "MeetingName": "",
             "People": {"title": "People", "blocks": []},
@@ -250,15 +236,13 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
             "KeyItemsDecisions": {"title": "Key Items & Decisions", "blocks": []},
             "ImmediateActionItems": {"title": "Immediate Action Items", "blocks": []},
             "NextSteps": {"title": "Next Steps", "blocks": []},
-            # "OtherImportantPoints": {"title": "Other Important Points", "blocks": []},
-            # "ClosingRemarks": {"title": "Closing Remarks", "blocks": []},
+
             "MeetingNotes": {
                 "meeting_name": "",
                 "sections": []
             }
         }
 
-        # Process each chunk's data
         for json_str in all_json_data:
             try:
                 json_dict = json.loads(json_str)
@@ -266,9 +250,9 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
                     final_summary["MeetingName"] = json_dict["MeetingName"]
                 for key in final_summary:
                     if key == "MeetingNotes" and key in json_dict:
-                        # Handle MeetingNotes sections
+
                         if isinstance(json_dict[key].get("sections"), list):
-                            # Ensure each section has blocks array
+
                             for section in json_dict[key]["sections"]:
                                 if not section.get("blocks"):
                                     section["blocks"] = []
@@ -278,14 +262,14 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
                     elif key != "MeetingName" and key in json_dict and isinstance(json_dict[key], dict) and "blocks" in json_dict[key]:
                         if isinstance(json_dict[key]["blocks"], list):
                             final_summary[key]["blocks"].extend(json_dict[key]["blocks"])
-                            # Also add as a new section in MeetingNotes if not already present
+
                             section_exists = False
                             for section in final_summary["MeetingNotes"]["sections"]:
                                 if section["title"] == json_dict[key]["title"]:
                                     section["blocks"].extend(json_dict[key]["blocks"])
                                     section_exists = True
                                     break
-                            
+
                             if not section_exists:
                                 final_summary["MeetingNotes"]["sections"].append({
                                     "title": json_dict[key]["title"],
@@ -296,11 +280,9 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
             except Exception as e:
                 logger.error(f"Error processing chunk data for {process_id}: {e}. Chunk: {json_str[:100]}...")
 
-        # Update database with meeting name using meeting_id
         if final_summary["MeetingName"]:
             await processor.db.update_meeting_name(transcript.meeting_id, final_summary["MeetingName"])
 
-        # Save final result
         if all_json_data:
             await processor.db.update_process(process_id, status="completed", result=json.dumps(final_summary))
             logger.info(f"Background processing completed for process_id: {process_id}")
@@ -310,7 +292,7 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
             logger.error(f"Background processing failed for process_id: {process_id} - {error_msg}")
 
     except ValueError as e:
-        # Handle specific value errors (like API key issues)
+
         error_msg = str(e)
         logger.error(f"Configuration error in background processing for {process_id}: {error_msg}", exc_info=True)
         try:
@@ -318,7 +300,7 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
         except Exception as db_e:
             logger.error(f"Failed to update DB status to failed for {process_id}: {db_e}", exc_info=True)
     except Exception as e:
-        # Handle all other exceptions
+
         error_msg = f"Processing error: {str(e)}"
         logger.error(f"Error in background processing for {process_id}: {error_msg}", exc_info=True)
         try:
@@ -333,10 +315,9 @@ async def process_transcript_api(
 ):
     """Process a transcript text with background processing"""
     try:
-        # Create new process linked to meeting_id
+
         process_id = await processor.db.create_process(transcript.meeting_id)
 
-        # Save transcript data associated with meeting_id
         await processor.db.save_transcript(
             transcript.meeting_id,
             transcript.text,
@@ -348,7 +329,6 @@ async def process_transcript_api(
 
         custom_prompt = transcript.custom_prompt
 
-        # Start background processing
         background_tasks.add_task(
             process_transcript_background,
             process_id,
@@ -387,7 +367,6 @@ async def get_summary(meeting_id: str):
         status = result.get("status", "unknown").lower()
         logger.debug(f"Summary status for meeting {meeting_id}: {status}, error: {result.get('error')}")
 
-        # Parse result data if available
         summary_data = None
         if result.get("result"):
             try:
@@ -408,52 +387,41 @@ async def get_summary(meeting_id: str):
                 status = "failed"
                 result["error"] = f"Error processing summary data: {str(e)}"
 
-        # Transform summary data into frontend format if available - PRESERVE ORDER
         transformed_data = {}
         if isinstance(summary_data, dict) and status == "completed":
-            # Add MeetingName to transformed data
+
             transformed_data["MeetingName"] = summary_data.get("MeetingName", "")
 
-            # Map backend sections to frontend sections
             section_mapping = {
-                # "SessionSummary": "key_points",
-                # "ImmediateActionItems": "action_items",
-                # "KeyItemsDecisions": "decisions",
-                # "NextSteps": "next_steps",
-                # "CriticalDeadlines": "critical_deadlines",
-                # "People": "people"
+
             }
 
-            # Add each section to transformed data
             for backend_key, frontend_key in section_mapping.items():
                 if backend_key in summary_data and isinstance(summary_data[backend_key], dict):
                     transformed_data[frontend_key] = summary_data[backend_key]
-            
-            # Add meeting notes sections if available - PRESERVE ORDER AND HANDLE DUPLICATES
+
             if "MeetingNotes" in summary_data and isinstance(summary_data["MeetingNotes"], dict):
                 meeting_notes = summary_data["MeetingNotes"]
                 if isinstance(meeting_notes.get("sections"), list):
-                    # Add section order array to maintain order
+
                     transformed_data["_section_order"] = []
                     used_keys = set()
-                    
+
                     for index, section in enumerate(meeting_notes["sections"]):
                         if isinstance(section, dict) and "title" in section and "blocks" in section:
-                            # Ensure blocks is a list to prevent frontend errors
+
                             if not isinstance(section.get("blocks"), list):
                                 section["blocks"] = []
-                                
-                            # Convert title to snake_case key
+
                             base_key = section["title"].lower().replace(" & ", "_").replace(" ", "_")
-                            
-                            # Handle duplicate section names by adding index
+
                             key = base_key
                             if key in used_keys:
                                 key = f"{base_key}_{index}"
-                            
+
                             used_keys.add(key)
                             transformed_data[key] = section
-                            # Only add to _section_order if the section was successfully added
+
                             transformed_data["_section_order"].append(key)
 
         response = {
@@ -515,18 +483,14 @@ async def save_transcript(request: SaveTranscriptRequest):
         logger.info(f"Received save-transcript request for meeting: {request.meeting_title}")
         logger.info(f"Number of transcripts to save: {len(request.transcripts)}")
 
-        # Log first transcript timestamps for debugging
         if request.transcripts:
             first = request.transcripts[0]
             logger.debug(f"First transcript: audio_start_time={first.audio_start_time}, audio_end_time={first.audio_end_time}, duration={first.duration}")
 
-        # Generate a unique meeting ID
         meeting_id = f"meeting-{int(time.time() * 1000)}"
 
-        # Save the meeting with folder path (if provided)
         await db.save_meeting(meeting_id, request.meeting_title, folder_path=request.folder_path)
 
-        # Save each transcript segment with NEW timestamp fields for playback sync
         for transcript in request.transcripts:
             await db.save_meeting_transcript(
                 meeting_id=meeting_id,
@@ -535,7 +499,7 @@ async def save_transcript(request: SaveTranscriptRequest):
                 summary="",
                 action_items="",
                 key_points="",
-                # NEW: Recording-relative timestamps for audio-transcript synchronization
+
                 audio_start_time=transcript.audio_start_time,
                 audio_end_time=transcript.audio_end_time,
                 duration=transcript.duration
@@ -563,7 +527,7 @@ async def save_model_config(request: SaveModelConfigRequest):
     await db.save_model_config(request.provider, request.model, request.whisperModel)
     if request.apiKey != None:
         await db.save_api_key(request.apiKey, request.provider)
-    return {"status": "success", "message": "Model configuration saved successfully"}  
+    return {"status": "success", "message": "Model configuration saved successfully"}
 
 @app.get("/get-transcript-config")
 async def get_transcript_config():
