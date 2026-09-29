@@ -17,6 +17,10 @@ export const configSchema = z.object({
   PRIVACY_URL: z.string().url(),
   HEADLESS: booleanish.default('true'),
   PULSE_SINK_NAME: z.string().min(1).default('afterword_sink'),
+  API_BASE_URL: z.string().url().optional(),
+  WORKER_TOKEN: z.string().min(1).optional(),
+  WORKER_ID: z.string().min(1).default('bot-worker'),
+  CLAIM_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export type BotConfig = z.infer<typeof configSchema>;
