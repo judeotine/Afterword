@@ -47,6 +47,21 @@ describe('ApiClient', () => {
     expect(url).toBe('http://api/v1/worker/bot-jobs/job-1/status');
     expect(JSON.parse(init.body as string)).toMatchObject({ worker_id: 'w1', status: 'recording', consent_announced: true });
   });
+
+  it('creates a recording and returns upload targets', async () => {
+    const result = {
+      meeting: { id: 'm-1', workspace_id: 'ws-1', title: 'Recorded standup', status: 'pending' },
+      upload: { audio_url: 'https://upload/audio', transcript_url: 'https://upload/transcript', expires_at: '2026-01-01T01:00:00Z' },
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(201, result));
+    const client = new ApiClient({ baseUrl: 'http://api', workerToken: 't', workerId: 'w1', fetchImpl });
+    const created = await client.createRecording('job-1', { title: 'Recorded standup', duration_s: 600, audio_extension: 'opus', size_bytes: 2048 });
+    expect(created.meeting.id).toBe('m-1');
+    expect(created.upload.audio_url).toBe('https://upload/audio');
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://api/v1/worker/bot-jobs/job-1/recording');
+    expect(JSON.parse(init.body as string)).toMatchObject({ worker_id: 'w1', title: 'Recorded standup', size_bytes: 2048 });
+  });
 });
 
 describe('PollLoop', () => {
