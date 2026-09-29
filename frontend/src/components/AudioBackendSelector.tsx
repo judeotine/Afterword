@@ -25,18 +25,15 @@ export function AudioBackendSelector({
   const [error, setError] = useState<string | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
 
-  // Load available backends and current selection
   useEffect(() => {
     const loadBackends = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // Get backend info (includes name and description)
         const backendInfo = await invoke<BackendInfo[]>('get_audio_backend_info');
         setBackends(backendInfo);
 
-        // Get current backend if not provided via props
         if (!propBackend) {
           const current = await invoke<string>('get_current_audio_backend');
           setCurrentBackend(current);
@@ -54,14 +51,12 @@ export function AudioBackendSelector({
     loadBackends();
   }, [propBackend]);
 
-  // Handle backend selection
   const handleBackendChange = async (backendId: string) => {
     try {
       setError(null);
       await invoke('set_audio_backend', { backend: backendId });
       setCurrentBackend(backendId);
 
-      // Notify parent component
       if (onBackendChange) {
         onBackendChange(backendId);
       }
@@ -73,7 +68,6 @@ export function AudioBackendSelector({
     }
   };
 
-  // Only show selector if there are multiple backends
   if (loading) {
     return (
       <div className="animate-pulse">
@@ -83,7 +77,6 @@ export function AudioBackendSelector({
     );
   }
 
-  // Hide if only one backend available
   if (backends.length <= 1) {
     return null;
   }
@@ -129,7 +122,6 @@ export function AudioBackendSelector({
 
       <div className="space-y-2">
         {backends.map((backend) => {
-          // Disable Core Audio option
           const isCoreAudio = backend.id === 'screencapturekit';
           const isDisabled = disabled || isCoreAudio;
 
