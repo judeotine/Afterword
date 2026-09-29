@@ -12,7 +12,6 @@ import {
 export function BetaSettings() {
   const { betaFeatures, toggleBetaFeature } = useConfig();
 
-  // Define feature order for display (allows custom ordering)
   const featureOrder: BetaFeatureKey[] = ['importAndRetranscribe'];
 
   return (
