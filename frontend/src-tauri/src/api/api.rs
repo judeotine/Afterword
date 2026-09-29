@@ -106,7 +106,7 @@ pub struct MeetingTranscript {
     pub id: String,
     pub text: String,
     pub timestamp: String,
-    // Recording-relative timestamps for audio-transcript synchronization
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_start_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,7 +115,6 @@ pub struct MeetingTranscript {
     pub duration: Option<f64>,
 }
 
-/// Meeting metadata without transcripts (for pagination)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MeetingMetadata {
     pub id: String,
@@ -126,7 +125,6 @@ pub struct MeetingMetadata {
     pub folder_path: Option<String>,
 }
 
-/// Paginated transcripts response with total count
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PaginatedTranscriptsResponse {
     pub transcripts: Vec<MeetingTranscript>,
@@ -152,10 +150,8 @@ pub struct SaveTranscriptRequest {
     pub transcripts: Vec<TranscriptSegment>,
 }
 
-// Defined in afterword-core so the shared pipeline can build these segments.
 pub use afterword_core::transcript::ApiTranscriptSegment as TranscriptSegment;
 
-// Helper function to get auth token from store (optional)
 #[allow(dead_code)]
 async fn get_auth_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let store = match app.store("store.json") {
@@ -180,8 +176,6 @@ async fn get_auth_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
         }
     }
 }
-
-// API Commands for Tauri
 
 #[tauri::command]
 pub async fn api_get_meetings<R: Runtime>(
@@ -330,7 +324,6 @@ pub async fn api_save_model_config<R: Runtime>(
         return Err(e.to_string());
     }
 
-    // Skip API key saving for custom-openai provider (it uses customOpenAIConfig JSON instead)
     if let Some(key) = api_key {
         if !key.is_empty() && provider != "custom-openai" {
             log_info!("🔑 API key provided, saving...");
@@ -341,9 +334,6 @@ pub async fn api_save_model_config<R: Runtime>(
         }
     }
 
-    // Trigger graceful shutdown of built-in AI sidecar if it's running
-    // This ensures that if the user switched models/providers, the old one is cleaned up
-    // The shutdown happens in the background, so it won't block the UI
     if let Err(e) = crate::summary::summary_engine::client::shutdown_sidecar_gracefully().await {
         log_warn!("Failed to initiate graceful sidecar shutdown: {}", e);
     }
@@ -592,14 +582,16 @@ pub async fn api_get_meeting<R: Runtime>(
     }
 }
 
-/// Get meeting metadata without transcripts (for pagination)
 #[tauri::command]
 pub async fn api_get_meeting_metadata<R: Runtime>(
     _app: AppHandle<R>,
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
-    log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
+    log_info!(
+        "api_get_meeting_metadata called for meeting_id: {}",
+        meeting_id
+    );
 
     let pool = state.db_manager.pool();
 
@@ -625,7 +617,6 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     }
 }
 
-/// Get paginated transcripts for a meeting
 #[tauri::command]
 pub async fn api_get_meeting_transcripts<R: Runtime>(
     _app: AppHandle<R>,
@@ -643,7 +634,9 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset).await {
+    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset)
+        .await
+    {
         Ok((transcripts, total_count)) => {
             log_info!(
                 "Successfully retrieved {} transcripts for meeting {} (total: {})",
@@ -652,7 +645,6 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
                 total_count
             );
 
-            // Convert Transcript to MeetingTranscript
             let meeting_transcripts = transcripts
                 .into_iter()
                 .map(|t| MeetingTranscript {
@@ -674,7 +666,11 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             })
         }
         Err(e) => {
-            log_error!("Error retrieving transcripts for meeting {}: {}", meeting_id, e);
+            log_error!(
+                "Error retrieving transcripts for meeting {}: {}",
+                meeting_id,
+                e
+            );
             Err(format!("Failed to retrieve transcripts: {}", e))
         }
     }
@@ -727,7 +723,6 @@ pub async fn api_save_transcript<R: Runtime>(
         auth_token.is_some()
     );
 
-    // Log first transcript for debugging
     if let Some(first) = transcripts.first() {
         log_debug!(
             "First transcript data: {}",
@@ -735,17 +730,18 @@ pub async fn api_save_transcript<R: Runtime>(
         );
     }
 
-    // Convert serde_json::Value to TranscriptSegment
     let transcripts_to_save: Vec<TranscriptSegment> = transcripts
         .into_iter()
         .map(serde_json::from_value)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             log_error!("Failed to parse transcript segments: {}", e);
-            format!("Invalid transcript data format: {}. Please check the data structure.", e)
+            format!(
+                "Invalid transcript data format: {}. Please check the data structure.",
+                e
+            )
         })?;
 
-    // Log parsed segments count and first segment details
     if let Some(first_seg) = transcripts_to_save.first() {
         log_debug!("First parsed segment: text='{}', audio_start_time={:?}, audio_end_time={:?}, duration={:?}",
                    first_seg.text.chars().take(50).collect::<String>(),
@@ -756,7 +752,6 @@ pub async fn api_save_transcript<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    // Now, call the repository with the correctly typed data.
     match TranscriptsRepository::save_transcript(
         pool,
         &meeting_title,
@@ -787,7 +782,6 @@ pub async fn api_save_transcript<R: Runtime>(
     }
 }
 
-/// Opens the meeting's recording folder in the system file explorer
 #[tauri::command]
 pub async fn open_meeting_folder<R: Runtime>(
     _app: AppHandle<R>,
@@ -798,7 +792,6 @@ pub async fn open_meeting_folder<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    // Get meeting with folder_path
     let meeting: Option<MeetingModel> = sqlx::query_as(
         "SELECT id, title, created_at, updated_at, folder_path FROM meetings WHERE id = ?",
     )
@@ -812,14 +805,12 @@ pub async fn open_meeting_folder<R: Runtime>(
             if let Some(folder_path) = m.folder_path {
                 log_info!("Opening meeting folder: {}", folder_path);
 
-                // Verify folder exists
                 let path = std::path::Path::new(&folder_path);
                 if !path.exists() {
                     log_warn!("Folder path does not exist: {}", folder_path);
                     return Err(format!("Recording folder not found: {}", folder_path));
                 }
 
-                // Open folder based on OS
                 #[cfg(target_os = "macos")]
                 {
                     std::process::Command::new("open")
@@ -867,7 +858,6 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     } else if cfg!(target_os = "macos") {
         Command::new("open").arg(&url).output()
     } else {
-        // Linux and other Unix-like systems
         Command::new("xdg-open").arg(&url).output()
     };
 
@@ -877,10 +867,6 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
     }
 }
 
-// ===== CUSTOM OPENAI API COMMANDS =====
-
-/// Saves the custom OpenAI configuration
-/// This configuration is stored as JSON and includes endpoint, apiKey, model, and optional parameters
 #[tauri::command]
 pub async fn api_save_custom_openai_config<R: Runtime>(
     _app: AppHandle<R>,
@@ -898,7 +884,6 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
         &model
     );
 
-    // Validate required fields
     if endpoint.trim().is_empty() {
         return Err("Endpoint URL is required".to_string());
     }
@@ -906,12 +891,10 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
         return Err("Model name is required".to_string());
     }
 
-    // Validate endpoint URL format
     if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
         return Err("Endpoint must start with http:// or https://".to_string());
     }
 
-    // Validate optional numeric parameters
     if let Some(temp) = temperature {
         if !(0.0..=2.0).contains(&temp) {
             return Err("Temperature must be between 0.0 and 2.0".to_string());
@@ -941,7 +924,10 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
 
     match SettingsRepository::save_custom_openai_config(pool, &config).await {
         Ok(()) => {
-            log_info!("✅ Successfully saved custom OpenAI config for endpoint: {}", config.endpoint);
+            log_info!(
+                "✅ Successfully saved custom OpenAI config for endpoint: {}",
+                config.endpoint
+            );
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Custom OpenAI configuration saved successfully"
@@ -954,7 +940,6 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     }
 }
 
-/// Gets the custom OpenAI configuration
 #[tauri::command]
 pub async fn api_get_custom_openai_config<R: Runtime>(
     _app: AppHandle<R>,
@@ -967,8 +952,11 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
     match SettingsRepository::get_custom_openai_config(pool).await {
         Ok(config) => {
             if let Some(ref c) = config {
-                log_info!("✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint, c.model);
+                log_info!(
+                    "✅ Found custom OpenAI config: endpoint='{}', model='{}'",
+                    c.endpoint,
+                    c.model
+                );
             } else {
                 log_info!("No custom OpenAI config found");
             }
@@ -981,8 +969,6 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
     }
 }
 
-/// Tests the connection to a custom OpenAI-compatible endpoint
-/// Makes a minimal request to verify the endpoint is reachable and responds correctly
 #[tauri::command]
 pub async fn api_test_custom_openai_connection<R: Runtime>(
     _app: AppHandle<R>,
@@ -996,15 +982,12 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
         &model
     );
 
-    // Validate endpoint URL format
     if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
         return Err("Endpoint must start with http:// or https://".to_string());
     }
 
-    // Build the URL - append /chat/completions to the base endpoint
     let url = format!("{}/chat/completions", endpoint.trim_end_matches('/'));
 
-    // Create a minimal test request
     let test_request = serde_json::json!({
         "model": model,
         "messages": [
@@ -1026,7 +1009,6 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
         .header("Content-Type", "application/json")
         .json(&test_request);
 
-    // Add authorization if API key provided
     if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
         request = request.header("Authorization", format!("Bearer {}", key));
     }
@@ -1037,21 +1019,17 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
             let response_text = response.text().await.unwrap_or_default();
 
             if status.is_success() {
-                // Parse response as JSON to verify it's a valid OpenAI-compatible response
                 match serde_json::from_str::<serde_json::Value>(&response_text) {
                     Ok(json) => {
-                        // Verify the response has the expected OpenAI structure
                         if let Some(choices) = json.get("choices") {
                             if let Some(choices_array) = choices.as_array() {
                                 if !choices_array.is_empty() {
-                                    // Verify the first choice has the required message structure
                                     if let Some(first_choice) = choices_array.get(0) {
-                                        // Check if message.content field exists (can be empty string)
                                         let has_message_structure = first_choice
                                             .get("message")
                                             .and_then(|m| {
                                                 m.get("content")
-                                                .or_else(|| m.get("reasoning_content"))
+                                                    .or_else(|| m.get("reasoning_content"))
                                             })
                                             .is_some();
 
@@ -1068,18 +1046,33 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                             }
                         }
 
-                        // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}",
+                            response_text
+                        );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
                     Err(e) => {
-                        log_warn!("⚠️ Endpoint returned 200 but response is not valid JSON: {}", e);
-                        Err(format!("Endpoint is reachable but returned invalid JSON: {}. Response: {}", e, response_text))
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response is not valid JSON: {}",
+                            e
+                        );
+                        Err(format!(
+                            "Endpoint is reachable but returned invalid JSON: {}. Response: {}",
+                            e, response_text
+                        ))
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
-                Err(format!("Connection failed with status {}: {}", status, response_text))
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
+                    status,
+                    response_text
+                );
+                Err(format!(
+                    "Connection failed with status {}: {}",
+                    status, response_text
+                ))
             }
         }
         Err(e) => {
