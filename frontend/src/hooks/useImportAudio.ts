@@ -66,22 +66,18 @@ export function useImportAudio({
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Stable refs for callbacks to avoid listener re-registration on every render
   const onCompleteRef = useRef(onComplete);
   const onErrorRef = useRef(onError);
   useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
-  // Cancellation guard: prevents late events from updating state after cancel
   const isCancelledRef = useRef(false);
 
-  // Set up event listeners (registered once, use refs for callbacks)
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
     const cleanedUpRef = { current: false };
 
     const setupListeners = async () => {
-      // Progress events
       const unlistenProgress = await listen<ImportProgress>(
         'import-progress',
         (event) => {
@@ -96,7 +92,6 @@ export function useImportAudio({
       }
       unlisteners.push(unlistenProgress);
 
-      // Completion event
       const unlistenComplete = await listen<ImportResult>(
         'import-complete',
         async (event) => {
@@ -128,7 +123,6 @@ export function useImportAudio({
       }
       unlisteners.push(unlistenComplete);
 
-      // Error event
       const unlistenError = await listen<ImportError>(
         'import-error',
         async (event) => {
@@ -157,7 +151,6 @@ export function useImportAudio({
     };
   }, []);
 
-  // Select file using native file dialog
   const selectFile = useCallback(async (): Promise<AudioFileInfo | null> => {
     setStatus('validating');
     setError(null);
@@ -169,7 +162,6 @@ export function useImportAudio({
         setStatus('idle');
         return result;
       } else {
-        // User cancelled
         setStatus('idle');
         return null;
       }
@@ -182,7 +174,6 @@ export function useImportAudio({
     }
   }, []);
 
-  // Validate a file from a given path (for drag-drop)
   const validateFile = useCallback(async (path: string): Promise<AudioFileInfo | null> => {
     setStatus('validating');
     setError(null);
@@ -201,7 +192,6 @@ export function useImportAudio({
     }
   }, []);
 
-  // Start the import process
   const startImport = useCallback(
     async (
       sourcePath: string,
@@ -246,7 +236,6 @@ export function useImportAudio({
     [fileInfo]
   );
 
-  // Cancel ongoing import
   const cancelImport = useCallback(async () => {
     isCancelledRef.current = true;
     try {
@@ -258,7 +247,6 @@ export function useImportAudio({
     }
   }, []);
 
-  // Reset all state
   const reset = useCallback(() => {
     isCancelledRef.current = false;
     setStatus('idle');
