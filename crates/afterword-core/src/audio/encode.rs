@@ -1,4 +1,4 @@
-use super::ffmpeg::find_ffmpeg_path; // Correct path to encode module
+use super::ffmpeg::find_ffmpeg_path;
 use std::io::Write;
 use std::{
     path::Path,
@@ -41,11 +41,11 @@ pub fn encode_single_audio(
             "-c:a",
             "aac",
             "-b:a",
-            "192k", // Increased from 64k for better audio quality (especially for speech)
+            "192k",
             "-profile:a",
-            "aac_low", // Use AAC-LC profile for better compatibility
+            "aac_low",
             "-movflags",
-            "+faststart", // Optimize for web streaming
+            "+faststart",
             "-f",
             "mp4",
             output_path.to_str().unwrap(),
@@ -54,7 +54,6 @@ pub fn encode_single_audio(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Hide console window on Windows to prevent CMD popup during recording
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
