@@ -56,6 +56,8 @@ var libraryErrors = []struct {
 	{meetings.ErrClipBounds, statusError{http.StatusBadRequest, codeClipBounds, "A clip must end after it starts."}},
 	{meetings.ErrClipNoAudio, statusError{http.StatusConflict, codeClipNoAudio, "That meeting has no audio to clip."}},
 	{meetings.ErrClipOutOfBounds, statusError{http.StatusBadRequest, codeClipOutOfBounds, "That clip range is outside the meeting."}},
+	{meetings.ErrAskUnavailable, statusError{http.StatusServiceUnavailable, "ask_unavailable", "Ask is not enabled on this deployment."}},
+	{meetings.ErrEmptyQuestion, statusError{http.StatusBadRequest, httpx.CodeValidationFailed, "A question cannot be empty."}},
 }
 
 func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
