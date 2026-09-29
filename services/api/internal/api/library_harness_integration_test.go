@@ -18,6 +18,7 @@ import (
 
 	"github.com/judeotine/afterword/services/api/internal/accounts"
 	"github.com/judeotine/afterword/services/api/internal/api"
+	"github.com/judeotine/afterword/services/api/internal/askprovider"
 	"github.com/judeotine/afterword/services/api/internal/auth"
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/dbtest"
@@ -139,6 +140,7 @@ func buildLibrary(t *testing.T, pool *pgxpool.Pool, client storage.Client, memor
 		MaxAudioBytes:      limits.MaxAudioBytes,
 		MaxTranscriptBytes: limits.MaxTranscriptBytes,
 		ShareRateLimit:     limits.ShareRateLimit,
+		Ask:                askprovider.ForMeetings(askprovider.Offline{}),
 	})
 	if err != nil {
 		t.Fatalf("new meetings service: %v", err)
