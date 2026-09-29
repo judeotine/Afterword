@@ -10,13 +10,6 @@ import { useRecordingState } from "@/contexts/RecordingStateContext";
 
 type modalType = "modelSettings" | "deviceSettings" | "languageSettings" | "modelSelector" | "errorAlert" | "chunkDropWarning";
 
-/**
- * SettingsModals Component
- *
- * All settings modals consolidated into a single component.
- * Uses ConfigContext and RecordingStateContext internally - no prop drilling needed!
- */
-
 interface SettingsModalsProps {
   modals: {
     modelSettings: boolean;
@@ -39,7 +32,6 @@ export function SettingsModals({
   messages,
   onClose,
 }: SettingsModalsProps) {
-  // Contexts
   const {
     modelConfig,
     setModelConfig,
