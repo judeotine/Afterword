@@ -1,6 +1,3 @@
-// Tauri commands for built-in AI model management
-// Exposes model download, status, and management functionality to frontend
-
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -41,14 +38,8 @@ pub(crate) fn get_recommended_summary_model_for_current_system() -> Result<&'sta
     Ok(recommend_summary_model(is_macos, system_ram_gb))
 }
 
-// ============================================================================
-// Global State
-// ============================================================================
-
-/// Global model manager instance
 pub struct ModelManagerState(pub Arc<Mutex<Option<Arc<ModelManager>>>>);
 
-/// Initialize the model manager
 pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
     let models_dir = app.path().app_data_dir()?.join("models").join("summary");
 
@@ -63,18 +54,12 @@ pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
     Ok(())
 }
 
-// ============================================================================
-// Tauri Commands
-// ============================================================================
-
-/// List all available built-in AI models with their status
 #[tauri::command]
 pub async fn builtin_ai_list_models<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
 ) -> Result<Vec<ModelInfo>, String> {
     let manager = {
-        // Ensure manager is initialized
         {
             let manager_lock = state.0.lock().await;
             if manager_lock.is_none() {
@@ -96,7 +81,6 @@ pub async fn builtin_ai_list_models<R: Runtime>(
     Ok(models)
 }
 
-/// Get information about a specific model
 #[tauri::command]
 pub async fn builtin_ai_get_model_info<R: Runtime>(
     app: AppHandle<R>,
@@ -104,7 +88,6 @@ pub async fn builtin_ai_get_model_info<R: Runtime>(
     model_name: String,
 ) -> Result<Option<ModelInfo>, String> {
     let manager = {
-        // Ensure manager is initialized
         {
             let manager_lock = state.0.lock().await;
             if manager_lock.is_none() {
@@ -126,7 +109,6 @@ pub async fn builtin_ai_get_model_info<R: Runtime>(
     Ok(info)
 }
 
-/// Download a built-in AI model with progress updates
 #[tauri::command]
 pub async fn builtin_ai_download_model<R: Runtime>(
     app: AppHandle<R>,
@@ -134,7 +116,6 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     model_name: String,
 ) -> Result<(), String> {
     let manager = {
-        // Ensure manager is initialized
         {
             let manager_lock = state.0.lock().await;
             if manager_lock.is_none() {
@@ -149,10 +130,9 @@ pub async fn builtin_ai_download_model<R: Runtime>(
         manager_lock
             .as_ref()
             .ok_or_else(|| "Model manager not initialized".to_string())?
-            .clone() // Clone the Arc, not the ModelManager
+            .clone()
     };
-    // IMPORTANT: Only emit "downloading" status here, never "completed"
-    // Completion event is emitted AFTER download task fully finishes (validation, etc.)
+
     let app_clone = app.clone();
     let model_name_clone = model_name.clone();
     let progress_callback = Box::new(move |progress: DownloadProgress| {
@@ -164,7 +144,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
                 "downloaded_mb": progress.downloaded_mb,
                 "total_mb": progress.total_mb,
                 "speed_mbps": progress.speed_mbps,
-                "status": "downloading"  // Always "downloading", never "completed" from progress callback
+                "status": "downloading"
             }),
         );
     });
@@ -174,27 +154,23 @@ pub async fn builtin_ai_download_model<R: Runtime>(
         .await
     {
         Ok(_) => {
-            // Download task completed successfully (validation passed, status set to Available)
             let _ = app.emit(
                 "builtin-ai-download-progress",
                 serde_json::json!({
                     "model": model_name,
                     "progress": 100,
-                    "downloaded_mb": 0,  // Not used by completion handler
-                    "total_mb": 0,       // Not used by completion handler
-                    "speed_mbps": 0,     // Not used by completion handler
+                    "downloaded_mb": 0,
+                    "total_mb": 0,
+                    "speed_mbps": 0,
                     "status": "completed"
                 }),
             );
             Ok(())
-        },
+        }
         Err(e) => {
             let error_msg = e.to_string();
 
-            // Check if this is a cancellation error (marked with "CANCELLED:" prefix)
-            // Don't emit error event for cancellations - cancel command already emits cancelled event
             if !error_msg.starts_with("CANCELLED:") {
-                // Emit error via progress event for frontend to display (only for real errors)
                 let _ = app.emit(
                     "builtin-ai-download-progress",
                     serde_json::json!({
@@ -213,7 +189,6 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     }
 }
 
-/// Cancel an ongoing model download
 #[tauri::command]
 pub async fn builtin_ai_cancel_download<R: Runtime>(
     app: AppHandle<R>,
@@ -245,7 +220,6 @@ pub async fn builtin_ai_cancel_download<R: Runtime>(
     Ok(())
 }
 
-/// Delete a corrupted or available model file
 #[tauri::command]
 pub async fn builtin_ai_delete_model(
     state: State<'_, ModelManagerState>,
@@ -265,16 +239,14 @@ pub async fn builtin_ai_delete_model(
         .map_err(|e| e.to_string())
 }
 
-/// Check if a model is ready to use
 #[tauri::command]
 pub async fn builtin_ai_is_model_ready<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
-    refresh: Option<bool>,  // NEW: Optional refresh parameter
+    refresh: Option<bool>,
 ) -> Result<bool, String> {
     let manager = {
-        // Ensure manager is initialized
         {
             let manager_lock = state.0.lock().await;
             if manager_lock.is_none() {
@@ -305,15 +277,12 @@ pub async fn builtin_ai_is_model_ready<R: Runtime>(
     Ok(ready)
 }
 
-/// Check if any summary model is available (for onboarding)
-/// Returns the first available model name by priority, or None if no models exist
 #[tauri::command]
 pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
 ) -> Result<Option<String>, String> {
     let manager = {
-        // Ensure manager is initialized
         {
             let manager_lock = state.0.lock().await;
             if manager_lock.is_none() {
@@ -331,19 +300,21 @@ pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
             .clone()
     };
 
-    // Force fresh scan to ensure accurate state
     manager
         .scan_models()
         .await
         .map_err(|e| format!("Failed to scan models: {}", e))?;
 
-    // Get all available models
     let all_models = manager.list_models().await;
 
-    // Find first available summary model
     let available = all_models
         .iter()
-        .filter(|m| matches!(m.status, crate::summary::summary_engine::model_manager::ModelStatus::Available))
+        .filter(|m| {
+            matches!(
+                m.status,
+                crate::summary::summary_engine::model_manager::ModelStatus::Available
+            )
+        })
         .max_by_key(|m| summary_model_priority(&m.name))
         .map(|m| m.name.clone());
 
@@ -351,13 +322,7 @@ pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
     Ok(available)
 }
 
-// ============================================================================
-// Startup Initialization & Utility Commands
-// ============================================================================
-
-pub async fn init_model_manager_at_startup<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<(), String> {
+pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let models_dir = app
         .path()
         .app_data_dir()
@@ -381,11 +346,6 @@ pub async fn init_model_manager_at_startup<R: Runtime>(
     Ok(())
 }
 
-
-/// Get recommended summary model based on platform and system RAM.
-/// macOS → qwen3.5:4b
-/// non-macOS + <8GB RAM → qwen3.5:2b
-/// non-macOS + >=8GB RAM → qwen3.5:4b
 #[tauri::command]
 pub async fn builtin_ai_get_recommended_model() -> Result<String, String> {
     let recommended = get_recommended_summary_model_for_current_system()?;
@@ -394,7 +354,6 @@ pub async fn builtin_ai_get_recommended_model() -> Result<String, String> {
     Ok(recommended.to_string())
 }
 
-/// Get total system RAM in gigabytes
 fn get_system_ram_gb() -> Result<u64, String> {
     use sysinfo::System;
 
