@@ -38,14 +38,47 @@ export class RecordingService {
     systemDeviceName: string | null,
     meetingName: string
   ): Promise<void> {
-    return invoke('start_recording_with_devices_and_meeting', {
+    await invoke('start_recording_with_devices_and_meeting', {
       mic_device_name: micDeviceName,
       system_device_name: systemDeviceName,
       meeting_name: meetingName
     });
+    await this.maybeStartScreenRecording();
+  }
+
+  async maybeStartScreenRecording(): Promise<void> {
+    try {
+      const prefs = await invoke<{ capture_screen?: boolean }>('get_recording_preferences');
+      if (!prefs?.capture_screen) {
+        return;
+      }
+      await invoke<string>('start_screen_recording', {});
+    } catch (error) {
+      console.error('Failed to start screen recording:', error);
+    }
+  }
+
+  async isScreenRecording(): Promise<boolean> {
+    try {
+      return await invoke<boolean>('is_screen_recording');
+    } catch {
+      return false;
+    }
+  }
+
+  async stopScreenRecording(): Promise<string | null> {
+    try {
+      return await invoke<string | null>('stop_screen_recording');
+    } catch (error) {
+      console.error('Failed to stop screen recording:', error);
+      return null;
+    }
   }
 
   async stopRecording(savePath: string): Promise<void> {
+    if (await this.isScreenRecording()) {
+      await this.stopScreenRecording();
+    }
     return invoke('stop_recording', {
       args: { save_path: savePath }
     });
