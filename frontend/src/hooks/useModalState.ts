@@ -34,17 +34,7 @@ interface UseModalStateReturn {
   hideAllModals: () => void;
 }
 
-/**
- * Custom hook for managing all modal state and event listeners.
- * Consolidates 9 useState calls and 3 event listeners from page.tsx.
- *
- * Features:
- * - Unified modal state management
- * - Event listeners for chunk drops, transcription errors, model downloads
- * - Auto-close on model download completion
- */
 export function useModalState(transcriptModelConfig?: TranscriptModelProps): UseModalStateReturn {
-  // Modal visibility state
   const [modals, setModals] = useState<ModalState>({
     modelSettings: false,
     deviceSettings: false,
@@ -54,34 +44,28 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     chunkDropWarning: false,
   });
 
-  // Modal messages
   const [messages, setMessages] = useState<ModalMessages>({
     errorAlert: '',
     chunkDropWarning: '',
     modelSelector: '',
   });
 
-  // Show modal with optional message
   const showModal = useCallback((name: ModalType, message?: string) => {
     setModals(prev => ({ ...prev, [name]: true }));
 
-    // Set message if provided
     if (message && (name === 'errorAlert' || name === 'chunkDropWarning' || name === 'modelSelector')) {
       setMessages(prev => ({ ...prev, [name]: message }));
     }
   }, []);
 
-  // Hide modal and clear its message
   const hideModal = useCallback((name: ModalType) => {
     setModals(prev => ({ ...prev, [name]: false }));
 
-    // Clear message when closing
     if (name === 'errorAlert' || name === 'chunkDropWarning' || name === 'modelSelector') {
       setMessages(prev => ({ ...prev, [name]: '' }));
     }
   }, []);
 
-  // Hide all modals
   const hideAllModals = useCallback(() => {
     setModals({
       modelSettings: false,
@@ -98,7 +82,6 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     });
   }, []);
 
-  // Set up chunk drop warning listener
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
 
@@ -125,7 +108,6 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     };
   }, [showModal]);
 
-  // Set up transcription error listener for model loading failures
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
 
@@ -137,10 +119,8 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
           const { userMessage, actionable } = event.payload;
 
           if (actionable) {
-            // This is a model-related error that requires user action
             showModal('modelSelector', userMessage);
           } else {
-            // Show toast instead of modal for non-actionable errors (consistent with sidebar)
             toast.error('', {
               description: userMessage,
               duration: 5000,
@@ -163,17 +143,14 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     };
   }, [showModal]);
 
-  // Listen for model download completion to auto-close modal
   useEffect(() => {
     const setupDownloadListeners = async () => {
       const unlisteners: (() => void)[] = [];
 
-      // Listen for Whisper model download complete
       const unlistenWhisper = await listen<{ modelName: string }>('model-download-complete', (event) => {
         const { modelName } = event.payload;
         console.log('[useModalState] Whisper model download complete:', modelName);
 
-        // Auto-close modal if the downloaded model matches the selected one
         if (transcriptModelConfig?.provider === 'localWhisper' && transcriptModelConfig?.model === modelName) {
           toast.success('Model ready! Closing window...', { duration: 1500 });
           setTimeout(() => hideModal('modelSelector'), 1500);
