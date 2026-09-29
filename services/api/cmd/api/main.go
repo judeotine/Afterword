@@ -24,6 +24,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/credits"
 	"github.com/judeotine/afterword/services/api/internal/db"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
+	"github.com/judeotine/afterword/services/api/internal/integrations"
 	"github.com/judeotine/afterword/services/api/internal/jobs"
 	"github.com/judeotine/afterword/services/api/internal/meetings"
 	"github.com/judeotine/afterword/services/api/internal/payments"
@@ -322,15 +323,16 @@ func buildAPI(cfg config.Config, pool *db.Pool, library *meetings.Service, logge
 	}
 
 	server, err := api.NewServer(api.ServerOptions{
-		Accounts:   accountsService,
-		OTP:        otp,
-		Tokens:     tokens,
-		Refresh:    refresh,
-		Middleware: middleware,
-		Meetings:   library,
-		Google:     google,
-		Email:      emailSender,
-		AppBaseURL: cfg.AppBaseURL,
+		Accounts:     accountsService,
+		OTP:          otp,
+		Tokens:       tokens,
+		Refresh:      refresh,
+		Middleware:   middleware,
+		Meetings:     library,
+		Integrations: integrations.RegistryFromConfig(integrations.ConfigFromEnv()),
+		Google:       google,
+		Email:        emailSender,
+		AppBaseURL:   cfg.AppBaseURL,
 	})
 	if err != nil {
 		return apiComponents{}, err
