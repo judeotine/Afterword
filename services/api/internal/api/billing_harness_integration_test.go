@@ -164,6 +164,7 @@ func newBillingHarness(t *testing.T) *billingHarness {
 				BotJobs:      botJobs,
 				Entitlements: entitlements,
 				Middleware:   middleware,
+				WorkerAuth:   auth.NewWorkerAuth("test-worker-token"),
 			}); err != nil {
 				t.Fatalf("register bot job routes: %v", err)
 			}
