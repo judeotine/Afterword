@@ -10,6 +10,7 @@ export interface RecordingPreferences {
   save_folder: string;
   auto_save: boolean;
   file_format: string;
+  capture_screen: boolean;
   preferred_mic_device: string | null;
   preferred_system_device: string | null;
 }
@@ -23,6 +24,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     save_folder: '',
     auto_save: true,
     file_format: 'mp4',
+    capture_screen: false,
     preferred_mic_device: null,
     preferred_system_device: null
   });
@@ -71,6 +73,16 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     await savePreferences(newPreferences);
 
     await Analytics.track('auto_save_recording_toggled', {
+      enabled: enabled.toString()
+    });
+  };
+
+  const handleCaptureScreenToggle = async (enabled: boolean) => {
+    const newPreferences = { ...preferences, capture_screen: enabled };
+    setPreferences(newPreferences);
+    await savePreferences(newPreferences);
+
+    await Analytics.track('capture_screen_toggled', {
       enabled: enabled.toString()
     });
   };
@@ -150,7 +162,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       <div>
         <h3 className="text-lg font-semibold mb-4">Recording Settings</h3>
         <p className="text-sm text-gray-600 mb-6">
-          Configure how your audio recordings are saved during meetings.
+          Configure how your meeting audio and screen recordings are saved.
         </p>
       </div>
 
@@ -168,6 +180,29 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
           disabled={saving}
         />
       </div>
+
+      {/* Screen Capture Toggle */}
+      <div className="flex items-center justify-between p-4 border rounded-lg">
+        <div className="flex-1">
+          <div className="font-medium">Record Screen Video</div>
+          <div className="text-sm text-gray-600">
+            Capture the meeting screen together with audio into a single MP4
+          </div>
+        </div>
+        <Switch
+          checked={preferences.capture_screen}
+          onCheckedChange={handleCaptureScreenToggle}
+          disabled={saving}
+        />
+      </div>
+
+      {preferences.capture_screen && (
+        <div className="p-4 border rounded-lg bg-blue-50">
+          <div className="text-sm text-blue-800">
+            Screen recording uses your system screen capture permission. macOS will prompt for Screen Recording access the first time you record.
+          </div>
+        </div>
+      )}
 
       {/* Folder Location - Only shown when auto_save is enabled */}
       {preferences.auto_save && (
