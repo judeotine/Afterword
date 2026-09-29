@@ -1,9 +1,3 @@
-/**
- * Update Service
- *
- * Handles automatic software updates using Tauri updater plugin.
- * Provides update checking, downloading, and installation functionality.
- */
 
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -24,27 +18,16 @@ export interface UpdateProgress {
   percentage: number;
 }
 
-/**
- * Update Service
- * Singleton service for managing app updates
- */
 export class UpdateService {
   private updateCheckInProgress = false;
   private lastCheckTime: number | null = null;
-  private readonly CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private readonly CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-  /**
-   * Check for available updates
-   * @param force Force check even if recently checked
-   * @returns Promise with update information
-   */
   async checkForUpdates(force = false): Promise<UpdateInfo> {
-    // Prevent concurrent update checks
     if (this.updateCheckInProgress) {
       throw new Error('Update check already in progress');
     }
 
-    // Skip if checked recently (unless forced)
     if (!force && this.lastCheckTime) {
       const timeSinceLastCheck = Date.now() - this.lastCheckTime;
       if (timeSinceLastCheck < this.CHECK_INTERVAL_MS) {
@@ -85,26 +68,17 @@ export class UpdateService {
     }
   }
 
-  /**
-   * Download and install the available update
-   * @param update The update object from checkForUpdates
-   * @param onProgress Optional progress callback
-   * @returns Promise that resolves when download completes
-   */
   async downloadAndInstall(
     update: Update,
     onProgress?: (progress: UpdateProgress) => void
   ): Promise<void> {
     try {
-      // Download the update
       await update.download();
 
-      // Notify progress if callback provided
       if (onProgress) {
         onProgress({ downloaded: 100, total: 100, percentage: 100 });
       }
 
-      // Install and relaunch
       await update.install();
       await relaunch();
     } catch (error) {
@@ -113,18 +87,10 @@ export class UpdateService {
     }
   }
 
-  /**
-   * Get the current app version
-   * @returns Promise with version string
-   */
   async getCurrentVersion(): Promise<string> {
     return getVersion();
   }
 
-  /**
-   * Check if an update check was performed recently
-   * @returns true if checked within the interval
-   */
   wasCheckedRecently(): boolean {
     if (!this.lastCheckTime) return false;
     const timeSinceLastCheck = Date.now() - this.lastCheckTime;
@@ -132,5 +98,4 @@ export class UpdateService {
   }
 }
 
-// Export singleton instance
 export const updateService = new UpdateService();
