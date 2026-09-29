@@ -1,15 +1,6 @@
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 
-/**
- * Shows the recording notification toast with compliance message.
- * Checks user preferences and displays a dismissible toast with:
- * - notice to inform participants
- * - "Don't show again" checkbox
- * - Acknowledgment button
- *
- * @returns Promise<void> - Resolves when notification is shown or skipped
- */
 export async function showRecordingNotification(): Promise<void> {
   try {
     const { Store } = await import('@tauri-apps/plugin-store');
