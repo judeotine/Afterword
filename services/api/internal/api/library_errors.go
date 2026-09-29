@@ -22,6 +22,9 @@ const (
 	codeEmptyComment    = "empty_comment"
 	codeEmptyPhrase     = "empty_phrase"
 	codeInvalidChannel  = "invalid_channel"
+	codeClipBounds      = "clip_bounds"
+	codeClipNoAudio     = "clip_no_audio"
+	codeClipOutOfBounds = "clip_out_of_bounds"
 )
 
 var libraryErrors = []struct {
@@ -49,6 +52,10 @@ var libraryErrors = []struct {
 	{meetings.ErrKeywordAlertNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That keyword alert does not exist."}},
 	{meetings.ErrEmptyPhrase, statusError{http.StatusBadRequest, codeEmptyPhrase, "A keyword alert phrase cannot be empty."}},
 	{meetings.ErrInvalidChannel, statusError{http.StatusBadRequest, codeInvalidChannel, "That alert channel is not supported."}},
+	{meetings.ErrClipNotFound, statusError{http.StatusNotFound, httpx.CodeNotFound, "That clip does not exist."}},
+	{meetings.ErrClipBounds, statusError{http.StatusBadRequest, codeClipBounds, "A clip must end after it starts."}},
+	{meetings.ErrClipNoAudio, statusError{http.StatusConflict, codeClipNoAudio, "That meeting has no audio to clip."}},
+	{meetings.ErrClipOutOfBounds, statusError{http.StatusBadRequest, codeClipOutOfBounds, "That clip range is outside the meeting."}},
 }
 
 func (s *Server) writeLibraryError(w http.ResponseWriter, r *http.Request, err error) {
