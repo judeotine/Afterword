@@ -1,20 +1,18 @@
+use anyhow::Result;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::mpsc;
-use anyhow::Result;
 
-use super::devices::AudioDevice;
 use super::buffer_pool::AudioBufferPool;
+use super::devices::AudioDevice;
 
-/// Device type for audio chunks
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceType {
     Microphone,
     System,
 }
 
-/// Audio chunk with metadata for processing
 #[derive(Debug, Clone)]
 pub struct AudioChunk {
     pub data: Vec<f32>,
@@ -24,7 +22,6 @@ pub struct AudioChunk {
     pub device_type: DeviceType,
 }
 
-/// Processed audio chunk (post-VAD) for recording
 #[derive(Debug, Clone)]
 pub struct ProcessedAudioChunk {
     pub data: Vec<f32>,
@@ -33,7 +30,6 @@ pub struct ProcessedAudioChunk {
     pub device_type: DeviceType,
 }
 
-/// Comprehensive error types for audio system
 #[derive(Debug, Clone)]
 pub enum AudioError {
     DeviceDisconnected,
@@ -49,10 +45,8 @@ pub enum AudioError {
 }
 
 impl AudioError {
-    /// Check if error is recoverable (can attempt reconnection)
     pub fn is_recoverable(&self) -> bool {
         match self {
-            // Device disconnect is now recoverable - we can attempt reconnection
             AudioError::DeviceDisconnected => true,
             AudioError::StreamFailed => true,
             AudioError::ProcessingFailed => true,
@@ -66,7 +60,6 @@ impl AudioError {
         }
     }
 
-    /// Get user-friendly error message
     pub fn user_message(&self) -> &'static str {
         match self {
             AudioError::DeviceDisconnected => "Audio device was disconnected",
@@ -83,7 +76,6 @@ impl AudioError {
     }
 }
 
-/// Recording statistics
 #[derive(Debug, Default)]
 pub struct RecordingStats {
     pub chunks_processed: u64,
@@ -91,37 +83,29 @@ pub struct RecordingStats {
     pub last_activity: Option<Instant>,
 }
 
-/// Unified state management for audio recording
 pub struct RecordingState {
-    // Core recording state
     is_recording: AtomicBool,
     is_paused: AtomicBool,
-    is_reconnecting: AtomicBool,  // NEW: Attempting to reconnect to device
+    is_reconnecting: AtomicBool,
 
-    // Audio devices
     microphone_device: Mutex<Option<Arc<AudioDevice>>>,
     system_device: Mutex<Option<Arc<AudioDevice>>>,
-    // Track which device is disconnected for reconnection attempts
+
     disconnected_device: Mutex<Option<(Arc<AudioDevice>, DeviceType)>>,
 
-    // Audio pipeline
     audio_sender: Mutex<Option<mpsc::UnboundedSender<AudioChunk>>>,
 
-    // Memory optimization
     buffer_pool: AudioBufferPool,
 
-    // Error handling
     error_count: AtomicU32,
     recoverable_error_count: AtomicU32,
     last_error: Mutex<Option<AudioError>>,
     error_callback: Mutex<Option<Box<dyn Fn(&AudioError) + Send + Sync>>>,
 
-    // Statistics
     stats: Mutex<RecordingStats>,
 
-    // Recording start time for accurate timestamps
     recording_start: Mutex<Option<Instant>>,
-    // Pause time tracking
+
     pause_start: Mutex<Option<Instant>>,
     total_pause_duration: Mutex<std::time::Duration>,
 }
@@ -136,7 +120,7 @@ impl RecordingState {
             system_device: Mutex::new(None),
             disconnected_device: Mutex::new(None),
             audio_sender: Mutex::new(None),
-            buffer_pool: AudioBufferPool::new(16, 48000), // Pool of 16 buffers with 48kHz samples capacity
+            buffer_pool: AudioBufferPool::new(16, 48000),
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
@@ -148,7 +132,6 @@ impl RecordingState {
         })
     }
 
-    // Recording control
     pub fn start_recording(&self) -> Result<()> {
         self.is_recording.store(true, Ordering::SeqCst);
         *self.recording_start.lock().unwrap() = Some(Instant::now());
@@ -161,13 +144,11 @@ impl RecordingState {
     pub fn stop_recording(&self) {
         self.is_recording.store(false, Ordering::SeqCst);
         self.is_paused.store(false, Ordering::SeqCst);
-        // Clear pause tracking when stopping
+
         *self.pause_start.lock().unwrap() = None;
-        // CRITICAL: Clear audio sender to close the pipeline channel
-        // This ensures the pipeline loop exits properly after processing all chunks
+
         *self.audio_sender.lock().unwrap() = None;
-        // CRITICAL: Clear device references to release microphone/speaker
-        // Without this, Arc<AudioDevice> references persist and keep the mic active
+
         *self.microphone_device.lock().unwrap() = None;
         *self.system_device.lock().unwrap() = None;
         *self.disconnected_device.lock().unwrap() = None;
@@ -196,11 +177,13 @@ impl RecordingState {
             return Err(anyhow::anyhow!("Recording is not paused"));
         }
 
-        // Calculate pause duration and add to total
         if let Some(pause_start) = self.pause_start.lock().unwrap().take() {
             let pause_duration = pause_start.elapsed();
             *self.total_pause_duration.lock().unwrap() += pause_duration;
-            log::info!("Recording resumed after pause of {:.2}s", pause_duration.as_secs_f64());
+            log::info!(
+                "Recording resumed after pause of {:.2}s",
+                pause_duration.as_secs_f64()
+            );
         }
 
         self.is_paused.store(false, Ordering::SeqCst);
@@ -219,7 +202,6 @@ impl RecordingState {
         self.is_recording() && !self.is_paused()
     }
 
-    // Reconnection state management
     pub fn start_reconnecting(&self, device: Arc<AudioDevice>, device_type: DeviceType) {
         self.is_reconnecting.store(true, Ordering::SeqCst);
         *self.disconnected_device.lock().unwrap() = Some((device, device_type));
@@ -240,7 +222,6 @@ impl RecordingState {
         self.disconnected_device.lock().unwrap().clone()
     }
 
-    // Device management
     pub fn set_microphone_device(&self, device: Arc<AudioDevice>) {
         *self.microphone_device.lock().unwrap() = Some(device);
     }
@@ -257,32 +238,31 @@ impl RecordingState {
         self.system_device.lock().unwrap().clone()
     }
 
-    // Audio pipeline management
     pub fn set_audio_sender(&self, sender: mpsc::UnboundedSender<AudioChunk>) {
         *self.audio_sender.lock().unwrap() = Some(sender);
     }
 
     pub fn send_audio_chunk(&self, chunk: AudioChunk) -> Result<()> {
-        // Don't send audio chunks when paused
         if self.is_paused() {
-            return Ok(()); // Silently discard chunks while paused
+            return Ok(());
         }
 
         if let Some(sender) = self.audio_sender.lock().unwrap().as_ref() {
-            sender.send(chunk).map_err(|_| anyhow::anyhow!("Failed to send audio chunk"))?;
+            sender
+                .send(chunk)
+                .map_err(|_| anyhow::anyhow!("Failed to send audio chunk"))?;
 
-            // Update statistics
             let mut stats = self.stats.lock().unwrap();
             stats.chunks_processed += 1;
             stats.last_activity = Some(Instant::now());
             Ok(())
         } else {
-            // Return an error when no sender is available (pipeline not ready)
-            Err(anyhow::anyhow!("Audio pipeline not ready - no sender available"))
+            Err(anyhow::anyhow!(
+                "Audio pipeline not ready - no sender available"
+            ))
         }
     }
 
-    // Error handling
     pub fn set_error_callback<F>(&self, callback: F)
     where
         F: Fn(&AudioError) + Send + Sync + 'static,
@@ -293,32 +273,38 @@ impl RecordingState {
     pub fn report_error(&self, error: AudioError) {
         let count = self.error_count.fetch_add(1, Ordering::SeqCst) + 1;
 
-        // Track recoverable vs non-recoverable errors separately
         if error.is_recoverable() {
             let recoverable_count = self.recoverable_error_count.fetch_add(1, Ordering::SeqCst) + 1;
-            log::warn!("Recoverable audio error ({}): {:?}", recoverable_count, error);
+            log::warn!(
+                "Recoverable audio error ({}): {:?}",
+                recoverable_count,
+                error
+            );
 
-            // Allow more recoverable errors before stopping
             if recoverable_count >= 10 {
-                log::error!("Too many recoverable errors ({}), stopping recording", recoverable_count);
+                log::error!(
+                    "Too many recoverable errors ({}), stopping recording",
+                    recoverable_count
+                );
                 self.stop_recording();
             }
         } else {
             log::error!("Non-recoverable audio error: {:?}", error);
-            // Stop immediately for non-recoverable errors
+
             self.stop_recording();
         }
 
         *self.last_error.lock().unwrap() = Some(error.clone());
 
-        // Call error callback if set
         if let Some(callback) = self.error_callback.lock().unwrap().as_ref() {
             callback(&error);
         }
 
-        // Fallback: stop recording after too many total errors
         if count >= 15 {
-            log::error!("Too many total audio errors ({}), stopping recording", count);
+            log::error!(
+                "Too many total audio errors ({}), stopping recording",
+                count
+            );
             self.stop_recording();
         }
     }
@@ -343,7 +329,6 @@ impl RecordingState {
         }
     }
 
-    // Statistics
     pub fn get_stats(&self) -> RecordingStats {
         self.stats.lock().unwrap().clone()
     }
@@ -387,12 +372,10 @@ impl RecordingState {
         }
     }
 
-    // Memory management
     pub fn get_buffer_pool(&self) -> AudioBufferPool {
         self.buffer_pool.clone()
     }
 
-    // Cleanup
     pub fn cleanup(&self) {
         self.stop_recording();
         self.stop_reconnecting();
@@ -409,7 +392,6 @@ impl RecordingState {
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
 
-        // Clear buffer pool to free memory
         self.buffer_pool.clear();
     }
 }
@@ -424,7 +406,7 @@ impl Default for RecordingState {
             system_device: Mutex::new(None),
             disconnected_device: Mutex::new(None),
             audio_sender: Mutex::new(None),
-            buffer_pool: AudioBufferPool::new(16, 48000), // Pool of 16 buffers with 48kHz samples capacity
+            buffer_pool: AudioBufferPool::new(16, 48000),
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
@@ -437,7 +419,6 @@ impl Default for RecordingState {
     }
 }
 
-// Thread-safe cloning for RecordingStats
 impl Clone for RecordingStats {
     fn clone(&self) -> Self {
         Self {
