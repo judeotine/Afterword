@@ -2,7 +2,6 @@ use log::info;
 use std::path::Path;
 use std::sync::OnceLock;
 
-/// Hardware capabilities for audio processing optimization
 #[derive(Debug, Clone, PartialEq)]
 pub struct HardwareProfile {
     pub cpu_cores: u8,
@@ -15,21 +14,20 @@ pub struct HardwareProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuType {
     None,
-    Metal,  // Apple Silicon
-    Cuda,   // NVIDIA
-    Vulkan, // AMD/Intel
-    OpenCL, // Generic GPU compute
+    Metal,
+    Cuda,
+    Vulkan,
+    OpenCL,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PerformanceTier {
-    Low,    // CPU-only, limited resources
-    Medium, // CPU-only but powerful, or basic GPU
-    High,   // Dedicated GPU with good compute
-    Ultra,  // High-end hardware with fast GPU
+    Low,
+    Medium,
+    High,
+    Ultra,
 }
 
-/// Adaptive Whisper configuration based on hardware
 #[derive(Debug, Clone)]
 pub struct AdaptiveWhisperConfig {
     pub beam_size: usize,
@@ -41,15 +39,14 @@ pub struct AdaptiveWhisperConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChunkSizePreference {
-    Fast,     // Smaller chunks for responsiveness
-    Balanced, // Medium chunks for balance
-    Quality,  // Larger chunks for accuracy
+    Fast,
+    Balanced,
+    Quality,
 }
 
 static HARDWARE_PROFILE: OnceLock<HardwareProfile> = OnceLock::new();
 
 impl HardwareProfile {
-    /// Get the detected hardware profile (cached after first call)
     pub fn detect() -> &'static HardwareProfile {
         HARDWARE_PROFILE.get_or_init(|| {
             let profile = Self::detect_hardware();
@@ -58,7 +55,6 @@ impl HardwareProfile {
         })
     }
 
-    /// Perform hardware detection
     fn detect_hardware() -> HardwareProfile {
         let cpu_cores = Self::detect_cpu_cores();
         let (has_gpu_acceleration, gpu_type) = Self::detect_gpu();
@@ -74,16 +70,13 @@ impl HardwareProfile {
         }
     }
 
-    /// Detect number of CPU cores
     fn detect_cpu_cores() -> u8 {
         std::thread::available_parallelism()
             .map(|n| n.get().min(255) as u8)
-            .unwrap_or(4) // Default to 4 cores
+            .unwrap_or(4)
     }
 
-    /// Detect GPU acceleration capabilities
     fn detect_gpu() -> (bool, GpuType) {
-        // Check for Metal (Apple Silicon)
         #[cfg(target_os = "macos")]
         {
             if Self::has_metal_support() {
@@ -91,33 +84,24 @@ impl HardwareProfile {
             }
         }
 
-        // Check for CUDA (NVIDIA)
         if Self::has_cuda_support() {
             return (true, GpuType::Cuda);
         }
 
-        // Check for Vulkan (AMD/Intel/others)
         if Self::has_vulkan_support() {
             return (true, GpuType::Vulkan);
         }
 
-        // Fallback to CPU-only
         (false, GpuType::None)
     }
 
-    /// Detect available system memory in GB
     fn detect_memory_gb() -> u8 {
-        // Simple memory detection - could be enhanced with system-specific calls
         match std::env::var("MEMORY_GB") {
             Ok(mem_str) => mem_str.parse().unwrap_or(8),
-            Err(_) => {
-                // Default estimates based on common configurations
-                8 // Conservative default
-            }
+            Err(_) => 8,
         }
     }
 
-    /// Calculate performance tier based on hardware
     fn calculate_performance_tier(
         cpu_cores: u8,
         gpu_type: &GpuType,
@@ -157,12 +141,10 @@ impl HardwareProfile {
 
     #[cfg(target_os = "macos")]
     fn has_metal_support() -> bool {
-        // Simple check for Apple Silicon (Metal is available on Intel Macs too, but less optimal for ML)
         std::env::consts::ARCH == "aarch64"
     }
 
     fn has_cuda_support() -> bool {
-        // Check for CUDA environment or libraries
         std::env::var("CUDA_PATH").is_ok()
             || std::env::var("CUDA_HOME").is_ok()
             || std::path::Path::new("/usr/local/cuda").exists()
@@ -200,16 +182,12 @@ impl HardwareProfile {
         Self::has_windows_vulkan_loader(Path::new(r"C:\Windows"))
     }
 
-    // Only reached by the Windows detection path above; the unit tests exercise it on
-    // every platform, so it is dead code only in a non-Windows non-test build.
     #[cfg_attr(not(windows), allow(dead_code))]
     fn has_windows_vulkan_loader(system_root: &Path) -> bool {
         system_root.join("System32").join("vulkan-1.dll").is_file()
     }
 
-    /// Generate adaptive Whisper configuration based on hardware
     pub fn get_whisper_config(&self) -> AdaptiveWhisperConfig {
-        // Windows-specific override: Always use beam size 2 for stability
         #[cfg(target_os = "windows")]
         {
             AdaptiveWhisperConfig {
@@ -221,35 +199,34 @@ impl HardwareProfile {
             }
         }
 
-        // Platform-adaptive configuration for non-Windows systems
         #[cfg(not(target_os = "windows"))]
         {
             match self.performance_tier {
                 PerformanceTier::Ultra => AdaptiveWhisperConfig {
-                    beam_size: 5, // Maximum quality
+                    beam_size: 5,
                     temperature: 0.1,
                     use_gpu: self.has_gpu_acceleration,
                     max_threads: Some(self.cpu_cores.min(8) as usize),
                     chunk_size_preference: ChunkSizePreference::Quality,
                 },
                 PerformanceTier::High => AdaptiveWhisperConfig {
-                    beam_size: 3, // High quality
+                    beam_size: 3,
                     temperature: 0.2,
                     use_gpu: self.has_gpu_acceleration,
                     max_threads: Some(self.cpu_cores.min(6) as usize),
                     chunk_size_preference: ChunkSizePreference::Balanced,
                 },
                 PerformanceTier::Medium => AdaptiveWhisperConfig {
-                    beam_size: 2, // Balanced
+                    beam_size: 2,
                     temperature: 0.3,
                     use_gpu: self.has_gpu_acceleration,
                     max_threads: Some(self.cpu_cores.min(4) as usize),
                     chunk_size_preference: ChunkSizePreference::Balanced,
                 },
                 PerformanceTier::Low => AdaptiveWhisperConfig {
-                    beam_size: 1, // Fast processing
+                    beam_size: 1,
                     temperature: 0.4,
-                    use_gpu: false, // Force CPU to avoid GPU overhead on weak hardware
+                    use_gpu: false,
                     max_threads: Some(2),
                     chunk_size_preference: ChunkSizePreference::Fast,
                 },
@@ -257,25 +234,23 @@ impl HardwareProfile {
         }
     }
 
-    /// Get recommended chunk duration in milliseconds based on performance tier
     pub fn get_recommended_chunk_duration_ms(&self) -> u32 {
         match self.performance_tier {
-            PerformanceTier::Ultra => 25000,  // 25 seconds for maximum accuracy
-            PerformanceTier::High => 20000,   // 20 seconds for high quality
-            PerformanceTier::Medium => 15000, // 15 seconds for balance
-            PerformanceTier::Low => 10000,    // 10 seconds for responsiveness
+            PerformanceTier::Ultra => 25000,
+            PerformanceTier::High => 20000,
+            PerformanceTier::Medium => 15000,
+            PerformanceTier::Low => 10000,
         }
     }
 
-    /// Check if hardware can handle real-time processing of given sample rate
     pub fn can_handle_realtime(&self, sample_rate: u32, channels: u16) -> bool {
         let data_rate = sample_rate * channels as u32;
 
         match self.performance_tier {
-            PerformanceTier::Ultra => data_rate <= 192000, // Up to 192kHz stereo
-            PerformanceTier::High => data_rate <= 96000,   // Up to 96kHz stereo or 192kHz mono
-            PerformanceTier::Medium => data_rate <= 48000, // Up to 48kHz stereo
-            PerformanceTier::Low => data_rate <= 22050,    // Up to 22kHz stereo or 48kHz mono
+            PerformanceTier::Ultra => data_rate <= 192000,
+            PerformanceTier::High => data_rate <= 96000,
+            PerformanceTier::Medium => data_rate <= 48000,
+            PerformanceTier::Low => data_rate <= 22050,
         }
     }
 }
@@ -288,7 +263,7 @@ mod tests {
     fn test_hardware_detection() {
         let profile = HardwareProfile::detect();
         assert!(profile.cpu_cores > 0);
-        // Performance optimization: remove println! from tests
+
         log::debug!("Detected profile: {:?}", profile);
     }
 
@@ -300,13 +275,11 @@ mod tests {
         assert!(config.beam_size >= 1 && config.beam_size <= 5);
         assert!(config.temperature >= 0.0 && config.temperature <= 1.0);
 
-        // Performance optimization: remove println! from tests
         log::debug!("Generated config: {:?}", config);
     }
 
     #[test]
     fn test_performance_tier_logic() {
-        // Test different hardware combinations
         let low_tier = HardwareProfile::calculate_performance_tier(2, &GpuType::None, 4);
         assert_eq!(low_tier, PerformanceTier::Low);
 
