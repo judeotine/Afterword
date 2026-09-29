@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-/**
- * Auto-detect GPU capabilities and set appropriate features
- * Used by npm scripts to automatically enable hardware acceleration
- */
 
 const { execSync } = require('child_process');
 const os = require('os');
@@ -19,21 +15,18 @@ function commandExists(cmd) {
 function detectGPU() {
   const platform = os.platform();
 
-  // macOS: Metal is always available, check for Apple Silicon for CoreML
   if (platform === 'darwin') {
     const arch = os.arch();
     if (arch === 'arm64') {
       console.log('🍎 Apple Silicon detected - using Metal + CoreML');
-      return 'coreml'; // CoreML includes Metal
+      return 'coreml';
     } else {
       console.log('🍎 macOS Intel detected - using Metal');
       return 'metal';
     }
   }
 
-  // Windows/Linux: Check for GPUs
   if (platform === 'win32' || platform === 'linux') {
-    // Check for NVIDIA GPU
     if (commandExists('nvidia-smi')) {
       const cudaPath = process.env.CUDA_PATH;
       if (cudaPath || commandExists('nvcc')) {
@@ -45,7 +38,6 @@ function detectGPU() {
       }
     }
 
-    // Check for AMD GPU (Linux only)
     if (platform === 'linux' && commandExists('rocm-smi')) {
       const rocmPath = process.env.ROCM_PATH;
       if (rocmPath || commandExists('hipcc')) {
@@ -57,7 +49,6 @@ function detectGPU() {
       }
     }
 
-    // Check for Vulkan
     if (commandExists('vulkaninfo') || (platform === 'win32' && require('fs').existsSync('C:\\VulkanSDK'))) {
       const vulkanSdk = process.env.VULKAN_SDK;
       const blasInclude = process.env.BLAS_INCLUDE_DIRS;
@@ -73,7 +64,6 @@ function detectGPU() {
       }
     }
 
-    // Check if OpenBLAS is available
     const blasInclude = process.env.BLAS_INCLUDE_DIRS;
     if (blasInclude) {
       console.log('📊 OpenBLAS detected - using CPU with BLAS optimization');
@@ -85,19 +75,15 @@ function detectGPU() {
   return null;
 }
 
-// Redirect console.log to stderr so only the feature goes to stdout
 const originalLog = console.log;
 console.log = (...args) => {
   process.stderr.write(args.join(' ') + '\n');
 };
 
-// Detect and output the feature
 const feature = detectGPU();
 
-// Restore console.log
 console.log = originalLog;
 
-// Only write the feature to stdout (no newline, no extra text)
 if (feature) {
   process.stdout.write(feature);
 }
