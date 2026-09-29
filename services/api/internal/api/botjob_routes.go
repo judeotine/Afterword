@@ -10,6 +10,7 @@ import (
 	"github.com/judeotine/afterword/services/api/internal/billing"
 	"github.com/judeotine/afterword/services/api/internal/botjobs"
 	"github.com/judeotine/afterword/services/api/internal/httpx"
+	"github.com/judeotine/afterword/services/api/internal/meetings"
 )
 
 const (
@@ -18,8 +19,9 @@ const (
 	botJobParam   = "botJobID"
 	codeBadJobURL = "invalid_meeting_url"
 
-	workerClaimPath  = "/v1/worker/bot-jobs/claim"
-	workerStatusPath = "/v1/worker/bot-jobs/{" + botJobParam + "}/status"
+	workerClaimPath     = "/v1/worker/bot-jobs/claim"
+	workerStatusPath    = "/v1/worker/bot-jobs/{" + botJobParam + "}/status"
+	workerRecordingPath = "/v1/worker/bot-jobs/{" + botJobParam + "}/recording"
 )
 
 type BotJobOptions struct {
@@ -27,6 +29,7 @@ type BotJobOptions struct {
 	Entitlements *billing.Entitlements
 	Middleware   *auth.Middleware
 	WorkerAuth   *auth.WorkerAuth
+	Meetings     *meetings.Service
 }
 
 type BotJobServer struct {
@@ -34,6 +37,7 @@ type BotJobServer struct {
 	entitlements *billing.Entitlements
 	middleware   *auth.Middleware
 	workerAuth   *auth.WorkerAuth
+	meetings     *meetings.Service
 }
 
 func NewBotJobServer(options BotJobOptions) (*BotJobServer, error) {
@@ -50,6 +54,7 @@ func NewBotJobServer(options BotJobOptions) (*BotJobServer, error) {
 		entitlements: options.Entitlements,
 		middleware:   options.Middleware,
 		workerAuth:   options.WorkerAuth,
+		meetings:     options.Meetings,
 	}, nil
 }
 
@@ -71,6 +76,9 @@ func (b *BotJobServer) Routes(router chi.Router) {
 			r.Use(b.workerAuth.Require)
 			r.Post(workerClaimPath, b.handleWorkerClaim)
 			r.Post(workerStatusPath, b.handleWorkerStatus)
+			if b.meetings != nil {
+				r.Post(workerRecordingPath, b.handleWorkerRecording)
+			}
 		})
 	}
 }
