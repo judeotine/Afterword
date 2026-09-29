@@ -1,38 +1,33 @@
-// Audio device monitoring for disconnect/reconnect detection
+use anyhow::Result;
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use anyhow::Result;
-use log::{debug, info, warn, error};
 
-use super::devices::{AudioDevice, list_audio_devices};
+use super::devices::{list_audio_devices, AudioDevice};
 
-/// Device monitoring events
 #[derive(Debug, Clone)]
 pub enum DeviceEvent {
-    /// A device that was in use has disconnected
     DeviceDisconnected {
         device_name: String,
         device_type: DeviceMonitorType,
     },
-    /// A previously disconnected device has reconnected
+
     DeviceReconnected {
         device_name: String,
         device_type: DeviceMonitorType,
     },
-    /// Device list has changed (new device added or removed)
+
     DeviceListChanged,
 }
 
-/// Type of device being monitored
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeviceMonitorType {
     Microphone,
     SystemAudio,
 }
 
-/// Monitor state for a single device
 #[derive(Debug, Clone)]
 struct MonitoredDevice {
     name: String,
@@ -43,7 +38,6 @@ struct MonitoredDevice {
 
 impl MonitoredDevice {
     fn new(name: String, device_type: DeviceMonitorType) -> Self {
-        // Heuristic: check if device name contains bluetooth-related keywords
         let is_bluetooth = name.to_lowercase().contains("airpods")
             || name.to_lowercase().contains("bluetooth")
             || name.to_lowercase().contains("wireless");
@@ -56,28 +50,24 @@ impl MonitoredDevice {
         }
     }
 
-    /// Get appropriate disconnect threshold based on device type
     fn disconnect_threshold(&self) -> u32 {
-        // Bluetooth devices get more grace period (they can briefly disconnect)
         if self.is_bluetooth {
-            3 // 3 polling cycles (6-15 seconds)
+            3
         } else {
-            2 // 2 polling cycles (4-10 seconds)
+            2
         }
     }
 
-    /// Get appropriate reconnect check interval
     #[allow(dead_code)]
     fn reconnect_interval(&self) -> Duration {
         if self.is_bluetooth {
-            Duration::from_secs(5) // Check every 5s for Bluetooth
+            Duration::from_secs(5)
         } else {
-            Duration::from_secs(3) // Check every 3s for wired devices
+            Duration::from_secs(3)
         }
     }
 }
 
-/// Audio device monitor that detects disconnects and reconnects
 pub struct AudioDeviceMonitor {
     monitor_handle: Option<JoinHandle<()>>,
     event_sender: mpsc::UnboundedSender<DeviceEvent>,
@@ -85,7 +75,6 @@ pub struct AudioDeviceMonitor {
 }
 
 impl AudioDeviceMonitor {
-    /// Create a new device monitor
     pub fn new() -> (Self, mpsc::UnboundedReceiver<DeviceEvent>) {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         let stop_signal = Arc::new(tokio::sync::Notify::new());
@@ -100,7 +89,6 @@ impl AudioDeviceMonitor {
         )
     }
 
-    /// Start monitoring specified devices
     pub fn start_monitoring(
         &mut self,
         microphone: Option<Arc<AudioDevice>>,
@@ -118,8 +106,11 @@ impl AudioDeviceMonitor {
                 mic.name.clone(),
                 DeviceMonitorType::Microphone,
             ));
-            info!("🔍 Monitoring microphone: '{}' (Bluetooth: {})",
-                  mic.name, monitored_devices.last().unwrap().is_bluetooth);
+            info!(
+                "🔍 Monitoring microphone: '{}' (Bluetooth: {})",
+                mic.name,
+                monitored_devices.last().unwrap().is_bluetooth
+            );
         }
 
         if let Some(sys) = system_audio {
@@ -127,8 +118,11 @@ impl AudioDeviceMonitor {
                 sys.name.clone(),
                 DeviceMonitorType::SystemAudio,
             ));
-            info!("🔍 Monitoring system audio: '{}' (Bluetooth: {})",
-                  sys.name, monitored_devices.last().unwrap().is_bluetooth);
+            info!(
+                "🔍 Monitoring system audio: '{}' (Bluetooth: {})",
+                sys.name,
+                monitored_devices.last().unwrap().is_bluetooth
+            );
         }
 
         if monitored_devices.is_empty() {
@@ -147,7 +141,6 @@ impl AudioDeviceMonitor {
         Ok(())
     }
 
-    /// Stop monitoring
     pub async fn stop_monitoring(&mut self) {
         info!("Stopping device monitor");
         self.stop_signal.notify_one();
@@ -159,28 +152,25 @@ impl AudioDeviceMonitor {
         info!("Device monitor stopped");
     }
 
-    /// Main monitoring loop
     async fn monitor_loop(
         mut monitored_devices: Vec<MonitoredDevice>,
         event_sender: mpsc::UnboundedSender<DeviceEvent>,
         stop_signal: Arc<tokio::sync::Notify>,
     ) {
         let mut last_device_list = Vec::new();
-        let check_interval = Duration::from_secs(2); // Poll every 2 seconds
+        let check_interval = Duration::from_secs(2);
 
         loop {
-            // Check for stop signal with timeout
             tokio::select! {
                 _ = stop_signal.notified() => {
                     info!("Device monitor received stop signal");
                     break;
                 }
                 _ = tokio::time::sleep(check_interval) => {
-                    // Continue with monitoring check
+
                 }
             }
 
-            // Get current device list
             let current_devices = match list_audio_devices().await {
                 Ok(devices) => devices,
                 Err(e) => {
@@ -189,24 +179,25 @@ impl AudioDeviceMonitor {
                 }
             };
 
-            // Check if device list changed
             if current_devices.len() != last_device_list.len() {
-                debug!("Device list changed: {} -> {} devices",
-                       last_device_list.len(), current_devices.len());
+                debug!(
+                    "Device list changed: {} -> {} devices",
+                    last_device_list.len(),
+                    current_devices.len()
+                );
                 let _ = event_sender.send(DeviceEvent::DeviceListChanged);
             }
             last_device_list = current_devices.clone();
 
-            // Check each monitored device
             for monitored in &mut monitored_devices {
                 let device_found = current_devices.iter().any(|d| d.name == monitored.name);
 
                 if device_found {
-                    // Device is present
                     if monitored.consecutive_missing > 0 {
-                        // Device has reconnected!
-                        info!("✅ Device '{}' reconnected after {} missing checks",
-                              monitored.name, monitored.consecutive_missing);
+                        info!(
+                            "✅ Device '{}' reconnected after {} missing checks",
+                            monitored.name, monitored.consecutive_missing
+                        );
 
                         let _ = event_sender.send(DeviceEvent::DeviceReconnected {
                             device_name: monitored.name.clone(),
@@ -216,17 +207,20 @@ impl AudioDeviceMonitor {
                         monitored.consecutive_missing = 0;
                     }
                 } else {
-                    // Device is missing
                     monitored.consecutive_missing += 1;
 
-                    debug!("⚠️ Device '{}' missing for {} checks (threshold: {})",
-                          monitored.name, monitored.consecutive_missing,
-                          monitored.disconnect_threshold());
+                    debug!(
+                        "⚠️ Device '{}' missing for {} checks (threshold: {})",
+                        monitored.name,
+                        monitored.consecutive_missing,
+                        monitored.disconnect_threshold()
+                    );
 
-                    // Only emit disconnect event once when threshold is reached
                     if monitored.consecutive_missing == monitored.disconnect_threshold() {
-                        warn!("❌ Device '{}' ({:?}) disconnected!",
-                              monitored.name, monitored.device_type);
+                        warn!(
+                            "❌ Device '{}' ({:?}) disconnected!",
+                            monitored.name, monitored.device_type
+                        );
 
                         let _ = event_sender.send(DeviceEvent::DeviceDisconnected {
                             device_name: monitored.name.clone(),
@@ -236,13 +230,11 @@ impl AudioDeviceMonitor {
                 }
             }
 
-            // Adjust check interval based on device states
-            // If any device is missing, check more frequently
             let has_missing = monitored_devices.iter().any(|d| d.consecutive_missing > 0);
             let next_interval = if has_missing {
-                Duration::from_secs(2) // Fast polling when device missing
+                Duration::from_secs(2)
             } else {
-                Duration::from_secs(5) // Slower polling when all devices present
+                Duration::from_secs(5)
             };
 
             if next_interval != check_interval {
@@ -260,7 +252,6 @@ impl Default for AudioDeviceMonitor {
 
 impl Drop for AudioDeviceMonitor {
     fn drop(&mut self) {
-        // Signal stop
         self.stop_signal.notify_one();
     }
 }
@@ -291,7 +282,6 @@ mod tests {
         let (mut monitor, _receiver) = AudioDeviceMonitor::new();
         assert!(monitor.monitor_handle.is_none());
 
-        // Stop should be safe even if not started
         monitor.stop_monitoring().await;
     }
 }
