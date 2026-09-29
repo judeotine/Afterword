@@ -46,11 +46,9 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [showLevels, setShowLevels] = useState(false);
 
-  // Filter devices by type
   const inputDevices = devices.filter(device => device.device_type === 'Input');
   const outputDevices = devices.filter(device => device.device_type === 'Output');
 
-  // Fetch available audio devices
   const fetchDevices = async () => {
     try {
       setError(null);
@@ -66,12 +64,10 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     }
   };
 
-  // Load devices on component mount
   useEffect(() => {
     fetchDevices();
   }, []);
 
-  // Set up audio level event listener
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -94,36 +90,30 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
 
     setupAudioLevelListener();
 
-    // Cleanup function
     return () => {
       if (unlisten) {
         unlisten();
       }
-      // Stop monitoring when component unmounts
       if (isMonitoring) {
         stopAudioLevelMonitoring();
       }
     };
   }, [isMonitoring]);
 
-  // Handle device refresh
   const handleRefresh = async () => {
     setRefreshing(true);
     await fetchDevices();
   };
 
-  // Helper function to detect device category and Bluetooth status
   const getDeviceMetadata = (deviceName: string) => {
     const nameLower = deviceName.toLowerCase();
 
-    // Detect if it's Bluetooth
     const isBluetooth = nameLower.includes('airpods')
       || nameLower.includes('bluetooth')
       || nameLower.includes('wireless')
-      || nameLower.includes('wh-')  // Sony WH-* series
+      || nameLower.includes('wh-')
       || nameLower.includes('bt ');
 
-    // Categorize device
     let category = 'wired';
     if (deviceName === 'default') {
       category = 'default';
@@ -136,7 +126,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     return { isBluetooth, category };
   };
 
-  // Handle microphone device selection
   const handleMicDeviceChange = (deviceName: string) => {
     const newDevices = {
       ...selectedDevices,
@@ -144,7 +133,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     };
     onDeviceChange(newDevices);
 
-    // Track device selection analytics with enhanced metadata
     const metadata = getDeviceMetadata(deviceName);
     Analytics.track('microphone_selected', {
       device_category: metadata.category,
@@ -153,7 +141,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     }).catch(err => console.error('Failed to track microphone selection:', err));
   };
 
-  // Handle system audio device selection
   const handleSystemDeviceChange = (deviceName: string) => {
     const newDevices = {
       ...selectedDevices,
@@ -161,7 +148,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     };
     onDeviceChange(newDevices);
 
-    // Track device selection analytics with enhanced metadata
     const metadata = getDeviceMetadata(deviceName);
     Analytics.track('system_audio_selected', {
       device_category: metadata.category,
@@ -170,10 +156,8 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     }).catch(err => console.error('Failed to track system audio selection:', err));
   };
 
-  // Start audio level monitoring
   const startAudioLevelMonitoring = async () => {
     try {
-      // Only monitor input devices for now (microphones)
       const deviceNames = inputDevices.map(device => device.name);
       if (deviceNames.length === 0) {
         setError('No microphone devices found to monitor');
@@ -190,7 +174,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     }
   };
 
-  // Stop audio level monitoring
   const stopAudioLevelMonitoring = async () => {
     try {
       await invoke('stop_audio_level_monitoring');
@@ -202,7 +185,6 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
     }
   };
 
-  // Toggle audio level monitoring
   const toggleAudioLevelMonitoring = async () => {
     if (isMonitoring) {
       await stopAudioLevelMonitoring();
