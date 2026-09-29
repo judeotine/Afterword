@@ -31,20 +31,16 @@ export function ParakeetModelManager({
   const [initialized, setInitialized] = useState(false);
   const [downloadingModels, setDownloadingModels] = useState<Set<string>>(new Set());
 
-  // Refs for stable callbacks
   const onModelSelectRef = useRef(onModelSelect);
   const autoSaveRef = useRef(autoSave);
 
-  // Progress throttle map to prevent rapid updates
   const progressThrottleRef = useRef<Map<string, { progress: number; timestamp: number }>>(new Map());
 
-  // Update refs when props change
   useEffect(() => {
     onModelSelectRef.current = onModelSelect;
     autoSaveRef.current = autoSave;
   }, [onModelSelect, autoSave]);
 
-  // Initialize and load models
   useEffect(() => {
     if (initialized) return;
 
@@ -71,7 +67,6 @@ export function ParakeetModelManager({
     initializeModels();
   }, [initialized, selectedModel, onModelSelect]);
 
-  // Set up event listeners for download progress
   useEffect(() => {
     let unlistenProgress: (() => void) | null = null;
     let unlistenComplete: (() => void) | null = null;
@@ -80,7 +75,6 @@ export function ParakeetModelManager({
     const setupListeners = async () => {
       console.log('[ParakeetModelManager] Setting up event listeners...');
 
-      // Download progress with throttling
       unlistenProgress = await listen<{ modelName: string; progress: number }>(
         'parakeet-model-download-progress',
         (event) => {
@@ -88,7 +82,6 @@ export function ParakeetModelManager({
           const now = Date.now();
           const throttleData = progressThrottleRef.current.get(modelName);
 
-          // Throttle: only update if 300ms passed OR progress jumped by 5%+
           const shouldUpdate = !throttleData ||
             now - throttleData.timestamp > 300 ||
             Math.abs(progress - throttleData.progress) >= 5;
@@ -108,7 +101,6 @@ export function ParakeetModelManager({
         }
       );
 
-      // Download complete
       unlistenComplete = await listen<{ modelName: string }>(
         'parakeet-model-download-complete',
         (event) => {
@@ -130,7 +122,6 @@ export function ParakeetModelManager({
             return newSet;
           });
 
-          // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
           toast.success(`${displayInfo?.icon || '✓'} ${displayName} ready!`, {
@@ -138,7 +129,6 @@ export function ParakeetModelManager({
             duration: 4000
           });
 
-          // Auto-select after download using stable refs
           if (onModelSelectRef.current) {
             onModelSelectRef.current(modelName);
             if (autoSaveRef.current) {
@@ -148,7 +138,6 @@ export function ParakeetModelManager({
         }
       );
 
-      // Download error
       unlistenError = await listen<{ modelName: string; error: string }>(
         'parakeet-model-download-error',
         (event) => {
@@ -170,7 +159,6 @@ export function ParakeetModelManager({
             return newSet;
           });
 
-          // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
           toast.error(`Failed to download ${displayName}`, {
@@ -193,7 +181,7 @@ export function ParakeetModelManager({
       if (unlistenComplete) unlistenComplete();
       if (unlistenError) unlistenError();
     };
-  }, []); // Empty dependency array - listeners use refs for stable callbacks
+  }, []);
 
   const saveModelSelection = async (modelName: string) => {
     try {
@@ -228,7 +216,6 @@ export function ParakeetModelManager({
         )
       );
 
-      // Clean up throttle data
       progressThrottleRef.current.delete(modelName);
 
       toast.info(`${displayName} download cancelled`, {
@@ -262,7 +249,7 @@ export function ParakeetModelManager({
 
       toast.info(`Downloading ${displayName}...`, {
         description: 'This may take a few minutes',
-        duration: 5000  // Auto-dismiss after 5 seconds
+        duration: 5000
       });
 
       await ParakeetAPI.downloadModel(modelName);
@@ -306,7 +293,6 @@ export function ParakeetModelManager({
     try {
       await ParakeetAPI.deleteCorruptedModel(modelName);
 
-      // Refresh models list
       const modelList = await ParakeetAPI.getAvailableModels();
       setModels(modelList);
 
@@ -315,7 +301,6 @@ export function ParakeetModelManager({
         duration: 3000
       });
 
-      // If deleted model was selected, clear selection
       if (selectedModel === modelName && onModelSelect) {
         onModelSelect('');
       }
@@ -412,7 +397,6 @@ export function ParakeetModelManager({
   );
 }
 
-// Model Card Component
 interface ModelCardProps {
   model: ParakeetModelInfo;
   isSelected: boolean;
