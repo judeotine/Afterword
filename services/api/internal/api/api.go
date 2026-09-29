@@ -28,32 +28,34 @@ const (
 )
 
 type ServerOptions struct {
-	Accounts    *accounts.Service
-	OTP         *auth.OTPService
-	Tokens      *auth.TokenIssuer
-	Refresh     *auth.RefreshManager
-	Middleware  *auth.Middleware
-	Meetings    *meetings.Service
-	Google      *auth.GoogleAuthenticator
-	Email       auth.EmailSender
-	AppBaseURL  string
-	ProductName string
-	Clock       func() time.Time
+	Accounts     *accounts.Service
+	OTP          *auth.OTPService
+	Tokens       *auth.TokenIssuer
+	Refresh      *auth.RefreshManager
+	Middleware   *auth.Middleware
+	Meetings     *meetings.Service
+	Integrations meetings.IntegrationDelivery
+	Google       *auth.GoogleAuthenticator
+	Email        auth.EmailSender
+	AppBaseURL   string
+	ProductName  string
+	Clock        func() time.Time
 }
 
 type Server struct {
-	accounts    *accounts.Service
-	otp         *auth.OTPService
-	tokens      *auth.TokenIssuer
-	refresh     *auth.RefreshManager
-	middleware  *auth.Middleware
-	meetings    *meetings.Service
-	google      *auth.GoogleAuthenticator
-	email       auth.EmailSender
-	appBaseURL  string
-	productName string
-	cookieSafe  bool
-	clock       func() time.Time
+	accounts     *accounts.Service
+	otp          *auth.OTPService
+	tokens       *auth.TokenIssuer
+	refresh      *auth.RefreshManager
+	middleware   *auth.Middleware
+	meetings     *meetings.Service
+	integrations meetings.IntegrationDelivery
+	google       *auth.GoogleAuthenticator
+	email        auth.EmailSender
+	appBaseURL   string
+	productName  string
+	cookieSafe   bool
+	clock        func() time.Time
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -71,17 +73,18 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 
 	server := &Server{
-		accounts:    options.Accounts,
-		otp:         options.OTP,
-		tokens:      options.Tokens,
-		refresh:     options.Refresh,
-		middleware:  options.Middleware,
-		meetings:    options.Meetings,
-		google:      options.Google,
-		email:       options.Email,
-		appBaseURL:  strings.TrimRight(strings.TrimSpace(options.AppBaseURL), "/"),
-		productName: options.ProductName,
-		clock:       options.Clock,
+		accounts:     options.Accounts,
+		otp:          options.OTP,
+		tokens:       options.Tokens,
+		refresh:      options.Refresh,
+		middleware:   options.Middleware,
+		meetings:     options.Meetings,
+		integrations: options.Integrations,
+		google:       options.Google,
+		email:        options.Email,
+		appBaseURL:   strings.TrimRight(strings.TrimSpace(options.AppBaseURL), "/"),
+		productName:  options.ProductName,
+		clock:        options.Clock,
 	}
 	if server.productName == "" {
 		server.productName = "Afterword"
@@ -168,6 +171,8 @@ func (s *Server) Routes(router chi.Router) {
 					r.Post("/clips", s.handleCreateClip)
 					r.Get("/clips", s.handleListClips)
 					r.Delete("/clips/{"+clipParam+"}", s.handleDeleteClip)
+
+					r.Post("/export", s.handleExportMeeting)
 				})
 
 				r.Post("/folders", s.handleCreateFolder)
