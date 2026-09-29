@@ -11,7 +11,6 @@ export function useTemplates() {
   }>>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('standard_meeting');
 
-  // Fetch available templates on mount
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
@@ -29,7 +28,6 @@ export function useTemplates() {
     fetchTemplates();
   }, []);
 
-  // Handle template selection
   const handleTemplateSelection = useCallback((templateId: string, templateName: string) => {
     setSelectedTemplate(templateId);
     toast.success('Template selected', {
