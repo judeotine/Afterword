@@ -7,7 +7,6 @@ use tracing::{error, info as log_info};
 pub struct SummaryProcessesRepository;
 
 impl SummaryProcessesRepository {
-    /// Retrieves the current summary process state for a given meeting ID.
     pub async fn get_summary_data(
         pool: &SqlitePool,
         meeting_id: &str,
@@ -121,7 +120,7 @@ impl SummaryProcessesRepository {
     pub async fn update_process_completed(
         pool: &SqlitePool,
         meeting_id: &str,
-        result: Value, // Keep this as Value to handle both old and new formats if needed
+        result: Value,
         chunk_count: i64,
         processing_time: f64,
     ) -> Result<(), sqlx::Error> {
@@ -158,7 +157,6 @@ impl SummaryProcessesRepository {
     ) -> Result<(), sqlx::Error> {
         let now = Utc::now();
 
-        // Restore from backup if it exists, otherwise keep current result
         sqlx::query(
             r#"
             UPDATE summary_processes
@@ -192,7 +190,6 @@ impl SummaryProcessesRepository {
     ) -> Result<(), sqlx::Error> {
         let now = Utc::now();
 
-        // Restore from backup if it exists, otherwise keep current result
         sqlx::query(
             r#"
             UPDATE summary_processes
