@@ -23,7 +23,6 @@ export function useProcessingProgress() {
   const [isActive, setIsActive] = useState(false);
   const processingTimeRef = useRef<{ [chunkId: number]: number }>({});
 
-  // Initialize a new processing session
   const initializeSession = useCallback((
     totalAudioDurationMs: number,
     chunkDurationMs: number = 30000, // 30 seconds default
@@ -56,7 +55,6 @@ export function useProcessingProgress() {
     console.log(`Initialized processing session for ${totalChunks} chunks`);
   }, []);
 
-  // Start processing a specific chunk
   const startChunkProcessing = useCallback((chunkId: number) => {
     processingTimeRef.current[chunkId] = Date.now();
 
@@ -73,7 +71,6 @@ export function useProcessingProgress() {
     console.log(`Started processing chunk ${chunkId}`);
   }, []);
 
-  // Complete a chunk with transcribed text
   const completeChunk = useCallback((chunkId: number, transcribedText: string) => {
     const startTime = processingTimeRef.current[chunkId];
     const endTime = Date.now();
@@ -90,7 +87,7 @@ export function useProcessingProgress() {
               status: 'completed',
               end_time: endTime,
               duration_ms: duration,
-              text_preview: transcribedText.slice(0, 100) // First 100 chars
+              text_preview: transcribedText.slice(0, 100)
             }
           : chunk
       )
@@ -100,7 +97,6 @@ export function useProcessingProgress() {
     console.log(`Completed chunk ${chunkId} in ${duration}ms`);
   }, []);
 
-  // Mark a chunk as failed
   const failChunk = useCallback((chunkId: number, errorMessage: string) => {
     setProgress(prev => ({
       ...prev,
@@ -122,7 +118,6 @@ export function useProcessingProgress() {
     console.log(`Failed chunk ${chunkId}: ${errorMessage}`);
   }, []);
 
-  // Calculate estimated remaining time
   const calculateEstimatedTime = useCallback(() => {
     if (!session || progress.completed_chunks === 0) {
       return undefined;
@@ -136,7 +131,6 @@ export function useProcessingProgress() {
     return remainingChunks * averageTimePerChunk;
   }, [session, progress.completed_chunks, progress.total_chunks]);
 
-  // Update estimated time in progress
   useEffect(() => {
     const estimatedTime = calculateEstimatedTime();
     if (estimatedTime !== undefined) {
@@ -147,7 +141,6 @@ export function useProcessingProgress() {
     }
   }, [calculateEstimatedTime]);
 
-  // Pause processing
   const pauseProcessing = useCallback(() => {
     if (session) {
       setSession(prev => prev ? { ...prev, is_paused: true } : null);
@@ -155,7 +148,6 @@ export function useProcessingProgress() {
     }
   }, [session]);
 
-  // Resume processing
   const resumeProcessing = useCallback(() => {
     if (session) {
       setSession(prev => prev ? { ...prev, is_paused: false } : null);
@@ -163,7 +155,6 @@ export function useProcessingProgress() {
     }
   }, [session]);
 
-  // Cancel processing
   const cancelProcessing = useCallback(() => {
     setIsActive(false);
     setSession(null);
@@ -178,7 +169,6 @@ export function useProcessingProgress() {
     console.log('Processing cancelled');
   }, []);
 
-  // Reset for new session
   const reset = useCallback(() => {
     setIsActive(false);
     setSession(null);
@@ -192,7 +182,6 @@ export function useProcessingProgress() {
     processingTimeRef.current = {};
   }, []);
 
-  // Save/load progress state for resume functionality
   const saveProgressState = useCallback(() => {
     if (!session) return null;
 
@@ -230,15 +219,12 @@ export function useProcessingProgress() {
     localStorage.removeItem('transcription_progress');
   }, []);
 
-  // Check if processing is complete
   const isComplete = progress.total_chunks > 0 &&
     progress.completed_chunks === progress.total_chunks;
 
-  // Check if there are any failed chunks
   const hasFailures = progress.failed_chunks > 0;
 
   return {
-    // State
     progress,
     session,
     isActive,
@@ -246,7 +232,6 @@ export function useProcessingProgress() {
     hasFailures,
     isPaused: session?.is_paused || false,
 
-    // Actions
     initializeSession,
     startChunkProcessing,
     completeChunk,
@@ -256,7 +241,6 @@ export function useProcessingProgress() {
     cancelProcessing,
     reset,
 
-    // Persistence
     saveProgressState,
     loadProgressState,
     clearSavedState
