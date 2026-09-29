@@ -18,8 +18,6 @@ export default function AnalyticsConsentSwitch() {
   const [userId, setUserId] = useState<string>('');
   const [isCopied, setIsCopied] = useState(false);
 
-  // Note: Store loading is handled by AnalyticsProvider to avoid race conditions
-
   useEffect(() => {
     const loadUserId = async () => {
       if (isAnalyticsOptedIn) {
@@ -44,7 +42,6 @@ export default function AnalyticsConsentSwitch() {
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
 
-      // Track that user copied their ID
       await Analytics.track('user_id_copied', {
         user_id: userId
       });
@@ -54,24 +51,20 @@ export default function AnalyticsConsentSwitch() {
   };
 
   const handleToggle = async (enabled: boolean) => {
-    // If user is trying to DISABLE, show the modal first
     if (!enabled) {
       setShowModal(true);
-      // Track that user viewed the transparency modal
       try {
         await invoke('track_analytics_transparency_viewed');
       } catch (error) {
         console.error('Failed to track transparency view:', error);
       }
-      return; // Don't disable yet, wait for modal confirmation
+      return;
     }
 
-    // If ENABLING, proceed immediately
     await performToggle(enabled);
   };
 
   const performToggle = async (enabled: boolean) => {
-    // Optimistic update - immediately update UI state
     setIsAnalyticsOptedIn(enabled);
     setIsProcessing(true);
 
@@ -87,13 +80,10 @@ export default function AnalyticsConsentSwitch() {
       await store.save();
 
       if (enabled) {
-        // Full analytics initialization (same as AnalyticsProvider)
         const userId = await Analytics.getPersistentUserId();
 
-        // Initialize analytics
         await Analytics.init();
 
-        // Identify user with enhanced properties immediately after init
         await Analytics.identify(userId, {
           app_version: '0.4.0',
           platform: 'tauri',
@@ -101,13 +91,10 @@ export default function AnalyticsConsentSwitch() {
           os: navigator.platform,
         });
 
-        // Start analytics session with the same user ID
         await Analytics.startSession(userId);
 
-        // Track app started (re-enabled)
         await Analytics.trackAppStarted();
 
-        // Track that user enabled analytics
         try {
           await invoke('track_analytics_enabled');
         } catch (error) {
@@ -116,7 +103,6 @@ export default function AnalyticsConsentSwitch() {
 
         console.log('Analytics re-enabled successfully');
       } else {
-        // Track that user disabled analytics BEFORE disabling
         try {
           await invoke('track_analytics_disabled');
         } catch (error) {
@@ -128,7 +114,6 @@ export default function AnalyticsConsentSwitch() {
       }
     } catch (error) {
       console.error('Failed to toggle analytics:', error);
-      // Revert the optimistic update on error
       setIsAnalyticsOptedIn(!enabled);
       // You could also show a toast notification here to inform the user
     } finally {
