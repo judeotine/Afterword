@@ -1,13 +1,10 @@
 interface StatusOverlaysProps {
-  // Status flags
-  isProcessing: boolean;      // Processing transcription after recording stops
-  isSaving: boolean;          // Saving transcript to database
+  isProcessing: boolean;
+  isSaving: boolean;
 
-  // Layout
-  sidebarCollapsed: boolean;  // For responsive margin calculation
+  sidebarCollapsed: boolean;
 }
 
-// Internal reusable component for individual status overlays
 interface StatusOverlayProps {
   show: boolean;
   message: string;
@@ -36,7 +33,6 @@ function StatusOverlay({ show, message, sidebarCollapsed }: StatusOverlayProps) 
   );
 }
 
-// Main exported component - renders multiple status overlays
 export function StatusOverlays({
   isProcessing,
   isSaving,
