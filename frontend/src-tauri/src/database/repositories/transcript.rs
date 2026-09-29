@@ -7,9 +7,6 @@ use uuid::Uuid;
 pub struct TranscriptsRepository;
 
 impl TranscriptsRepository {
-    /// Saves a new meeting and its associated transcript segments.
-    /// This function uses a transaction to ensure that either both the meeting
-    /// and all its transcripts are saved, or none of them are.
     pub async fn save_transcript(
         pool: &SqlitePool,
         meeting_title: &str,
@@ -23,7 +20,6 @@ impl TranscriptsRepository {
 
         let now = Utc::now();
 
-        // 1. Create the new meeting
         let result = sqlx::query(
             "INSERT INTO meetings (id, title, created_at, updated_at, folder_path) VALUES (?, ?, ?, ?, ?)",
         )
@@ -43,7 +39,6 @@ impl TranscriptsRepository {
 
         info!("Successfully created meeting with id: {}", meeting_id);
 
-        // 2. Save each transcript segment with audio timing fields
         for segment in transcripts {
             let transcript_id = format!("transcript-{}", Uuid::new_v4());
             let result = sqlx::query(
@@ -76,14 +71,11 @@ impl TranscriptsRepository {
             meeting_id
         );
 
-        // Commit the transaction
         transaction.commit().await?;
 
         Ok(meeting_id)
     }
 
-    /// Searches for a query string within the transcripts.
-    /// It returns a list of matching transcripts with context.
     pub async fn search_transcripts(
         pool: &SqlitePool,
         query: &str,
@@ -120,7 +112,6 @@ impl TranscriptsRepository {
         Ok(results)
     }
 
-    /// Helper function to extract a snippet of text around the first match of a query.
     fn get_match_context(transcript: &str, query: &str) -> String {
         let transcript_lower = transcript.to_lowercase();
         let query_lower = query.to_lowercase();
@@ -140,7 +131,7 @@ impl TranscriptsRepository {
                 }
                 context
             }
-            None => transcript.chars().take(200).collect(), // Fallback to the start of the transcript
+            None => transcript.chars().take(200).collect(),
         }
     }
 }
