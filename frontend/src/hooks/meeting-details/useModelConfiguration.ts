@@ -9,7 +9,6 @@ interface UseModelConfigurationProps {
 }
 
 export function useModelConfiguration({ serverAddress }: UseModelConfigurationProps) {
-  // Note: No hardcoded defaults - DB is the source of truth
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
     model: '', // Empty until loaded from DB
@@ -18,7 +17,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
   const [isLoading, setIsLoading] = useState(true);
   const [, setError] = useState<string>('');
 
-  // Fetch model configuration on mount and when serverAddress changes
   useEffect(() => {
     const fetchModelConfig = async () => {
       setIsLoading(true);
@@ -33,7 +31,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
             hasApiKey: !!data.apiKey,
             ollamaEndpoint: data.ollamaEndpoint || 'default'
           });
-          // Fetch API key if not included and provider requires it
           if (data.provider !== 'ollama' && data.provider !== 'custom-openai' && !data.apiKey) {
             try {
               const apiKeyData = await invokeTauri('api_get_api_key', {
@@ -45,7 +42,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
             }
           }
 
-          // Fetch custom OpenAI config if provider is custom-openai
           if (data.provider === 'custom-openai') {
             try {
               const customConfig = await invokeTauri('api_get_custom_openai_config') as any;
@@ -57,7 +53,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
                 data.maxTokens = customConfig.maxTokens || null;
                 data.temperature = customConfig.temperature || null;
                 data.topP = customConfig.topP || null;
-                // For custom-openai, model field should match customOpenAIModel
                 data.model = customConfig.model || data.model;
                 console.log('✅ Loaded custom OpenAI config:', {
                   displayName: customConfig.displayName,
@@ -85,7 +80,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
     fetchModelConfig();
   }, [serverAddress]);
 
-  // Listen for model config updates from other components
   useEffect(() => {
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
@@ -105,7 +99,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
     };
   }, []);
 
-  // Save model configuration
   const handleSaveModelConfig = useCallback(async (updatedConfig?: ModelConfig) => {
     try {
       const configToSave = updatedConfig || modelConfig;
@@ -118,7 +111,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
       };
       console.log('Saving model config with payload:', payload);
 
-      // Track model configuration change
       if (updatedConfig && (
         updatedConfig.provider !== modelConfig.provider ||
         updatedConfig.model !== modelConfig.model
@@ -142,7 +134,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
       console.log('Save model config success');
       setModelConfig(payload);
 
-      // Emit event to sync other components
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', payload);
 
