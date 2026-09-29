@@ -1,24 +1,13 @@
-//! End-to-end tests for the `afterword-transcribe` binary.
-//!
-//! The default test runs offline: it feeds the CLI a generated silent WAV and an
-//! empty models directory and asserts the documented "model missing" exit code.
-//! The real-transcription test is `#[ignore]`d and only runs when
-//! `AFTERWORD_TEST_MODELS_DIR` points at a directory with a downloaded model.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Exit code the CLI documents for "requested model is not present locally".
 const EXIT_MODEL_MISSING: i32 = 3;
 
 fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_afterword-transcribe"))
 }
 
-/// Write a mono 16-bit PCM WAV of `seconds` of digital silence at 16 kHz.
-///
-/// Symphonia decodes, it does not encode, so the header is written by hand.
 fn write_silent_wav(path: &Path, seconds: u32) {
     const SAMPLE_RATE: u32 = 16_000;
     const CHANNELS: u16 = 1;
@@ -34,8 +23,8 @@ fn write_silent_wav(path: &Path, seconds: u32) {
     bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
     bytes.extend_from_slice(b"WAVE");
     bytes.extend_from_slice(b"fmt ");
-    bytes.extend_from_slice(&16u32.to_le_bytes()); // PCM fmt chunk size
-    bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM format tag
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
     bytes.extend_from_slice(&CHANNELS.to_le_bytes());
     bytes.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
     bytes.extend_from_slice(&byte_rate.to_le_bytes());
@@ -118,10 +107,6 @@ fn unsupported_extension_exits_with_code_1() {
     );
 }
 
-/// Real transcription against a downloaded model.
-///
-/// Run with: `AFTERWORD_TEST_MODELS_DIR=/path/to/models cargo test -p afterword-core
-/// --test transcribe_cli -- --ignored`
 #[test]
 #[ignore = "requires AFTERWORD_TEST_MODELS_DIR with a downloaded model"]
 fn transcribes_with_a_real_model() {
