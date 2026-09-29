@@ -47,7 +47,6 @@ export function ConsoleToggle() {
     }
   };
 
-  // Only show this component on Windows or macOS
   if (typeof window !== 'undefined') {
     const userAgent = window.navigator.userAgent;
     if (!userAgent.includes('Windows') && !userAgent.includes('Mac')) {
