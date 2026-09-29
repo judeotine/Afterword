@@ -14,9 +14,7 @@ interface AudioOutputInfo {
 }
 
 interface BluetoothPlaybackWarningProps {
-  /** Check interval in milliseconds (default: 5000ms / 5 seconds) */
   checkInterval?: number;
-  /** Whether to show the warning (default: true for meeting playback pages) */
   enabled?: boolean;
 }
 
@@ -40,25 +38,21 @@ export function BluetoothPlaybackWarning({
           setDeviceName(outputInfo.device_name);
         } else {
           setIsBluetoothActive(false);
-          setIsDismissed(false); // Reset dismissal when switching to non-BT device
+          setIsDismissed(false);
         }
       } catch (error) {
         console.error('Failed to check audio output device:', error);
-        // Fail silently - don't show warning if we can't detect device
         setIsBluetoothActive(false);
       }
     };
 
-    // Check immediately on mount
     checkAudioOutput();
 
-    // Set up periodic checks
     const interval = setInterval(checkAudioOutput, checkInterval);
 
     return () => clearInterval(interval);
   }, [checkInterval, enabled]);
 
-  // Don't show warning if Bluetooth not active, already dismissed, or not enabled
   if (!enabled || !isBluetoothActive || isDismissed) {
     return null;
   }
