@@ -82,6 +82,12 @@ export default function MeetingsPage() {
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-ink">Meetings</h1>
         <div className="flex items-center gap-3">
+          <Link
+            href="/record"
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white"
+          >
+            Record
+          </Link>
           {workspaces.length > 1 ? (
             <select
               className="rounded-md border border-slate-300 px-2 py-1 text-sm"
