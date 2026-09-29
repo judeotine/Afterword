@@ -148,3 +148,17 @@ WHERE id IN (
     FOR UPDATE SKIP LOCKED
 )
 RETURNING *;
+
+-- name: SearchSegments :many
+SELECT transcript_segments.id, transcript_segments.meeting_id, transcript_segments.seq,
+       transcript_segments.speaker, transcript_segments.start_s, transcript_segments.end_s,
+       transcript_segments.text, meetings.title AS meeting_title,
+       ts_rank_cd(transcript_segments.tsv, websearch_to_tsquery('simple', sqlc.arg(query))) AS rank
+FROM transcript_segments
+JOIN meetings ON meetings.id = transcript_segments.meeting_id
+WHERE meetings.workspace_id = sqlc.arg(workspace_id)
+  AND (meetings.visibility <> 'private' OR meetings.owner_user_id = sqlc.arg(viewer_user_id))
+  AND (sqlc.narg(folder_id)::uuid IS NULL OR meetings.folder_id = sqlc.narg(folder_id)::uuid)
+  AND transcript_segments.tsv @@ websearch_to_tsquery('simple', sqlc.arg(query))
+ORDER BY rank DESC, transcript_segments.meeting_id, transcript_segments.seq
+LIMIT sqlc.arg(page_size);
