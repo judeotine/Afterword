@@ -2,8 +2,6 @@ use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
-// Pure transcript helpers moved to afterword-core; re-exported at the original
-// path so `crate::audio::common::...` call sites are unchanged.
 pub(crate) use afterword_core::transcript::{
     create_transcript_segments, split_segment_at_silence, write_transcripts_json,
 };
@@ -15,9 +13,6 @@ pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
 }
 
-/// Unload the transcription engine after a batch job (import or retranscription).
-/// Skips unloading if a live recording is currently in progress, since recording
-/// uses the same global engine instances.
 pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
     let _engine_lifecycle_guard = acquire_engine_lifecycle_lock().await;
 
