@@ -13,7 +13,6 @@ import { BetaSettings } from '@/components/BetaSettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
-// Tabs configuration (constant)
 const TABS = [
   { value: 'general', label: 'General', icon: Settings2 },
   { value: 'recording', label: 'Recordings', icon: Mic },
@@ -26,12 +25,10 @@ export default function SettingsPage() {
   const router = useRouter();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
 
-  // Animation state for tabs
   const [activeTab, setActiveTab] = useState('general');
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
 
-  // Load saved transcript configuration on mount
   useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
@@ -51,7 +48,6 @@ export default function SettingsPage() {
     loadTranscriptConfig();
   }, [setTranscriptModelConfig]);
 
-  // Update underline position when active tab changes
   useLayoutEffect(() => {
     const activeIndex = TABS.findIndex(tab => tab.value === activeTab);
     const activeTabElement = tabRefs.current[activeIndex];
