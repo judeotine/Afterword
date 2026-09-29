@@ -12,8 +12,6 @@ interface UseMeetingDataProps {
 }
 
 export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMeetingDataProps) {
-  // State
-  // Use prop directly since summary generation fetches transcripts independently
   const transcripts = meeting.transcripts;
   const [meetingTitle, setMeetingTitle] = useState(meeting.title || '+ New Call');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -23,19 +21,15 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   const [, setIsSummaryDirty] = useState(false);
   const [, setError] = useState<string>('');
 
-  // Ref for BlockNoteSummaryView
   const blockNoteSummaryRef = useRef<BlockNoteSummaryViewRef>(null);
 
-  // Sidebar context
   const { setCurrentMeeting, setMeetings, meetings: sidebarMeetings } = useSidebar();
 
-  // Sync aiSummary state when summaryData prop changes (fixes display of fetched summaries)
   useEffect(() => {
     console.log('[useMeetingData] Syncing summary data from prop:', summaryData ? 'present' : 'null');
     setAiSummary(summaryData);
-  }, [summaryData]); // Only trigger when parent prop changes, not when aiSummary changes
+  }, [summaryData]);
 
-  // Handlers
   const handleTitleChange = useCallback((newTitle: string) => {
     setMeetingTitle(newTitle);
     setIsTitleDirty(true);
@@ -55,7 +49,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
       console.log('Save meeting title success');
       setIsTitleDirty(false);
 
-      // Update meetings with new title
       const updatedMeetings = sidebarMeetings.map((m: CurrentMeeting) =>
         m.id === meeting.id ? { id: m.id, title: meetingTitle } : m
       );
@@ -83,7 +76,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     try {
       let formattedSummary: any;
 
-      // Check if it's the new BlockNote format
       if ('markdown' in summary || 'summary_json' in summary) {
         console.log('📄 Saving new format (markdown/blocknote)');
         formattedSummary = summary;
@@ -119,12 +111,10 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   const saveAllChanges = useCallback(async () => {
     setIsSaving(true);
     try {
-      // Save meeting title only if changed
       if (isTitleDirty) {
         await handleSaveMeetingTitle();
       }
 
-      // Save BlockNote editor changes if dirty
       if (blockNoteSummaryRef.current?.isDirty) {
         console.log('💾 Saving BlockNote editor changes...');
         await blockNoteSummaryRef.current.saveSummary();
@@ -141,7 +131,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     }
   }, [isTitleDirty, handleSaveMeetingTitle, aiSummary, handleSaveSummary]);
 
-  // Update meeting title from external source (e.g., AI summary)
   const updateMeetingTitle = useCallback((newTitle: string) => {
     console.log('📝 Updating meeting title to:', newTitle);
     setMeetingTitle(newTitle);
@@ -153,7 +142,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   }, [meeting.id, sidebarMeetings, setMeetings, setCurrentMeeting]);
 
   return {
-    // State
     transcripts,
     meetingTitle,
     isEditingTitle,
@@ -162,13 +150,11 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     isSaving,
     blockNoteSummaryRef,
 
-    // Setters
     setMeetingTitle,
     setIsEditingTitle,
     setAiSummary,
     setIsSummaryDirty,
 
-    // Handlers
     handleTitleChange,
     handleSummaryChange,
     handleSaveSummary,
