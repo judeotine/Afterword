@@ -63,6 +63,10 @@ export function apiBaseUrl(): string {
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080';
 }
 
+function channelFor(destination: string): string {
+  return destination.includes('@') ? 'email' : 'phone';
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -73,11 +77,11 @@ export class ApiClient {
   }
 
   sendOtp(destination: string): Promise<void> {
-    return this.request<void>('POST', '/v1/auth/otp/send', { body: { destination } });
+    return this.request<void>('POST', '/v1/auth/otp/send', { body: { destination, channel: channelFor(destination) } });
   }
 
   verifyOtp(destination: string, code: string): Promise<{ access_token: string; refresh_token: string }> {
-    return this.request('POST', '/v1/auth/otp/verify', { body: { destination, code } });
+    return this.request('POST', '/v1/auth/otp/verify', { body: { destination, code, channel: channelFor(destination) } });
   }
 
   refresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
@@ -123,7 +127,7 @@ export class ApiClient {
       headers['authorization'] = `Bearer ${options.accessToken}`;
     }
     if (options.workspaceId) {
-      headers['x-afterword-workspace'] = options.workspaceId;
+      headers['x-workspace-id'] = options.workspaceId;
     }
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,

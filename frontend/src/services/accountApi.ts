@@ -17,6 +17,10 @@ export interface BalanceSnapshot {
   credits: number;
 }
 
+function channelFor(destination: string): string {
+  return destination.includes('@') ? 'email' : 'phone';
+}
+
 export class AccountApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -41,11 +45,11 @@ export class AccountApi {
   }
 
   async sendOtp(destination: string): Promise<void> {
-    await this.post('/v1/auth/otp/send', { destination });
+    await this.post('/v1/auth/otp/send', { destination, channel: channelFor(destination) });
   }
 
   async verifyOtp(destination: string, code: string): Promise<{ access_token: string; refresh_token: string }> {
-    return this.post('/v1/auth/otp/verify', { destination, code });
+    return this.post('/v1/auth/otp/verify', { destination, code, channel: channelFor(destination) });
   }
 
   async refresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
@@ -57,7 +61,8 @@ export class AccountApi {
   }
 
   async balance(accessToken: string, workspaceId: string): Promise<BalanceSnapshot> {
-    return this.get('/v1/billing/balance', accessToken, workspaceId);
+    const raw = await this.get<{ minutes?: number }>('/v1/billing/balance', accessToken, workspaceId);
+    return { credits: raw.minutes ?? 0 };
   }
 
   private async post<T>(path: string, body: unknown, accessToken?: string, workspaceId?: string): Promise<T> {
@@ -83,7 +88,7 @@ export class AccountApi {
       headers['authorization'] = `Bearer ${accessToken}`;
     }
     if (workspaceId) {
-      headers['x-afterword-workspace'] = workspaceId;
+      headers['x-workspace-id'] = workspaceId;
     }
     return headers;
   }
