@@ -73,7 +73,7 @@ regex = "1.11.0"
 
 # macOS: Metal GPU + CoreML acceleration enabled by default
 [target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { version = "0.13.2", features = ["raw-api", "metal", "coreml"] }
+whisper-rs = { version = "0.16.0", features = ["raw-api", "metal", "coreml"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 whisper-rs = { version = "0.13.2", features = ["raw-api"] }
