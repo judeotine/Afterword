@@ -20,15 +20,11 @@ export function usePermissionCheck() {
     setStatus(prev => ({ ...prev, isChecking: true, error: null }));
 
     try {
-      // Get audio devices to check for microphone and system audio availability
       const devices = await invoke<Array<{ name: string; device_type: 'Input' | 'Output' }>>('get_audio_devices');
 
-      // Check for microphone devices (Input)
       const inputDevices = devices.filter(d => d.device_type === 'Input');
       const hasMicrophone = inputDevices.length > 0;
 
-      // Check for system audio devices (Output)
-      // On macOS, we need ScreenCaptureKit devices for system audio
       const outputDevices = devices.filter(d => d.device_type === 'Output');
       const hasSystemAudio = outputDevices.length > 0;
 
@@ -61,10 +57,8 @@ export function usePermissionCheck() {
 
   const requestPermissions = async () => {
     try {
-      // Trigger audio permission by trying to access devices
       await invoke('get_audio_devices');
 
-      // Recheck after triggering
       setTimeout(() => {
         checkPermissions();
       }, 1000);
@@ -73,7 +67,6 @@ export function usePermissionCheck() {
     }
   };
 
-  // Check permissions on mount
   useEffect(() => {
     checkPermissions();
   }, []);
