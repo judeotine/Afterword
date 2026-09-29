@@ -15,10 +15,10 @@ interface SettingTabsProps {
     defaultTab?: string;
 }
 
-export function SettingTabs({ 
-    modelConfig, 
-    setModelConfig, 
-    onSave, 
+export function SettingTabs({
+    modelConfig,
+    setModelConfig,
+    onSave,
     setSaveSuccess,
     defaultTab = "transcriptSettings",
     transcriptModelConfig,
@@ -27,7 +27,7 @@ export function SettingTabs({
 }: SettingTabsProps) {
 
     const handleTabChange = () => {
-        setSaveSuccess(null); // Reset save success when tab changes
+        setSaveSuccess(null);
     };
 
     return (
@@ -62,5 +62,4 @@ onSave={onSave}
 </Tabs>
     )
 }
-
 
