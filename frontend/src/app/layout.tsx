@@ -24,6 +24,7 @@ import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
 import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
+import { AccountProvider } from '@/contexts/AccountContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
 
 const sourceSans3 = Source_Sans_3({
@@ -211,6 +212,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         <AnalyticsProvider>
+          <AccountProvider>
           <RecordingStateProvider>
             <TranscriptProvider>
               <ConfigProvider>
@@ -251,6 +253,7 @@ export default function RootLayout({
               </ConfigProvider>
             </TranscriptProvider>
           </RecordingStateProvider>
+          </AccountProvider>
         </AnalyticsProvider>
 
         <Toaster position="bottom-center" richColors closeButton />
