@@ -53,6 +53,18 @@ export interface Page<T> {
   next_cursor: string | null;
 }
 
+export interface BotJob {
+  id: string;
+  workspace_id: string;
+  meeting_url: string;
+  platform: string;
+  status: string;
+  scheduled_at: string;
+  estimated_minutes: number;
+  minutes_used: number;
+  created_at: string;
+}
+
 export interface RequestOptions {
   accessToken?: string;
   workspaceId?: string;
@@ -111,6 +123,18 @@ export class ApiClient {
 
   ask(meetingId: string, question: string, options: RequestOptions): Promise<AskAnswer> {
     return this.request('POST', `/v1/meetings/${meetingId}/ask`, { ...options, body: { question } });
+  }
+
+  sendBot(meetingUrl: string, options: RequestOptions, extras?: { bot_name?: string; scheduled_at?: string }): Promise<BotJob> {
+    return this.request('POST', '/v1/bot-jobs', {
+      ...options,
+      body: { meeting_url: meetingUrl, ...extras },
+    });
+  }
+
+  async listBotJobs(options: RequestOptions): Promise<Page<BotJob>> {
+    const raw = await this.request<{ bot_jobs?: BotJob[]; next_cursor?: string | null }>('GET', '/v1/bot-jobs', options);
+    return { items: raw.bot_jobs ?? [], next_cursor: raw.next_cursor ?? null };
   }
 
   getSharedMeeting(token: string): Promise<{ meeting: Meeting; segments: TranscriptSegment[]; summary: Summary | null }> {
