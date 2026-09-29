@@ -10,6 +10,7 @@ pub mod permissions;
 pub mod device_detection;
 pub mod diagnostics;
 pub mod ffmpeg_mixer;
+pub mod screen_recorder;
 
 pub mod async_logger;
 pub mod batch_processor;
@@ -21,6 +22,7 @@ pub mod pipeline;
 pub mod playback_monitor;
 pub mod post_processor;
 pub mod recording_commands;
+pub mod screen_commands;
 pub mod recording_manager;
 pub mod recording_preferences;
 pub mod recording_saver;
