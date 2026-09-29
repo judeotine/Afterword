@@ -1,21 +1,17 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
-# Color codes and emojis
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Configuration
 PACKAGE_NAME="whisper-server-package"
 MODEL_DIR="$PACKAGE_NAME/models"
 
-# Helper functions for logging
 log_info() {
     echo -e "${BLUE}ℹ️  [INFO]${NC} $1"
 }
@@ -37,7 +33,6 @@ log_section() {
     echo -e "\n${PURPLE}🔄 === $1 ===${NC}\n"
 }
 
-# Error handling function
 handle_error() {
     local error_msg="$1"
     log_error "$error_msg"
@@ -45,7 +40,6 @@ handle_error() {
     exit 1
 }
 
-# Cleanup function
 cleanup() {
     log_section "Cleanup"
     if [ -n "$WHISPER_PID" ]; then
@@ -65,10 +59,8 @@ cleanup() {
     fi
 }
 
-# Set up trap for cleanup on script exit, interrupt, or termination
 trap cleanup EXIT INT TERM
 
-# Check if required directories and files exist
 log_section "Environment Check"
 
 if [ ! -d "$PACKAGE_NAME" ]; then
@@ -87,7 +79,6 @@ if [ ! -d "venv" ]; then
     handle_error "Virtual environment not found. Please run build_whisper.sh first"
 fi
 
-# Kill any existing whisper-server processes
 log_section "Initial Cleanup"
 
 log_info "Checking for existing whisper servers..."
@@ -96,9 +87,8 @@ if pkill -f "whisper-server" 2>/dev/null; then
 else
     log_warning "No existing whisper servers found"
 fi
-sleep 1  # Give processes time to terminate
+sleep 1
 
-# Check and kill if backend app in port 5167 is running
 log_section "Backend App Check"
 
 log_info "Checking for processes on port 5167..."
@@ -116,12 +106,9 @@ if lsof -i :$PORT | grep -q LISTEN; then
         handle_error "Failed to terminate backend app"
     fi
     log_success "Backend app terminated"
-    sleep 1  # Give processes time to terminate
+    sleep 1
 fi
 
-
-
-# Check for existing model
 log_section "Model Check"
 
 if [ ! -d "$MODEL_DIR" ]; then
@@ -138,7 +125,6 @@ else
     log_warning "No existing models found"
 fi
 
-# Whisper models
 models="tiny
 tiny.en
 tiny-q5_1
@@ -167,7 +153,6 @@ large-v1-turbo-q8_0
 large-v2-turbo-q8_0
 large-v3-turbo-q8_0"
 
-# Ask user which model to use if the argument is not provided
 if [ -z "$1" ]; then
     log_section "Model Selection"
     log_info "Available models:"
@@ -177,7 +162,6 @@ else
     MODEL_SHORT_NAME=$1
 fi
 
-# Check if the model is valid
 if ! echo "$models" | grep -qw "$MODEL_SHORT_NAME"; then
     handle_error "Invalid model: $MODEL_SHORT_NAME"
 fi
@@ -185,7 +169,6 @@ fi
 MODEL_NAME="ggml-$MODEL_SHORT_NAME.bin"
 log_success "Selected model: $MODEL_NAME"
 
-# Check if the modelname exists in directory
 if [ -f "$MODEL_DIR/$MODEL_NAME" ]; then
     log_success "Model file exists: $MODEL_DIR/$MODEL_NAME"
 else
@@ -195,24 +178,20 @@ else
         handle_error "Failed to download model"
     fi
 
-    # Move model to models directory
     mv "$MODEL_NAME" "$MODEL_DIR/" || handle_error "Failed to move model to models directory"
 fi
 
 log_section "Starting Services"
 
-# Start the whisper server in background
 log_info "Starting Whisper server... 🎙️"
 
-# Start whisper server in background
 WHISPER_PORT=8178
 
-# Ask user to change the whisper server port if needed
 read -p "$(echo -e "${YELLOW}🎯 Enter the Whisper server port (default: 8178):${NC} ")" -n 1 -r
 if [[ ! $REPLY =~ ^[0-9]+$ ]]; then
     WHISPER_PORT=8178
 else
-    # Check if port is valid 4 numbers that is already not in use and is not part of standard ports
+
     if [[ $REPLY =~ ^[0-9]{4}$ ]]; then
         if lsof -i :$REPLY | grep -q LISTEN; then
             log_warning "Port $REPLY is already in use"
@@ -227,7 +206,7 @@ else
                 handle_error "Failed to terminate backend app"
             fi
             log_success "Backend app terminated"
-            sleep 1  # Give processes time to terminate
+            sleep 1
         fi
         WHISPER_PORT=$REPLY
     else
@@ -236,7 +215,6 @@ else
     fi
 fi
 
-# Enter language
 read -p "$(echo -e "${YELLOW}🎯 Enter the language (default: en):${NC} ")" -n 2 -r
 if [[ ! $REPLY =~ ^[a-zA-Z]+$ ]]; then
     LANGUAGE="en"
@@ -249,15 +227,13 @@ cd "$PACKAGE_NAME" || handle_error "Failed to change to whisper-server directory
 WHISPER_PID=$!
 cd .. || handle_error "Failed to return to root directory"
 
-# Wait for server to start and check if it's running
 sleep 2
 if ! kill -0 $WHISPER_PID 2>/dev/null; then
     handle_error "Whisper server failed to start"
 fi
 
-# Start the Python backend in background
 log_info "Starting Python backend... 🚀"
-# Start venv if not active
+
 if [ -z "$VIRTUAL_ENV" ]; then
     log_info "Activating virtual environment..."
     if ! source venv/bin/activate; then
@@ -265,7 +241,6 @@ if [ -z "$VIRTUAL_ENV" ]; then
     fi
 fi
 
-# Check if required Python packages are installed
 if ! pip show fastapi >/dev/null 2>&1; then
     handle_error "FastAPI not found. Please run build_whisper.sh to install dependencies"
 fi
@@ -273,13 +248,11 @@ fi
 source venv/bin/activate && python app/main.py &
 PYTHON_PID=$!
 
-# Wait for backend to start and check if it's running
 sleep 10
 if ! kill -0 $PYTHON_PID 2>/dev/null; then
     handle_error "Python backend failed to start"
 fi
 
-# Check if the port is actually listening
 if ! lsof -i :$WHISPER_PORT | grep -q LISTEN; then
     handle_error "Python backend is not listening on port $WHISPER_PORT"
 fi
@@ -289,9 +262,7 @@ echo -e "${GREEN}🔍 Whisper Server (PID: $WHISPER_PID)${NC}"
 echo -e "${GREEN}🐍 Python Backend (PID: $PYTHON_PID)${NC}"
 echo -e "${BLUE}Press Ctrl+C to stop all services${NC}"
 
-# Show whisper server port and python backend port
 echo -e "${BLUE}Whisper Server Port: $WHISPER_PORT${NC}"
 echo -e "${BLUE}Python Backend Port: $PORT${NC}"
 
-# Keep the script running and wait for both processes
 wait $WHISPER_PID $PYTHON_PID || handle_error "One of the services crashed"
