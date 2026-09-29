@@ -10,7 +10,6 @@ import { BlockNoteView } from '@blocknote/shadcn';
 import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
 import "@blocknote/shadcn/style.css";
 
-// Dynamically import BlockNote Editor to avoid SSR issues
 const Editor = dynamic(() => import('../BlockNoteEditor/Editor'), { ssr: false });
 
 interface BlockNoteSummaryViewProps {
@@ -34,25 +33,21 @@ export interface BlockNoteSummaryViewRef {
   isDirty: boolean;
 }
 
-// Format detection helper
 function detectSummaryFormat(data: any): { format: SummaryFormat; data: any } {
   if (!data) {
     return { format: 'legacy', data: null };
   }
 
-  // Priority 1: BlockNote format (has summary_json)
   if (data.summary_json && Array.isArray(data.summary_json)) {
     console.log('✅ FORMAT: BLOCKNOTE (summary_json exists)');
     return { format: 'blocknote', data };
   }
 
-  // Priority 2: Markdown format
   if (data.markdown && typeof data.markdown === 'string') {
     console.log('✅ FORMAT: MARKDOWN (will parse to BlockNote)');
     return { format: 'markdown', data };
   }
 
-  // Priority 3: Legacy JSON
   const hasLegacyStructure = data.MeetingName || Object.keys(data).some(key =>
     typeof data[key] === 'object' && data[key]?.title && data[key]?.blocks
   );
@@ -81,12 +76,10 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   const [isSaving, setIsSaving] = useState(false);
   const isContentLoaded = useRef(false);
 
-  // Create BlockNote editor for markdown parsing
   const editor = useCreateBlockNote({
     initialContent: undefined
   });
 
-  // Parse markdown to blocks when format is markdown
   useEffect(() => {
     if (format === 'markdown' && data?.markdown && editor) {
       const loadMarkdown = async () => {
@@ -96,7 +89,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
           editor.replaceBlocks(editor.document, blocks);
           console.log('✅ Markdown parsed successfully');
 
-          // Delay to ensure editor has finished rendering before allowing onChange
           setTimeout(() => {
             isContentLoaded.current = true;
           }, 100);
@@ -108,10 +100,8 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     }
   }, [format, data?.markdown, editor]);
 
-  // Set content loaded flag for blocknote format
   useEffect(() => {
     if (format === 'blocknote' && data?.summary_json) {
-      // Delay to ensure editor has finished rendering
       setTimeout(() => {
         isContentLoaded.current = true;
       }, 100);
@@ -119,14 +109,12 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   }, [format, data?.summary_json]);
 
   const handleEditorChange = useCallback((blocks: Block[]) => {
-    // Only set dirty flag if content has finished loading
     if (isContentLoaded.current) {
       setCurrentBlocks(blocks);
       setIsDirty(true);
     }
   }, []);
 
-  // Notify parent of dirty state changes
   useEffect(() => {
     if (onDirtyChange) {
       onDirtyChange(isDirty);
@@ -140,7 +128,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     try {
       console.log('💾 Saving BlockNote content...');
 
-      // Generate markdown from current blocks; preserve BlockNote JSON even if markdown conversion fails.
       const markdownResult = await blocksToMarkdownSafely(editor, currentBlocks, {
         source: 'BlockNoteSummaryView.handleSave',
       });
@@ -165,7 +152,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     }
   }, [onSave, isDirty, currentBlocks, editor]);
 
-  // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
     saveSummary: handleSave,
     getMarkdown: async () => {
@@ -174,7 +160,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
         console.log('🔍 currentBlocks length:', currentBlocks.length);
         console.log('🔍 data:', data);
 
-        // For markdown format - use the main editor
         if (format === 'markdown' && editor) {
           console.log('📝 Using markdown editor, blocks:', editor.document.length);
           const markdownResult = await blocksToMarkdownSafely(editor, editor.document, {
@@ -185,7 +170,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
           return markdownResult.markdown || '';
         }
 
-        // For blocknote format - use currentBlocks state
         if (format === 'blocknote') {
           console.log('📝 BlockNote format, currentBlocks:', currentBlocks.length);
           const blocks = currentBlocks.length > 0
@@ -200,14 +184,12 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
             console.log('📝 Generated markdown from blocks, length:', markdownResult.markdown?.length || 0);
             return markdownResult.markdown || '';
           }
-          // Fallback: if we have the original data with markdown
           if (data?.markdown) {
             console.log('📝 Using fallback markdown from data');
             return data.markdown;
           }
         }
 
-        // For legacy format - return empty (handled by parent)
         console.warn('⚠️ Cannot generate markdown for legacy format, returning empty');
         return '';
       } catch (err) {
@@ -218,7 +200,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     isDirty
   }), [handleSave, isDirty, editor, format, currentBlocks, data]);
 
-  // Render legacy format
   if (format === 'legacy') {
     console.log('🎨 Rendering LEGACY format');
     return (
@@ -233,7 +214,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     );
   }
 
-  // Render BlockNote format (has summary_json)
   if (format === 'blocknote') {
     console.log('🎨 Rendering BLOCKNOTE format (direct)');
     return (
@@ -252,7 +232,6 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     );
   }
 
-  // Render Markdown format (parse and display in BlockNote)
   if (format === 'markdown') {
     console.log('🎨 Rendering MARKDOWN format (parsed to BlockNote)');
     return (
