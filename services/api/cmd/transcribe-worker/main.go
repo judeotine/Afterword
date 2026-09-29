@@ -113,6 +113,20 @@ func run(logger zerolog.Logger) error {
 	if err := runner.Register(meetings.KindClip, concurrency, workerlib.NewClipHandler(clipDeps)); err != nil {
 		return err
 	}
+	summariseDeps := workerlib.SummariseDeps{
+		Queries:          deps.Queries,
+		Storage:          client,
+		TranscriptBucket: buckets.Transcripts,
+		SummariseBin:     envString("SUMMARISE_BIN", "afterword-summarise"),
+		TemplatePath:     envString("SUMMARY_TEMPLATE", "/templates/standard_meeting.json"),
+		Provider:         envString("SUMMARY_PROVIDER", "offline"),
+		OllamaURL:        envString("OLLAMA_URL", "http://localhost:11434"),
+		Model:            envString("SUMMARY_MODEL", "llama3"),
+		WorkDir:          deps.Config.WorkDir,
+	}
+	if err := runner.Register(meetings.KindSummarise, concurrency, workerlib.NewSummariseHandler(summariseDeps)); err != nil {
+		return err
+	}
 
 	logger.Info().Int("concurrency", concurrency).Msg("transcribe worker started")
 	if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
