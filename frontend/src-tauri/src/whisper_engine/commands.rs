@@ -1,24 +1,21 @@
-use crate::whisper_engine::{ModelInfo, WhisperEngine};
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use tauri::{command, Emitter, Manager, AppHandle, Runtime};
 use crate::config::WHISPER_MODEL_CATALOG;
+use crate::whisper_engine::{ModelInfo, WhisperEngine};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::{command, AppHandle, Emitter, Manager, Runtime};
 
-// Global whisper engine
 pub static WHISPER_ENGINE: Mutex<Option<Arc<WhisperEngine>>> = Mutex::new(None);
 
-// Global models directory path (set during app initialization)
 static MODELS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-/// Initialize the models directory path using app_data_dir
-/// This should be called during app setup before whisper_init
 pub fn set_models_directory<R: Runtime>(app: &AppHandle<R>) {
-    let app_data_dir = app.path().app_data_dir()
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
         .expect("Failed to get app data dir");
 
     let models_dir = app_data_dir.join("models");
 
-    // Create directory if it doesn't exist
     if !models_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&models_dir) {
             log::error!("Failed to create models directory: {}", e);
@@ -32,7 +29,6 @@ pub fn set_models_directory<R: Runtime>(app: &AppHandle<R>) {
     *guard = Some(models_dir);
 }
 
-/// Get the configured models directory
 fn get_models_directory() -> Option<PathBuf> {
     MODELS_DIR.lock().unwrap().clone()
 }
@@ -64,26 +60,21 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
             .await
             .map_err(|e| format!("Failed to discover models: {}", e))
     } else {
-        // Fallback: scan models directory directly without initialized engine
         log::info!("Whisper engine not initialized, scanning models directory directly");
         discover_models_standalone()
     }
 }
 
-/// Discover Whisper models by scanning the models directory directly
-/// Used when the Whisper engine isn't initialized (e.g., when using Parakeet for live transcription)
 fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     use crate::whisper_engine::ModelStatus;
 
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
-    // Whisper models are stored directly in the models directory (not in a whisper subdirectory)
     let whisper_dir = models_dir.clone();
 
     log::info!("Scanning for Whisper models in: {}", whisper_dir.display());
 
-    // Use centralized model catalog from config.rs
     let model_configs = WHISPER_MODEL_CATALOG;
 
     let mut models = Vec::new();
@@ -117,7 +108,10 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
-    let downloaded_count = models.iter().filter(|m| matches!(m.status, ModelStatus::Available)).count();
+    let downloaded_count = models
+        .iter()
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .count();
     log::info!("Found {} downloaded Whisper models", downloaded_count);
 
     Ok(models)
@@ -126,7 +120,7 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
 #[command]
 pub async fn whisper_load_model(
     app_handle: tauri::AppHandle,
-    model_name: String
+    model_name: String,
 ) -> Result<(), String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -134,7 +128,6 @@ pub async fn whisper_load_model(
     };
 
     if let Some(engine) = engine {
-        // FIX 6: Emit model loading started event
         if let Err(e) = app_handle.emit(
             "model-loading-started",
             serde_json::json!({
@@ -149,7 +142,6 @@ pub async fn whisper_load_model(
             .await
             .map_err(|e| format!("Failed to load model: {}", e));
 
-        // FIX 6: Emit model loading completed/failed event
         if result.is_ok() {
             if let Err(e) = app_handle.emit(
                 "model-loading-completed",
@@ -218,7 +210,6 @@ pub async fn whisper_has_available_models() -> Result<bool, String> {
             .await
             .map_err(|e| format!("Failed to discover models: {}", e))?;
 
-        // Check if at least one model is available
         let available_models: Vec<_> = models
             .iter()
             .filter(|model| matches!(model.status, crate::whisper_engine::ModelStatus::Available))
@@ -238,14 +229,12 @@ pub async fn whisper_validate_model_ready() -> Result<String, String> {
     };
 
     if let Some(engine) = engine {
-        // Check if a model is currently loaded
         if engine.is_model_loaded().await {
             if let Some(current_model) = engine.get_current_model().await {
                 return Ok(current_model);
             }
         }
 
-        // No model loaded, check if any models are available to load
         let models = engine
             .discover_models()
             .await
@@ -263,7 +252,6 @@ pub async fn whisper_validate_model_ready() -> Result<String, String> {
             );
         }
 
-        // Try to load the first available model
         let first_model = &available_models[0];
         engine
             .load_model(&first_model.name)
@@ -276,7 +264,6 @@ pub async fn whisper_validate_model_ready() -> Result<String, String> {
     }
 }
 
-/// Internal version of whisper_validate_model_ready that respects user's transcript config
 pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<String, String> {
@@ -286,7 +273,6 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
     };
 
     if let Some(engine) = engine {
-        // Check if a model is currently loaded
         if engine.is_model_loaded().await {
             if let Some(current_model) = engine.get_current_model().await {
                 log::info!("Model already loaded: {}", current_model);
@@ -294,7 +280,6 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
             }
         }
 
-        // No model loaded - try to load user's configured model from transcript config
         let model_to_load = match crate::api::api::api_get_transcript_config(
             app.clone(),
             app.state(),
@@ -332,7 +317,6 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
             }
         };
 
-        // Check available models
         let models = engine
             .discover_models()
             .await
@@ -350,9 +334,7 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
             );
         }
 
-        // Try to load user's configured model if specified
         let model_name = if let Some(configured_model) = model_to_load {
-            // Check if configured model is available
             if available_models.iter().any(|m| m.name == configured_model) {
                 log::info!("Loading user's configured model: {}", configured_model);
                 configured_model
@@ -365,7 +347,6 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
                 available_models[0].name.clone()
             }
         } else {
-            // No configured model, use first available
             log::info!(
                 "No configured model, loading first available: {}",
                 available_models[0].name
@@ -392,7 +373,6 @@ pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, St
     };
 
     if let Some(engine) = engine {
-        // Get language preference
         let language = crate::get_language_preference_internal();
         engine
             .transcribe_audio(audio_data, language)
@@ -429,14 +409,12 @@ pub async fn whisper_download_model(
     };
 
     if let Some(engine) = engine {
-        // Create progress callback that emits events
         let app_handle_clone = app_handle.clone();
         let model_name_clone = model_name.clone();
 
         let progress_callback = Box::new(move |progress: u8| {
             log::info!("Download progress for {}: {}%", model_name_clone, progress);
 
-            // Emit download progress event
             if let Err(e) = app_handle_clone.emit(
                 "model-download-progress",
                 serde_json::json!({
@@ -454,7 +432,6 @@ pub async fn whisper_download_model(
 
         match result {
             Ok(()) => {
-                // Emit completion event
                 if let Err(e) = app_handle.emit(
                     "model-download-complete",
                     serde_json::json!({
@@ -466,7 +443,6 @@ pub async fn whisper_download_model(
                 Ok(())
             }
             Err(e) => {
-                // Emit error event
                 if let Err(emit_e) = app_handle.emit(
                     "model-download-error",
                     serde_json::json!({
@@ -518,13 +494,11 @@ pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String
     }
 }
 
-/// Open the models folder in the system file explorer
 #[command]
 pub async fn open_models_folder() -> Result<(), String> {
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
-    // Ensure directory exists before trying to open it
     if !models_dir.exists() {
         std::fs::create_dir_all(&models_dir)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
