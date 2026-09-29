@@ -1,10 +1,3 @@
-/**
- * Worker lifecycle: stage ordering and cancellation.
- *
- * runJob() takes its browser, recorder and transcriber as dependencies so the
- * ordering rules — consent before recording, no stage started after a cancel —
- * can be checked without Chromium or PulseAudio.
- */
 import { describe, expect, it } from 'vitest';
 import type { Page } from 'playwright';
 import { pino } from 'pino';
@@ -77,8 +70,6 @@ function makeHarness(hooks: HarnessHooks = {}): Harness {
     },
   };
 
-  // Mirrors PulseAudio's idempotent stop(), so a belt-and-braces stop in the
-  // cleanup path does not show up as a second call in the ordering assertions.
   let running = false;
   const recorder: Recorder = {
     async setup() {
