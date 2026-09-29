@@ -1,8 +1,3 @@
-//! App-side shim for audio encoding.
-//!
-//! `encode_single_audio` lives in `afterword_core::audio::encode`; only
-//! `AudioInput` stays here because it references the app's `AudioDevice`.
-
 use super::AudioDevice;
 use std::sync::Arc;
 
