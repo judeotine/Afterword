@@ -26,7 +26,6 @@ export default function Editor({ initialContent, onChange, editable = true }: Ed
 
   console.log('📝 EDITOR: BlockNote editor created successfully');
 
-  // Handle content changes
   useEffect(() => {
     if (!onChange) return;
 
