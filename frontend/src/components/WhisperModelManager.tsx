@@ -35,20 +35,16 @@ export function ModelManager({
   const [downloadingModels, setDownloadingModels] = useState<Set<string>>(new Set());
   const [hasUserSelection, setHasUserSelection] = useState(false);
 
-  // Refs for stable callbacks
   const onModelSelectRef = useRef(onModelSelect);
   const autoSaveRef = useRef(autoSave);
 
-  // Progress throttle map to prevent rapid updates
   const progressThrottleRef = useRef<Map<string, { progress: number; timestamp: number }>>(new Map());
 
-  // Update refs when props change
   useEffect(() => {
     onModelSelectRef.current = onModelSelect;
     autoSaveRef.current = autoSave;
   }, [onModelSelect, autoSave]);
 
-  // Load persisted downloading state from localStorage
   const getPersistedDownloadingModels = (): Set<string> => {
     try {
       const saved = localStorage.getItem('downloading-models');
@@ -58,7 +54,6 @@ export function ModelManager({
     }
   };
 
-  // Persist downloading state to localStorage
   const updateDownloadingModels = (updater: (prev: Set<string>) => Set<string>) => {
     setDownloadingModels(prev => {
       const newSet = updater(prev);
@@ -67,7 +62,6 @@ export function ModelManager({
     });
   };
 
-  // Initialize models
   useEffect(() => {
     if (initialized) return;
 
@@ -77,7 +71,6 @@ export function ModelManager({
         await WhisperAPI.init();
         const modelList = await WhisperAPI.getAvailableModels();
 
-        // Apply persisted downloading states
         const persistedDownloading = getPersistedDownloadingModels();
         const modelsWithDownloadState = modelList.map(model => {
           if (persistedDownloading.has(model.name) && model.status !== 'Available') {
@@ -119,7 +112,6 @@ export function ModelManager({
     initializeModels();
   }, [initialized, selectedModel, onModelSelect]);
 
-  // Set up event listeners for download progress
   useEffect(() => {
     let unlistenProgress: (() => void) | null = null;
     let unlistenComplete: (() => void) | null = null;
@@ -128,7 +120,6 @@ export function ModelManager({
     const setupListeners = async () => {
       console.log('[ModelManager] Setting up event listeners...');
 
-      // Download progress with throttling
       unlistenProgress = await listen<{ modelName: string; progress: number }>(
         'model-download-progress',
         (event) => {
@@ -136,7 +127,6 @@ export function ModelManager({
           const now = Date.now();
           const throttleData = progressThrottleRef.current.get(modelName);
 
-          // Throttle: only update if 300ms passed OR progress jumped by 5%+
           const shouldUpdate = !throttleData ||
             now - throttleData.timestamp > 300 ||
             Math.abs(progress - throttleData.progress) >= 5;
@@ -156,7 +146,6 @@ export function ModelManager({
         }
       );
 
-      // Download complete
       unlistenComplete = await listen<{ modelName: string }>(
         'model-download-complete',
         (event) => {
@@ -178,7 +167,6 @@ export function ModelManager({
             return newSet;
           });
 
-          // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
           toast.success(`${getModelIcon(model?.accuracy || 'Good')} ${displayName} ready!`, {
@@ -186,7 +174,6 @@ export function ModelManager({
             duration: 4000
           });
 
-          // Auto-select after download using stable refs
           if (onModelSelectRef.current) {
             onModelSelectRef.current(modelName);
             if (autoSaveRef.current) {
@@ -196,7 +183,6 @@ export function ModelManager({
         }
       );
 
-      // Download error
       unlistenError = await listen<{ modelName: string; error: string }>(
         'model-download-error',
         (event) => {
@@ -217,7 +203,6 @@ export function ModelManager({
             return newSet;
           });
 
-          // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
           toast.error(`Failed to download ${displayName}`, {
@@ -240,7 +225,7 @@ export function ModelManager({
       if (unlistenComplete) unlistenComplete();
       if (unlistenError) unlistenError();
     };
-  }, []); // Empty dependency array - listeners use refs for stable callbacks
+  }, []);
 
   const saveModelSelection = async (modelName: string) => {
     try {
@@ -274,7 +259,6 @@ export function ModelManager({
         )
       );
 
-      // Clean up throttle data
       progressThrottleRef.current.delete(modelName);
 
       toast.info(`${displayName} download cancelled`, {
@@ -351,7 +335,6 @@ export function ModelManager({
     try {
       await WhisperAPI.deleteCorruptedModel(modelName);
 
-      // Refresh models list
       const modelList = await WhisperAPI.getAvailableModels();
       setModels(modelList);
 
@@ -360,7 +343,6 @@ export function ModelManager({
         duration: 3000
       });
 
-      // If deleted model was selected, clear selection
       if (selectedModel === modelName && onModelSelect) {
         onModelSelect('');
       }
@@ -489,7 +471,6 @@ export function ModelManager({
   );
 }
 
-// Model Card Component
 interface ModelCardProps {
   model: ModelInfo;
   isSelected: boolean;
