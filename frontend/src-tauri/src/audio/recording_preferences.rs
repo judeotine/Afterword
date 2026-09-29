@@ -17,6 +17,8 @@ pub struct RecordingPreferences {
     pub auto_save: bool,
     pub file_format: String,
     #[serde(default)]
+    pub capture_screen: bool,
+    #[serde(default)]
     pub preferred_mic_device: Option<String>,
     #[serde(default)]
     pub preferred_system_device: Option<String>,
@@ -31,6 +33,7 @@ impl Default for RecordingPreferences {
             save_folder: get_default_recordings_folder(),
             auto_save: true,
             file_format: "mp4".to_string(),
+            capture_screen: false,
             preferred_mic_device: None,
             preferred_system_device: None,
             #[cfg(target_os = "macos")]
