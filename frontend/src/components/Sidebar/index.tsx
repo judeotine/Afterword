@@ -57,7 +57,6 @@ const Sidebar: React.FC = () => {
     serverAddress
   } = useSidebar();
 
-  // Get recording state from RecordingStateContext (single source of truth)
   const { isRecording } = useRecordingState();
   const { openImportDialog } = useImportDialog();
   const { betaFeatures } = useConfig();
@@ -77,7 +76,6 @@ const Sidebar: React.FC = () => {
   });
   const [settingsSaveSuccess, setSettingsSaveSuccess] = useState<boolean | null>(null);
 
-  // State for edit modal
   const [editModalState, setEditModalState] = useState<{ isOpen: boolean; meetingId: string | null; currentTitle: string }>({
     isOpen: false,
     meetingId: null,
@@ -85,7 +83,6 @@ const Sidebar: React.FC = () => {
   });
   const [editingTitle, setEditingTitle] = useState<string>('');
 
-  // Ensure 'meetings' folder is always expanded
   useEffect(() => {
     if (!expandedFolders.has('meetings')) {
       const newExpanded = new Set(expandedFolders);
@@ -94,21 +91,10 @@ const Sidebar: React.FC = () => {
     }
   }, [expandedFolders]);
 
-  // useEffect(() => {
-  //   if (settingsSaveSuccess !== null) {
-  //     const timer = setTimeout(() => {
-  //       setSettingsSaveSuccess(null);
-  //     }, 3000);
-  //   }
-  // }, [settingsSaveSuccess]);
-
-
   const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; itemId: string | null }>({ isOpen: false, itemId: null });
 
   useEffect(() => {
-    // Note: Don't set hardcoded defaults - let DB be the source of truth
     const fetchModelConfig = async () => {
-      // Only make API call if serverAddress is loaded
       if (!serverAddress) {
         console.log('Waiting for server address to load before fetching model config');
         return;
@@ -117,7 +103,6 @@ const Sidebar: React.FC = () => {
       try {
         const data = await invoke('api_get_model_config') as any;
         if (data && data.provider !== null) {
-          // Fetch API key if not included and provider requires it
           if (data.provider !== 'ollama' && !data.apiKey) {
             try {
               const apiKeyData = await invoke('api_get_api_key', {
@@ -138,11 +123,8 @@ const Sidebar: React.FC = () => {
     fetchModelConfig();
   }, [serverAddress]);
 
-
   useEffect(() => {
-    // Note: Don't set hardcoded defaults - let DB be the source of truth
     const fetchTranscriptSettings = async () => {
-      // Only make API call if serverAddress is loaded
       if (!serverAddress) {
         console.log('Waiting for server address to load before fetching transcript settings');
         return;
@@ -160,7 +142,6 @@ const Sidebar: React.FC = () => {
     fetchTranscriptSettings();
   }, [serverAddress]);
 
-  // Listen for model config updates from other components
   useEffect(() => {
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
@@ -180,9 +161,6 @@ const Sidebar: React.FC = () => {
     };
   }, []);
 
-
-
-  // Handle model config save
   const handleSaveModelConfig = async (config: ModelConfig) => {
     try {
       await invoke('api_save_model_config', {
@@ -197,11 +175,9 @@ const Sidebar: React.FC = () => {
       console.log('Model config saved successfully');
       setSettingsSaveSuccess(true);
 
-      // Emit event to sync other components
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
 
-      // Track settings change
       await Analytics.trackSettingsChanged('model_config', `${config.provider}_${config.model}`);
     } catch (error) {
       console.error('Error saving model config:', error);
@@ -225,10 +201,8 @@ const Sidebar: React.FC = () => {
         apiKey: payload.apiKey,
       });
 
-
       setSettingsSaveSuccess(true);
 
-      // Track settings change
       const transcriptConfigToSave = updatedConfig || transcriptModelConfig;
       await Analytics.trackSettingsChanged('transcript_config', `${transcriptConfigToSave.provider}_${transcriptConfigToSave.model}`);
     } catch (error) {
@@ -237,17 +211,13 @@ const Sidebar: React.FC = () => {
     }
   };
 
-  // Handle search input changes
   const handleSearchChange = useCallback(async (value: string) => {
     setSearchQuery(value);
 
-    // If search query is empty, just return to normal view
     if (!value.trim()) return;
 
-    // Search through transcripts
     await searchTranscripts(value);
 
-    // Make sure the meetings folder is expanded when searching
     if (!expandedFolders.has('meetings')) {
       const newExpanded = new Set(expandedFolders);
       newExpanded.add('meetings');
@@ -255,27 +225,20 @@ const Sidebar: React.FC = () => {
     }
   }, [expandedFolders, searchTranscripts]);
 
-  // Combine search results with sidebar items
   const filteredSidebarItems = useMemo(() => {
     if (!searchQuery.trim()) return sidebarItems;
 
-    // If we have search results, highlight matching meetings
     if (searchResults.length > 0) {
-      // Get the IDs of meetings that matched in transcripts
       const matchedMeetingIds = new Set(searchResults.map(result => result.id));
 
       return sidebarItems
         .map(folder => {
-          // Always include folders in the results
           if (folder.type === 'folder') {
             if (!folder.children) return folder;
 
-            // Filter children based on search results or title match
             const filteredChildren = folder.children.filter(item => {
-              // Include if the meeting ID is in our search results
               if (matchedMeetingIds.has(item.id)) return true;
 
-              // Or if the title matches the search query
               return item.title.toLowerCase().includes(searchQuery.toLowerCase());
             });
 
@@ -285,21 +248,17 @@ const Sidebar: React.FC = () => {
             };
           }
 
-          // For non-folder items, check if they match the search
           return (matchedMeetingIds.has(folder.id) ||
             folder.title.toLowerCase().includes(searchQuery.toLowerCase()))
             ? folder : undefined;
         })
-        .filter((item): item is SidebarItem => item !== undefined); // Type-safe filter
+        .filter((item): item is SidebarItem => item !== undefined);
     } else {
-      // Fall back to title-only filtering if no transcript results
       return sidebarItems
         .map(folder => {
-          // Always include folders in the results
           if (folder.type === 'folder') {
             if (!folder.children) return folder;
 
-            // Filter children based on search query
             const filteredChildren = folder.children.filter(item =>
               item.title.toLowerCase().includes(searchQuery.toLowerCase())
             );
@@ -310,13 +269,11 @@ const Sidebar: React.FC = () => {
             };
           }
 
-          // For non-folder items, check if they match the search
           return folder.title.toLowerCase().includes(searchQuery.toLowerCase()) ? folder : undefined;
         })
-        .filter((item): item is SidebarItem => item !== undefined); // Type-safe filter
+        .filter((item): item is SidebarItem => item !== undefined);
     }
   }, [sidebarItems, searchQuery, searchResults, expandedFolders]);
-
 
   const handleDelete = async (itemId: string) => {
     console.log('Deleting item:', itemId);
@@ -333,15 +290,12 @@ const Sidebar: React.FC = () => {
       const updatedMeetings = meetings.filter((m: CurrentMeeting) => m.id !== itemId);
       setMeetings(updatedMeetings);
 
-      // Track meeting deletion
       Analytics.trackMeetingDeleted(itemId);
 
-      // Show success toast
       toast.success("Meeting deleted successfully", {
         description: "All associated data has been removed"
       });
 
-      // If deleting the active meeting, navigate to home
       if (currentMeeting?.id === itemId) {
         setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
         router.push('/');
@@ -361,7 +315,6 @@ const Sidebar: React.FC = () => {
     setDeleteModalState({ isOpen: false, itemId: null });
   };
 
-  // Handle modal editing of meeting names
   const handleEditStart = (meetingId: string, currentTitle: string) => {
     setEditModalState({
       isOpen: true,
@@ -377,7 +330,6 @@ const Sidebar: React.FC = () => {
 
     if (!meetingId) return;
 
-    // Prevent empty titles
     if (!newTitle) {
       toast.error("Meeting title cannot be empty");
       return;
@@ -389,23 +341,19 @@ const Sidebar: React.FC = () => {
         title: newTitle,
       });
 
-      // Update local state
       const updatedMeetings = meetings.map((m: CurrentMeeting) =>
         m.id === meetingId ? { ...m, title: newTitle } : m
       );
       setMeetings(updatedMeetings);
 
-      // Update current meeting if it's the one being edited
       if (currentMeeting?.id === meetingId) {
         setCurrentMeeting({ id: meetingId, title: newTitle });
       }
 
-      // Track the edit
       Analytics.trackButtonClick('edit_meeting_title', 'sidebar');
 
       toast.success("Meeting title updated successfully");
 
-      // Close modal and reset state
       setEditModalState({ isOpen: false, meetingId: null, currentTitle: '' });
       setEditingTitle('');
     } catch (error) {
@@ -422,7 +370,6 @@ const Sidebar: React.FC = () => {
   };
 
   const toggleFolder = (folderId: string) => {
-    // Normal toggle behavior for all folders
     const newExpanded = new Set(expandedFolders);
     if (newExpanded.has(folderId)) {
       newExpanded.delete(folderId);
@@ -432,13 +379,11 @@ const Sidebar: React.FC = () => {
     setExpandedFolders(newExpanded);
   };
 
-  // Expose setShowModelSettings to window for Rust tray to call
   useEffect(() => {
     (window as any).openSettings = () => {
       setShowModelSettings(true);
     };
 
-    // Cleanup on unmount
     return () => {
       delete (window as any).openSettings;
     };
@@ -545,7 +490,6 @@ const Sidebar: React.FC = () => {
     );
   };
 
-  // Find matching transcript snippet for a meeting item
   const findMatchingSnippet = (itemId: string) => {
     if (!searchQuery.trim() || !searchResults.length) return null;
     return searchResults.find(result => result.id === itemId);
@@ -557,7 +501,6 @@ const Sidebar: React.FC = () => {
     const isActive = item.type === 'file' && currentMeeting?.id === item.id;
     const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
 
-    // Check if this item has a matching transcript snippet
     const matchingResult = isMeetingItem ? findMatchingSnippet(item.id) : null;
     const hasTranscriptMatch = !!matchingResult;
 
@@ -578,8 +521,6 @@ const Sidebar: React.FC = () => {
               toggleFolder(item.id);
             } else {
               setCurrentMeeting({ id: item.id, title: item.title });
-              // Every meeting opens in meeting-details; the old /notes/[id]
-              // route no longer exists.
               const basePath = item.id.startsWith('intro-call')
                 ? '/'
                 : `/meeting-details?id=${item.id}`;
@@ -686,8 +627,6 @@ const Sidebar: React.FC = () => {
         <div className="flex-shrink-0 h-22 flex items-center">
 
           {/* Title container */}
-
-
 
           <div className="flex-1">
             {!isCollapsed && (
