@@ -1,12 +1,3 @@
-/**
- * Playwright smoke test for the Google Meet adapter.
- *
- * It drives MeetPlatform against test/fixtures/fake-meet.html — a page carrying
- * the same aria-labels and texts the adapter looks for — so selector-level
- * regressions are caught without a real meeting.
- *
- * Requires `pnpm exec playwright install chromium`.
- */
 import { createServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { AddressInfo } from 'node:net';
