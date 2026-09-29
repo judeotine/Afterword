@@ -10,11 +10,8 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 export function PermissionsStep() {
   const { setPermissionStatus, setPermissionsSkipped, permissions, completeOnboarding } = useOnboarding();
   const [isPending, setIsPending] = useState(false);
-  // Desktop notifications are opt-in: off until the user turns them on here.
   const [notificationsConsent, setNotificationsConsent] = useState(false);
 
-  // Check permissions - only logs current state, doesn't auto-authorize
-  // Actual permission checks are done via explicit user actions (clicking Enable)
   const checkPermissions = useCallback(async () => {
     console.log('[PermissionsStep] Current permission states:');
     console.log(`  - Microphone: ${permissions.microphone}`);
@@ -23,15 +20,12 @@ export function PermissionsStep() {
     // Permissions should only be set after explicit user action via Enable button
   }, [permissions.microphone, permissions.systemAudio]);
 
-  // Check permissions on mount
   useEffect(() => {
     checkPermissions();
   }, [checkPermissions]);
 
-  // Request microphone permission
   const handleMicrophoneAction = async () => {
     if (permissions.microphone === 'denied') {
-      // Try to open system settings
       try {
         await invoke('open_system_settings');
       } catch {
@@ -49,7 +43,6 @@ export function PermissionsStep() {
       if (granted) {
         setPermissionStatus('microphone', 'authorized');
       } else {
-        // Permission was denied or dialog was dismissed
         setPermissionStatus('microphone', 'denied');
       }
     } catch (err) {
@@ -60,10 +53,8 @@ export function PermissionsStep() {
     }
   };
 
-  // Request system audio permission
   const handleSystemAudioAction = async () => {
     if (permissions.systemAudio === 'denied') {
-      // Try to open system settings
       try {
         await invoke('open_system_settings');
       } catch {
@@ -75,8 +66,6 @@ export function PermissionsStep() {
     setIsPending(true);
     try {
       console.log('[PermissionsStep] Triggering Audio Capture permission...');
-      // Backend creates Core Audio tap, captures audio, and verifies it's not silence
-      // Returns true if permission granted and audio verified, false if denied (silence)
       const granted = await invoke<boolean>('trigger_system_audio_permission_command');
       console.log('[PermissionsStep] System audio permission result:', granted);
 
@@ -84,7 +73,6 @@ export function PermissionsStep() {
         setPermissionStatus('systemAudio', 'authorized');
         console.log('[PermissionsStep] Audio Capture permission verified - audio is not silence');
       } else {
-        // Permission was denied (audio is silence)
         setPermissionStatus('systemAudio', 'denied');
         console.log('[PermissionsStep] Audio Capture permission denied - audio is silence');
       }
@@ -96,7 +84,6 @@ export function PermissionsStep() {
     }
   };
 
-  // Store notification consent immediately so it survives skipping the step
   const handleNotificationsConsentChange = async (consent: boolean) => {
     setNotificationsConsent(consent);
     try {
