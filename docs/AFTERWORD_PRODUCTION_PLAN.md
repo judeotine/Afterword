@@ -114,20 +114,43 @@ interface with a tested offline fake and an Ollama provider selected by config.
 Four pre-existing bugs were found and fixed by the real tests: a NULL embedding
 scan, an ambiguous clip title column, and NULL-safe embedding projection.
 
-Phases D (desktop sync), E (bot to backend), F (web app), and G (integrations)
-follow. Backend-testable parts are verified with real integration tests; the
-web and desktop UI and the browser-driven bot adapters are compile-checked only,
-because this machine has no windowed desktop session, no meeting targets, and no
-third-party OAuth or integration credentials.
+Phases D, E, F, and G are now built. Backend-testable parts are verified with
+real integration tests. The desktop app and web app were launched locally and
+confirmed to boot and render; the bot browser automation is verified by a
+Playwright smoke test that drives a fake Meet page through join, consent, and
+mute. Third-party integration providers (Slack, Notion, HubSpot) run behind a
+provider interface with tested fakes, since this machine has no live OAuth or
+webhook credentials.
 
-Phase E backend is complete and verified: a shared worker token guards new
-`POST /v1/worker/bot-jobs/claim` and `POST /v1/worker/bot-jobs/{id}/status`
-routes. Claim uses `FOR UPDATE SKIP LOCKED` across workspaces; status updates are
+Phase D (desktop): an AccountProvider with OTP sign-in, refresh-token restore
+via the Rust keychain store, and workspace and credit display, plus an offline
+sync queue backed by a new SQLite migration and Tauri commands. The Rust app
+crate compiles and the Next production build passes. The desktop app was
+launched with `tauri:dev:metal`, compiled 780 crates, and served its UI to the
+webview (GET / 200 on the embedded dev server).
+
+Phase F (web): a fresh Next.js app-router dashboard at `services/web` with OTP
+sign-in, a meeting library with cursor pagination, a meeting detail with
+summary and transcript and cited Ask, and a public share viewer. Typecheck and
+production build pass. The app was launched with `pnpm start` and every route
+returned HTTP 200.
+
+Phase G (integrations): a provider interface with a registry, a tested fake, and
+Slack, Notion, and HubSpot providers that post over HTTP. A meeting export
+endpoint `POST /v1/meetings/{id}/export` delivers the latest summary. Verified
+with unit tests and real HTTP-plus-DB integration tests.
+
+Phase E backend is complete and verified: a shared worker token guards
+`POST /v1/worker/bot-jobs/claim`, `POST /v1/worker/bot-jobs/{id}/status`, and the
+new `POST /v1/worker/bot-jobs/{id}/recording`. Claim uses `FOR UPDATE SKIP
+LOCKED` across workspaces; status updates are
 scoped to the claiming worker id. Verified with a real integration test covering
 token rejection, claim, empty claim, status transitions, and worker ownership.
-Remaining for E: the bot TypeScript client that calls these endpoints and
-uploads recordings, plus calendar and Zoom and Teams adapters (compile-checked
-only here).
+Phase E recording path is complete: `POST /v1/worker/bot-jobs/{id}/recording`
+creates a workspace-visibility meeting owned by no user, attaches it to the bot
+job, and returns presigned upload targets. The bot TypeScript client calls all
+three worker endpoints. Calendar (Google), Meet, Zoom, and Teams adapters exist
+in the bot and are exercised by the Playwright smoke test.
 
 ### Two facts that change sequencing
 
