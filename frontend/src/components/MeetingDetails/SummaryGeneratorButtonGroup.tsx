@@ -62,19 +62,13 @@ export function SummaryGeneratorButtonGroup({
   const [isCheckingModels, setIsCheckingModels] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
 
-  // Expose the function to open the modal via callback registration
   useEffect(() => {
     if (onOpenModelSettings) {
-      // Register our open dialog function with the parent by calling the callback
-      // This allows the parent to store a reference to this function
       const openDialog = () => {
         console.log('📱 Opening model settings dialog via callback');
         setSettingsDialogOpen(true);
       };
 
-      // Call the parent's callback with our open function
-      // Note: This assumes onOpenModelSettings accepts a function parameter
-      // We'll need to adjust the signature
       onOpenModelSettings(openDialog);
     }
   }, [onOpenModelSettings]);
@@ -88,7 +82,6 @@ export function SummaryGeneratorButtonGroup({
     try {
       const selectedModel = modelConfig.model;
 
-      // Check if specific model is configured
       if (!selectedModel) {
         toast.error('No built-in AI model selected', {
           description: 'Please select a model in settings',
@@ -98,19 +91,16 @@ export function SummaryGeneratorButtonGroup({
         return;
       }
 
-      // Check model readiness (with filesystem refresh)
       const isReady = await invoke<boolean>('builtin_ai_is_model_ready', {
         modelName: selectedModel,
         refresh: true,
       });
 
       if (isReady) {
-        // Model is available, proceed with generation
         onGenerateSummary(customPrompt);
         return;
       }
 
-      // Model not ready - check detailed status
       const modelInfo = await invoke<BuiltInModelInfo | null>('builtin_ai_get_model_info', {
         modelName: selectedModel,
       });
@@ -124,7 +114,6 @@ export function SummaryGeneratorButtonGroup({
         return;
       }
 
-      // Handle different model states
       const status = modelInfo.status;
 
       if (status.type === 'downloading') {
@@ -162,7 +151,6 @@ export function SummaryGeneratorButtonGroup({
         return;
       }
 
-      // Fallback
       toast.error('Model not available', {
         description: 'The selected model is not ready for use',
         duration: 5000,
@@ -181,13 +169,11 @@ export function SummaryGeneratorButtonGroup({
   };
 
   const checkOllamaModelsAndGenerate = async () => {
-    // Handle built-in AI provider
     if (modelConfig.provider === 'builtin-ai') {
       await checkBuiltInAIModelsAndGenerate();
       return;
     }
 
-    // Only check for Ollama provider
     if (modelConfig.provider !== 'ollama') {
       onGenerateSummary(customPrompt);
       return;
@@ -199,7 +185,6 @@ export function SummaryGeneratorButtonGroup({
       const models = await invoke('get_ollama_models', { endpoint }) as any[];
 
       if (!models || models.length === 0) {
-        // No models available, show message and open settings
         toast.error(
           'No Ollama models found. Please download gemma2:2b from Model Settings.',
           { duration: 5000 }
@@ -208,14 +193,12 @@ export function SummaryGeneratorButtonGroup({
         return;
       }
 
-      // Models are available, proceed with generation
       onGenerateSummary(customPrompt);
     } catch (error) {
       console.error('Error checking Ollama models:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       if (isOllamaNotInstalledError(errorMessage)) {
-        // Ollama is not installed - show specific message with download link
         toast.error(
           'Ollama is not installed',
           {
@@ -228,7 +211,6 @@ export function SummaryGeneratorButtonGroup({
           }
         );
       } else {
-        // Other error - generic message
         toast.error(
           'Failed to check Ollama models. Please check if Ollama is running and download a model.',
           { duration: 5000 }
