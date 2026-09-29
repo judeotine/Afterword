@@ -18,7 +18,6 @@ interface DownloadProgress {
   error?: string;
 }
 
-// Categorize error messages for better user experience
 function categorizeError(error: string): string {
   const lowerError = error.toLowerCase();
 
@@ -43,11 +42,9 @@ function categorizeError(error: string): string {
     return 'File validation failed - Please retry download';
   }
 
-  // Fallback to original error
   return error;
 }
 
-// Custom toast component for download progress
 function DownloadToastContent({
   download,
   onDismiss,
@@ -122,7 +119,6 @@ function DownloadToastContent({
   );
 }
 
-// Hook to manage download progress toasts
 export function useDownloadProgressToast() {
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
   const [dismissedModels, setDismissedModels] = useState<Set<string>>(new Set());
@@ -146,7 +142,6 @@ export function useDownloadProgressToast() {
   }, []);
 
   const cleanupDownload = useCallback((modelName: string, delay: number = 4000) => {
-    // Remove download from map after delay (allows toast to show and auto-dismiss)
     setTimeout(() => {
       setDownloads((prev) => {
         const updated = new Map(prev);
@@ -159,17 +154,15 @@ export function useDownloadProgressToast() {
   const showDownloadToast = useCallback((download: DownloadProgress) => {
     const toastId = `download-${download.modelName}`;
 
-    // Determine duration based on status
     const getDuration = () => {
       switch (download.status) {
-        case 'completed': return 3000;      // 3 seconds
-        case 'cancelled': return 5000;      // 5 seconds
-        case 'error': return 10000;         // 10 seconds
-        case 'downloading': return Infinity; // Manual dismiss only
+        case 'completed': return 3000;
+        case 'cancelled': return 5000;
+        case 'error': return 10000;
+        case 'downloading': return Infinity;
       }
     };
 
-    // Dismiss handler
     const dismissToast = () => {
       toast.dismiss(toastId);
       setDismissedModels(prev => {
@@ -194,19 +187,14 @@ export function useDownloadProgressToast() {
     );
   }, []);
 
-  // Effect to handle toast visibility based on dismissed state
   useEffect(() => {
     downloads.forEach((download) => {
-      // If model was dismissed and is still downloading, don't show it
       if (dismissedModels.has(download.modelName) && download.status === 'downloading') {
         return;
       }
 
-      // If status changed to completed or error, we might want to show it even if dismissed previously
-      // (Optional: remove from dismissed set if you want to force show completion)
       if (download.status === 'completed' || download.status === 'error') {
         if (dismissedModels.has(download.modelName)) {
-          // Remove from dismissed so we can show the completion/error toast
           setDismissedModels(prev => {
             const next = new Set(prev);
             next.delete(download.modelName);
@@ -219,7 +207,6 @@ export function useDownloadProgressToast() {
     });
   }, [downloads, dismissedModels, showDownloadToast]);
 
-  // Listen to Parakeet download events
   useEffect(() => {
     const unlistenProgress = listen<{
       modelName: string;
@@ -247,9 +234,8 @@ export function useDownloadProgressToast() {
 
       updateDownload(modelName, downloadData);
 
-      // Clean up cancelled downloads after delay to auto-dismiss toast
       if (downloadData.status === 'cancelled') {
-        cleanupDownload(modelName, 6000); // 5s toast + 1s buffer
+        cleanupDownload(modelName, 6000);
       }
       // Removed direct showDownloadToast call here, handled by effect
     });
@@ -268,7 +254,6 @@ export function useDownloadProgressToast() {
           status: 'completed',
         };
         updateDownload(modelName, downloadData);
-        // Clean up after 4 seconds (completion toast duration is 3s + 1s buffer)
         cleanupDownload(modelName, 4000);
       }
     );
@@ -288,7 +273,6 @@ export function useDownloadProgressToast() {
           error: categorizeError(error),
         };
         updateDownload(modelName, downloadData);
-        // Clean up after 11 seconds (error toast duration is 10s + 1s buffer)
         cleanupDownload(modelName, 11000);
       }
     );
@@ -300,7 +284,6 @@ export function useDownloadProgressToast() {
     };
   }, [updateDownload, cleanupDownload]);
 
-  // Listen to Built-in AI summary model download events
   useEffect(() => {
     const unlisten = listen<{
       model: string;
@@ -333,13 +316,12 @@ export function useDownloadProgressToast() {
 
       updateDownload(model, downloadData);
 
-      // Clean up finished downloads after delay to prevent endless toasts
       if (downloadData.status === 'completed') {
-        cleanupDownload(model, 4000);  // 3s toast + 1s buffer
+        cleanupDownload(model, 4000);
       } else if (downloadData.status === 'error') {
-        cleanupDownload(model, 11000); // 10s toast + 1s buffer
+        cleanupDownload(model, 11000);
       } else if (downloadData.status === 'cancelled') {
-        cleanupDownload(model, 6000);  // 5s toast + 1s buffer
+        cleanupDownload(model, 6000);
       }
     });
 
@@ -351,7 +333,6 @@ export function useDownloadProgressToast() {
   return { downloads };
 }
 
-// Component to initialize download toast listeners at app level
 export function DownloadProgressToastProvider() {
   useDownloadProgressToast();
   return null;
