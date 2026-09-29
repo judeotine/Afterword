@@ -14,7 +14,7 @@ import {
   SelectGroup,
   SelectLabel,
 } from '@/components/ui/select';
-import { Control } from 'react-hook-form'; // Import Control type
+import { Control } from 'react-hook-form';
 type ISelectItemProps = {
   name: string;
   placeholder: string;
@@ -45,11 +45,10 @@ export const FormSelectItem = ({
   return (
     <div>
       <FormField
-        control={control} // Use the control prop passed from the parent
+        control={control}
         name={name}
         render={({ field }) => (
           <FormItem
-          // className={formStyle}
           >
             <div className={formStyle}>
               <FormLabel className={formLabelStyle}>{label}</FormLabel>
