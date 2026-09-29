@@ -21,7 +21,6 @@ impl From<NaiveDateTime> for DateTimeUtc {
     }
 }
 
-// Renamed from TranscriptSegment to Transcript to match the table name
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Transcript {
     pub id: String,
@@ -31,7 +30,7 @@ pub struct Transcript {
     pub summary: Option<String>,
     pub action_items: Option<String>,
     pub key_points: Option<String>,
-    // Recording-relative timestamps for audio-transcript synchronization
+
     pub audio_start_time: Option<f64>,
     pub audio_end_time: Option<f64>,
     pub duration: Option<f64>,
@@ -44,14 +43,14 @@ pub struct SummaryProcess {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub error: Option<String>,
-    pub result: Option<String>, // JSON
+    pub result: Option<String>,
     pub start_time: Option<chrono::DateTime<chrono::Utc>>,
     pub end_time: Option<chrono::DateTime<chrono::Utc>>,
     pub chunk_count: i64,
     pub processing_time: f64,
-    pub metadata: Option<String>, // JSON
-    pub result_backup: Option<String>, // Backup of result before regeneration
-    pub result_backup_timestamp: Option<chrono::DateTime<chrono::Utc>>, // When backup was created
+    pub metadata: Option<String>,
+    pub result_backup: Option<String>,
+    pub result_backup_timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -92,18 +91,17 @@ pub struct Setting {
     #[sqlx(rename = "ollamaEndpoint")]
     #[serde(rename = "ollamaEndpoint")]
     pub ollama_endpoint: Option<String>,
-    /// Custom OpenAI-compatible endpoint configuration stored as JSON
+
     #[sqlx(rename = "customOpenAIConfig")]
     #[serde(rename = "customOpenAIConfig")]
     pub custom_openai_config: Option<String>,
 }
 
 impl Setting {
-    /// Parse the custom OpenAI config from JSON string
     pub fn get_custom_openai_config(&self) -> Option<crate::summary::CustomOpenAIConfig> {
-        self.custom_openai_config.as_ref().and_then(|json| {
-            serde_json::from_str(json).ok()
-        })
+        self.custom_openai_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
     }
 }
 
