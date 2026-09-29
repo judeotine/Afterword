@@ -7,6 +7,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const attachBotJobMeeting = `-- name: AttachBotJobMeeting :one
+UPDATE bot_jobs SET
+    meeting_id = $1
+WHERE id = $2
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id
+`
+
+type AttachBotJobMeetingParams struct {
+	MeetingID *uuid.UUID `json:"meeting_id"`
+	ID        uuid.UUID  `json:"id"`
+}
+
+func (q *Queries) AttachBotJobMeeting(ctx context.Context, arg AttachBotJobMeetingParams) (BotJob, error) {
+	row := q.db.QueryRow(ctx, attachBotJobMeeting, arg.MeetingID, arg.ID)
+	var i BotJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.MeetingUrl,
+		&i.Platform,
+		&i.ScheduledAt,
+		&i.Status,
+		&i.WorkerID,
+		&i.MinutesUsed,
+		&i.ConsentAnnouncedAt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.EstimatedMinutes,
+		&i.BotName,
+		&i.MeetingID,
+	)
+	return i, err
+}
+
 const claimNextBotJob = `-- name: ClaimNextBotJob :one
 UPDATE bot_jobs SET
     status = 'claimed',
@@ -18,7 +52,7 @@ WHERE id = (
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id
 `
 
 type ClaimNextBotJobParams struct {
@@ -43,6 +77,7 @@ func (q *Queries) ClaimNextBotJob(ctx context.Context, arg ClaimNextBotJobParams
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
@@ -52,7 +87,7 @@ INSERT INTO bot_jobs (workspace_id, meeting_url, platform, scheduled_at, status,
                       estimated_minutes, bot_name)
 VALUES ($1, $2, $3, $4,
         $5, $6, $7, $8)
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id
 `
 
 type CreateBotJobParams struct {
@@ -92,6 +127,7 @@ func (q *Queries) CreateBotJob(ctx context.Context, arg CreateBotJobParams) (Bot
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
@@ -115,7 +151,7 @@ func (q *Queries) DeleteBotJob(ctx context.Context, arg DeleteBotJobParams) (int
 }
 
 const getBotJob = `-- name: GetBotJob :one
-SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id FROM bot_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -141,12 +177,13 @@ func (q *Queries) GetBotJob(ctx context.Context, arg GetBotJobParams) (BotJob, e
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
 
 const getBotJobByID = `-- name: GetBotJobByID :one
-SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs WHERE id = $1
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id FROM bot_jobs WHERE id = $1
 `
 
 func (q *Queries) GetBotJobByID(ctx context.Context, id uuid.UUID) (BotJob, error) {
@@ -166,12 +203,13 @@ func (q *Queries) GetBotJobByID(ctx context.Context, id uuid.UUID) (BotJob, erro
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
 
 const listBotJobsByWorkspace = `-- name: ListBotJobsByWorkspace :many
-SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name FROM bot_jobs
+SELECT id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id FROM bot_jobs
 WHERE workspace_id = $1
   AND (
       $2::timestamptz IS NULL
@@ -216,6 +254,7 @@ func (q *Queries) ListBotJobsByWorkspace(ctx context.Context, arg ListBotJobsByW
 			&i.CreatedAt,
 			&i.EstimatedMinutes,
 			&i.BotName,
+			&i.MeetingID,
 		); err != nil {
 			return nil, err
 		}
@@ -235,7 +274,7 @@ UPDATE bot_jobs SET
     consent_announced_at = COALESCE($4, consent_announced_at),
     error = COALESCE($5, error)
 WHERE id = $6 AND workspace_id = $7
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id
 `
 
 type UpdateBotJobParams struct {
@@ -273,6 +312,7 @@ func (q *Queries) UpdateBotJob(ctx context.Context, arg UpdateBotJobParams) (Bot
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
@@ -284,7 +324,7 @@ UPDATE bot_jobs SET
     consent_announced_at = COALESCE($3, consent_announced_at),
     error = COALESCE($4, error)
 WHERE id = $5 AND worker_id = $6
-RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name
+RETURNING id, workspace_id, meeting_url, platform, scheduled_at, status, worker_id, minutes_used, consent_announced_at, error, created_at, estimated_minutes, bot_name, meeting_id
 `
 
 type UpdateBotJobByWorkerParams struct {
@@ -320,6 +360,7 @@ func (q *Queries) UpdateBotJobByWorker(ctx context.Context, arg UpdateBotJobByWo
 		&i.CreatedAt,
 		&i.EstimatedMinutes,
 		&i.BotName,
+		&i.MeetingID,
 	)
 	return i, err
 }
