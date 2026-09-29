@@ -17,6 +17,10 @@ name = "afterword_core"
 name = "afterword-transcribe"
 path = "src/bin/afterword-transcribe.rs"
 
+[[bin]]
+name = "afterword-summarise"
+path = "src/bin/afterword-summarise.rs"
+
 # Hardware acceleration features, forwarded to whisper-rs.
 # frontend/src-tauri forwards its identically named features here so that
 # `pnpm tauri:dev:cuda` and friends keep working.
