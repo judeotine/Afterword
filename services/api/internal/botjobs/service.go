@@ -53,6 +53,7 @@ type BotJob struct {
 	Status           string
 	EstimatedMinutes int32
 	MinutesUsed      int32
+	MeetingID        *uuid.UUID
 	Error            string
 	CreatedAt        time.Time
 }
@@ -239,6 +240,7 @@ func newBotJob(row sqlcgen.BotJob) BotJob {
 	if row.Error != nil {
 		job.Error = *row.Error
 	}
+	job.MeetingID = row.MeetingID
 	if row.ScheduledAt.Valid {
 		job.ScheduledAt = row.ScheduledAt.Time.UTC()
 	}
