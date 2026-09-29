@@ -6,7 +6,6 @@
 use log;
 
 fn main() {
-    // Logging is initialized by tauri-plugin-log in app_lib::run().
     log::info!("Starting application...");
     app_lib::run();
 }
