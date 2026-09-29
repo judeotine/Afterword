@@ -232,7 +232,6 @@ describe('Scheduler', () => {
   });
 
   it('does not fire early for a startAt beyond the 32-bit setTimeout limit', () => {
-    // setTimeout overflows past ~24.8 days and fires immediately.
     scheduler.create({ meetingUrl: MEET_URL, startAt: '2029-09-03T10:00:00.000Z' });
     vi.advanceTimersByTime(24 * 24 * 60 * 60_000);
     expect(runner.started).toHaveLength(0);
