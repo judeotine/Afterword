@@ -11,24 +11,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 
 export interface VirtualizedTranscriptViewProps {
-    /** Transcript segments to display */
     segments: TranscriptSegmentData[];
-    /** Whether recording is in progress */
     isRecording?: boolean;
-    /** Whether recording is paused */
     isPaused?: boolean;
-    /** Whether processing/finalizing transcription */
     isProcessing?: boolean;
-    /** Whether stopping */
     isStopping?: boolean;
-    /** Enable streaming effect for latest segment */
     enableStreaming?: boolean;
-    /** Show confidence indicators */
     showConfidence?: boolean;
-    /** Completely disable auto-scroll behavior (for meeting details page) */
     disableAutoScroll?: boolean;
 
-    // Pagination props (infinite scroll)
     hasMore?: boolean;
     isLoadingMore?: boolean;
     totalCount?: number;
@@ -36,10 +27,8 @@ export interface VirtualizedTranscriptViewProps {
     onLoadMore?: () => void;
 }
 
-// Threshold for enabling virtualization (below this, use simple rendering)
 const VIRTUALIZATION_THRESHOLD = 10;
 
-// Helper function to format seconds as recording-relative time [MM:SS]
 function formatRecordingTime(seconds: number | undefined): string {
     if (seconds === undefined) return '[--:--]';
 
@@ -50,7 +39,6 @@ function formatRecordingTime(seconds: number | undefined): string {
     return `[${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
 }
 
-// Helper function to remove filler words and repetitions
 function cleanStopWords(text: string): string {
     const stopWords = ['uh', 'um', 'er', 'ah', 'hmm', 'hm', 'eh', 'oh'];
 
@@ -63,7 +51,6 @@ function cleanStopWords(text: string): string {
     return cleanedText.replace(/\s+/g, ' ').trim();
 }
 
-// Memoized transcript segment component
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
     timestamp,
@@ -125,15 +112,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     loadedCount = 0,
     onLoadMore,
 }) => {
-    // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
-    // Ref for infinite scroll trigger element
     const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
 
-    // Force re-render without flushSync (avoids React warning)
     const [, rerender] = useReducer((x: number) => x + 1, 0);
 
-    // Setup virtualizer for efficient rendering of large lists
     const virtualizer = useVirtualizer({
         count: segments.length,
         getScrollElement: () => scrollRef.current,
@@ -146,7 +129,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         },
     });
 
-    // Custom hook for auto-scrolling (supports both virtualized and non-virtualized)
     useAutoScroll({
         scrollRef,
         segments,
@@ -157,14 +139,12 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         disableAutoScroll,
     });
 
-    // Streaming text effect hook (typewriter animation for new transcripts)
     const { streamingSegmentId, getDisplayText } = useTranscriptStreaming(
         segments,
         isRecording,
         enableStreaming
     );
 
-    // Infinite scroll: IntersectionObserver to trigger loading more
     useEffect(() => {
         if (!onLoadMore || !hasMore || isLoadingMore || isRecording || segments.length === 0) {
             return;
@@ -191,7 +171,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         return () => observer.disconnect();
     }, [hasMore, isLoadingMore, onLoadMore, isRecording, segments.length]);
 
-    // Scroll-based fallback for fast scrolling
     useEffect(() => {
         if (!onLoadMore || !hasMore || isLoadingMore || isRecording) return;
 
@@ -208,7 +187,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 const { scrollTop, scrollHeight, clientHeight } = scrollElement;
                 const scrollBottom = scrollHeight - scrollTop - clientHeight;
 
-                // Trigger load when within 200px of bottom
                 if (scrollBottom < 200 && hasMore && !isLoadingMore) {
                     onLoadMore();
                 }
@@ -220,7 +198,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         return () => scrollElement.removeEventListener('scroll', handleScroll);
     }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
-    // Use simple rendering for small lists, virtualization for large lists
     const useVirtualization = segments.length >= VIRTUALIZATION_THRESHOLD;
 
     return (
@@ -237,7 +214,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
             {/* Content - add padding when recording to prevent overlap */}
             <div className={isRecording ? 'pt-2' : ''}>
             {segments.length === 0 ? (
-                // Empty state
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -263,7 +239,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     )}
                 </motion.div>
             ) : useVirtualization ? (
-                // Virtualized rendering for large lists
                 <>
                     <div
                         style={{
@@ -332,7 +307,6 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     )}
                 </>
             ) : (
-                // Simple rendering for small lists (better animations)
                 <>
                     <div className="space-y-1">
                         {segments.map((segment) => {
