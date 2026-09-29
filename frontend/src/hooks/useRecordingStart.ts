@@ -14,17 +14,6 @@ interface UseRecordingStartReturn {
   isAutoStarting: boolean;
 }
 
-/**
- * Custom hook for managing recording start lifecycle.
- * Handles both manual start (button click) and auto-start (from sidebar navigation).
- *
- * Features:
- * - Meeting title generation (format: Meeting DD_MM_YY_HH_MM_SS)
- * - Transcript clearing on start
- * - Analytics tracking
- * - Recording notification display
- * - Auto-start from sidebar via sessionStorage flag
- */
 export function useRecordingStart(
   isRecording: boolean,
   setIsRecording: (value: boolean) => void,
@@ -37,7 +26,6 @@ export function useRecordingStart(
   const { selectedDevices } = useConfig();
   const { setStatus } = useRecordingState();
 
-  // Generate meeting title with timestamp
   const generateMeetingTitle = useCallback(() => {
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -49,7 +37,6 @@ export function useRecordingStart(
     return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
   }, []);
 
-  // Check if Parakeet transcription model is ready
   const checkParakeetReady = useCallback(async (): Promise<boolean> => {
     try {
       await invoke('parakeet_init');
@@ -61,7 +48,6 @@ export function useRecordingStart(
     }
   }, []);
 
-  // Check if any model is currently downloading
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
     try {
       const models = await invoke<any[]>('parakeet_get_available_models');
@@ -75,16 +61,14 @@ export function useRecordingStart(
       return isDownloading;
     } catch (error) {
       console.error('Failed to check model download status:', error);
-      return false; // Default to not downloading (will show error + modal)
+      return false;
     }
   }, []);
 
-  // Handle manual recording start (from button click)
   const handleRecordingStart = useCallback(async () => {
     try {
       console.log('handleRecordingStart called - checking Parakeet model status');
 
-      // Check if Parakeet transcription model is ready before starting
       const parakeetReady = await checkParakeetReady();
       if (!parakeetReady) {
         const isDownloading = await checkIfModelDownloading();
@@ -111,10 +95,8 @@ export function useRecordingStart(
       const randomTitle = generateMeetingTitle();
       setMeetingTitle(randomTitle);
 
-      // Set STARTING status before initiating backend recording
       setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
-      // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);
       await recordingService.startRecordingWithDevices(
         selectedDevices?.micDevice || null,
@@ -123,27 +105,22 @@ export function useRecordingStart(
       );
       console.log('Backend recording started successfully');
 
-      // Update state after successful backend start
-      // Note: RECORDING status will be set by RecordingStateContext event listener
       console.log('Setting isRecordingState to true');
-      setIsRecording(true); // This will also update the sidebar via the useEffect
-      clearTranscripts(); // Clear previous transcripts when starting new recording
+      setIsRecording(true);
+      clearTranscripts();
       setIsMeetingActive(true);
       Analytics.trackButtonClick('start_recording', 'home_page');
 
-      // Show recording notification if enabled
       await showRecordingNotification();
     } catch (error) {
       console.error('Failed to start recording:', error);
       setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to start recording');
-      setIsRecording(false); // Reset state on error
+      setIsRecording(false);
       Analytics.trackButtonClick('start_recording_error', 'home_page');
-      // Re-throw so RecordingControls can handle device-specific errors
       throw error;
     }
   }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkParakeetReady, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
 
-  // Check for autoStartRecording flag and start recording automatically
   useEffect(() => {
     const checkAutoStartRecording = async () => {
       if (typeof window !== 'undefined') {
@@ -151,9 +128,8 @@ export function useRecordingStart(
         if (shouldAutoStart === 'true' && !isRecording && !isAutoStarting) {
           console.log('Auto-starting recording from navigation...');
           setIsAutoStarting(true);
-          sessionStorage.removeItem('autoStartRecording'); // Clear the flag
+          sessionStorage.removeItem('autoStartRecording');
 
-          // Check if Parakeet transcription model is ready before starting
           const parakeetReady = await checkParakeetReady();
           if (!parakeetReady) {
             const isDownloading = await checkIfModelDownloading();
@@ -176,12 +152,9 @@ export function useRecordingStart(
             return;
           }
 
-          // Start the actual backend recording
           try {
-            // Generate meeting title
             const generatedMeetingTitle = generateMeetingTitle();
 
-            // Set STARTING status before initiating backend recording
             setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
             console.log('Auto-starting backend recording with meeting:', generatedMeetingTitle);
@@ -192,15 +165,12 @@ export function useRecordingStart(
             );
             console.log('Auto-start backend recording result:', result);
 
-            // Update UI state after successful backend start
-            // Note: RECORDING status will be set by RecordingStateContext event listener
             setMeetingTitle(generatedMeetingTitle);
             setIsRecording(true);
             clearTranscripts();
             setIsMeetingActive(true);
             Analytics.trackButtonClick('start_recording', 'sidebar_auto');
 
-            // Show recording notification if enabled
             await showRecordingNotification();
           } catch (error) {
             console.error('Failed to auto-start recording:', error);
@@ -230,7 +200,6 @@ export function useRecordingStart(
     setStatus,
   ]);
 
-  // Listen for direct recording trigger from sidebar when already on home page
   useEffect(() => {
     const handleDirectStart = async () => {
       if (isRecording || isAutoStarting) {
@@ -241,7 +210,6 @@ export function useRecordingStart(
       console.log('Direct start from sidebar - checking Parakeet model status');
       setIsAutoStarting(true);
 
-      // Check if Parakeet transcription model is ready before starting
       const parakeetReady = await checkParakeetReady();
       if (!parakeetReady) {
         const isDownloading = await checkIfModelDownloading();
@@ -265,10 +233,8 @@ export function useRecordingStart(
       }
 
       try {
-        // Generate meeting title
         const generatedMeetingTitle = generateMeetingTitle();
 
-        // Set STARTING status before initiating backend recording
         setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
         console.log('Starting backend recording with meeting:', generatedMeetingTitle);
@@ -279,15 +245,12 @@ export function useRecordingStart(
         );
         console.log('Backend recording result:', result);
 
-        // Update UI state after successful backend start
-        // Note: RECORDING status will be set by RecordingStateContext event listener
         setMeetingTitle(generatedMeetingTitle);
         setIsRecording(true);
         clearTranscripts();
         setIsMeetingActive(true);
         Analytics.trackButtonClick('start_recording', 'sidebar_direct');
 
-        // Show recording notification if enabled
         await showRecordingNotification();
       } catch (error) {
         console.error('Failed to start recording from sidebar:', error);
