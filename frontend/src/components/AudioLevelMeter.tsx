@@ -1,9 +1,9 @@
 import React from 'react';
 
 interface AudioLevelMeterProps {
-  rmsLevel: number;    // 0.0 to 1.0
-  peakLevel: number;   // 0.0 to 1.0
-  isActive: boolean;   // Whether audio is being detected
+  rmsLevel: number;
+  peakLevel: number;
+  isActive: boolean;
   deviceName: string;
   className?: string;
   size?: 'small' | 'medium' | 'large';
@@ -17,19 +17,15 @@ export function AudioLevelMeter({
   className = '',
   size = 'medium'
 }: AudioLevelMeterProps) {
-  // Normalize levels to 0-1 range and apply log scaling for better visual representation
   const normalizedRms = Math.max(0, Math.min(1, rmsLevel));
   const normalizedPeak = Math.max(0, Math.min(1, peakLevel));
 
-  // Apply logarithmic scaling for better visual representation of audio levels
   const logRms = normalizedRms > 0 ? Math.log10(normalizedRms * 9 + 1) : 0;
   const logPeak = normalizedPeak > 0 ? Math.log10(normalizedPeak * 9 + 1) : 0;
 
-  // Calculate percentages for display
   const rmsPercent = Math.round(logRms * 100);
   const peakPercent = Math.round(logPeak * 100);
 
-  // Color coding based on level
   const getLevelColor = (level: number) => {
     if (level < 0.3) return 'bg-green-500';
     if (level < 0.7) return 'bg-yellow-500';
@@ -39,7 +35,6 @@ export function AudioLevelMeter({
   const rmsColor = getLevelColor(logRms);
   const peakColor = getLevelColor(logPeak);
 
-  // Size variants
   const sizeClasses = {
     small: {
       container: 'h-2',
@@ -112,7 +107,6 @@ interface CompactAudioLevelMeterProps {
   className?: string;
 }
 
-// Compact version for inline display in dropdowns
 export function CompactAudioLevelMeter({
   rmsLevel,
   peakLevel,
