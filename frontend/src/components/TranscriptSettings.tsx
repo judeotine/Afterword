@@ -9,7 +9,6 @@ import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
 import { useConfig } from '@/contexts/ConfigContext';
 
-
 export interface TranscriptModelProps {
     provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
@@ -30,11 +29,9 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const [uiProvider, setUiProvider] = useState<TranscriptModelProps['provider']>(transcriptModelConfig.provider);
     const { selectedLanguage } = useConfig();
 
-    // Parakeet is English-only, so any other language selection is silently ignored
     const showParakeetLanguageNotice =
         uiProvider === 'parakeet' && selectedLanguage !== 'auto' && selectedLanguage !== 'en';
 
-    // Sync uiProvider when backend config changes (e.g., after model selection or initial load)
     useEffect(() => {
         setUiProvider(transcriptModelConfig.provider);
     }, [transcriptModelConfig.provider]);
@@ -74,28 +71,22 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     };
 
     const handleWhisperModelSelect = (modelName: string) => {
-        // Always update config when model is selected, regardless of current provider
-        // This ensures the model is set when user switches back
         setTranscriptModelConfig({
             ...transcriptModelConfig,
             provider: 'localWhisper', // Ensure provider is set correctly
             model: modelName
         });
-        // Close modal after selection
         if (onModelSelect) {
             onModelSelect();
         }
     };
 
     const handleParakeetModelSelect = (modelName: string) => {
-        // Always update config when model is selected, regardless of current provider
-        // This ensures the model is set when user switches back
         setTranscriptModelConfig({
             ...transcriptModelConfig,
             provider: 'parakeet', // Ensure provider is set correctly
             model: modelName
         });
-        // Close modal after selection
         if (onModelSelect) {
             onModelSelect();
         }
@@ -187,7 +178,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                         </div>
                     )}
 
-
                     {requiresApiKey && (
                         <div>
                             <Label className="block text-sm font-medium text-gray-700 mb-1">
@@ -239,11 +229,4 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         </div >
     )
 }
-
-
-
-
-
-
-
 
