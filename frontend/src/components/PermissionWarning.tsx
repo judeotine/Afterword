@@ -19,12 +19,10 @@ export function PermissionWarning({
 }: PermissionWarningProps) {
   const isLinux = useIsLinux();
 
-  // Don't show on Linux - permission handling is not needed
   if (isLinux) {
     return null;
   }
 
-  // Don't show if both permissions are granted
   if (hasMicrophone && hasSystemAudio) {
     return null;
   }
@@ -131,7 +129,6 @@ export function PermissionWarning({
                 )}
               </>
             )}
-
 
           </AlertDescription>
         </Alert>
