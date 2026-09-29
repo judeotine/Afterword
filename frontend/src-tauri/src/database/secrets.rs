@@ -1,31 +1,15 @@
-//! OS keychain storage for provider API keys.
-//!
-//! API keys used to live in plaintext columns of the SQLite settings database.
-//! They are now stored in the platform secret store (macOS Keychain, Windows
-//! Credential Manager, Linux Secret Service) under the service name
-//! `com.afterword.app`, with the provider id as the account name.
-//!
-//! The [`SecretStore`] trait exists so callers can be tested without touching a
-//! real keychain (which is unavailable in CI and headless Linux).
-
 use anyhow::{anyhow, Result};
 
-/// Keychain service name shared by every stored secret.
 pub const KEYCHAIN_SERVICE: &str = "com.afterword.app";
 
-/// Abstraction over the platform secret store.
 pub trait SecretStore: Send + Sync {
-    /// Read the secret for `provider`, if one is stored.
     fn get(&self, provider: &str) -> Result<Option<String>>;
 
-    /// Store (or replace) the secret for `provider`.
     fn set(&self, provider: &str, value: &str) -> Result<()>;
 
-    /// Remove the secret for `provider`. Deleting a missing entry is not an error.
     fn delete(&self, provider: &str) -> Result<()>;
 }
 
-/// The real secret store, backed by the `keyring` crate.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KeychainSecretStore;
 
@@ -54,13 +38,9 @@ impl SecretStore for KeychainSecretStore {
     }
 
     fn set(&self, provider: &str, value: &str) -> Result<()> {
-        Self::entry(provider)?.set_password(value).map_err(|e| {
-            anyhow!(
-                "failed to write keychain entry for '{}': {}",
-                provider,
-                e
-            )
-        })
+        Self::entry(provider)?
+            .set_password(value)
+            .map_err(|e| anyhow!("failed to write keychain entry for '{}': {}", provider, e))
     }
 
     fn delete(&self, provider: &str) -> Result<()> {
@@ -75,7 +55,6 @@ impl SecretStore for KeychainSecretStore {
     }
 }
 
-/// The process-wide secret store used by the settings repository.
 pub fn default_store() -> &'static dyn SecretStore {
     static STORE: KeychainSecretStore = KeychainSecretStore::new();
     &STORE
@@ -87,9 +66,6 @@ pub(crate) mod test_support {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    /// In-memory [`SecretStore`] used by tests. It can be told to fail every
-    /// operation, which is how a headless Linux box without a Secret Service
-    /// daemon behaves.
     #[derive(Default)]
     pub struct MockSecretStore {
         entries: Mutex<HashMap<String, String>>,
@@ -101,7 +77,6 @@ pub(crate) mod test_support {
             Self::default()
         }
 
-        /// A store where every operation fails (no keychain available).
         pub fn unavailable() -> Self {
             Self {
                 entries: Mutex::new(HashMap::new()),
@@ -168,9 +143,6 @@ mod tests {
         assert!(store.delete("openai").is_err());
     }
 
-    /// Touches the real OS keychain, so it is ignored by default. Run with
-    /// `cargo test -p afterword --lib database::secrets -- --ignored` and verify
-    /// with `security find-generic-password -s com.afterword.app` on macOS.
     #[test]
     #[ignore = "writes to the real OS keychain and may prompt for access"]
     fn keychain_store_round_trips_values() {
