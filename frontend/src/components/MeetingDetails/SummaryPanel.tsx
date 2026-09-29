@@ -296,7 +296,6 @@ export function SummaryPanel({
                 onSave={onSaveAll}
                 onCopy={onCopySummary}
                 onFind={() => {
-                  // TODO: Implement find in summary functionality
                   console.log('Find in summary clicked');
                 }}
                 onOpenFolder={onOpenFolder}
