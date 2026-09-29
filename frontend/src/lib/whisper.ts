@@ -1,4 +1,3 @@
-// Types for whisper-rs integration
 export interface ModelInfo {
   name: string;
   path: string;
@@ -34,7 +33,6 @@ export interface WhisperEngineState {
   error: string | null;
 }
 
-// Tauri command interfaces
 export interface DownloadModelRequest {
   modelName: string;
 }
@@ -48,9 +46,7 @@ export interface TranscribeAudioRequest {
   sampleRate: number;
 }
 
-// Model configuration for different use cases
 export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
-  // Standard f16 models (full precision)
   'large-v3': {
     description: 'Highest accuracy, best for important meetings. Slower processing.',
     size_mb: 2951,
@@ -88,7 +84,6 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
     speed: 'Very Fast'
   },
 
-  // Q5_1 quantized models (balanced speed/accuracy, slightly better quality than Q5_0)
   'tiny-q5_1': {
     description: 'Quantized tiny model, ~50% faster processing.',
     size_mb: 31,
@@ -108,7 +103,6 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
     speed: 'Fast'
   },
 
-  // Q5_0 quantized models (balanced speed/accuracy)
   'medium-q5_0': {
     description: 'Quantized medium model, professional quality with better speed.',
     size_mb: 514,
@@ -129,7 +123,6 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
   }
 };
 
-// Helper functions
 export function getModelIcon(accuracy: ModelAccuracy): string {
   switch (accuracy) {
     case 'High': return '🔥';
@@ -154,7 +147,6 @@ export function formatFileSize(sizeMb: number): string {
   return `${sizeMb}MB`;
 }
 
-// Helper function to get model type (f16, q5_1, q5_0, q4_0)
 export function getModelType(modelName: string): 'f16' | 'q5_1' | 'q5_0' | 'q4_0' {
   if (modelName.includes('-q5_1')) return 'q5_1';
   if (modelName.includes('-q5_0')) return 'q5_0';
@@ -162,17 +154,14 @@ export function getModelType(modelName: string): 'f16' | 'q5_1' | 'q5_0' | 'q4_0
   return 'f16';
 }
 
-// Helper function to get model base name (without quantization suffix)
 export function getModelBaseName(modelName: string): string {
   return modelName.replace(/-q[45]_[01]$/, '');
 }
 
-// Helper function to check if model is quantized
 export function isQuantizedModel(modelName: string): boolean {
   return modelName.includes('-q');
 }
 
-// Helper function to get model performance badge
 export function getModelPerformanceBadge(modelName: string): { label: string; color: string } {
   const type = getModelType(modelName);
   switch (type) {
@@ -189,12 +178,10 @@ export function getModelPerformanceBadge(modelName: string): { label: string; co
   }
 }
 
-// Helper function to get concise tagline for model (similar to Parakeet style)
 export function getModelTagline(modelName: string, speed: ProcessingSpeed, accuracy: ModelAccuracy): string {
   const isQuantized = isQuantizedModel(modelName);
   const baseName = getModelBaseName(modelName);
 
-  // Speed prefix
   let speedText = '';
   switch (speed) {
     case 'Very Fast':
@@ -211,7 +198,6 @@ export function getModelTagline(modelName: string, speed: ProcessingSpeed, accur
       break;
   }
 
-  // Key feature based on model and accuracy
   let featureText = '';
   if (baseName === 'large-v3') {
     featureText = 'Most accurate';
@@ -227,7 +213,6 @@ export function getModelTagline(modelName: string, speed: ProcessingSpeed, accur
     featureText = 'Fastest option';
   }
 
-  // Add quantization note if applicable
   if (isQuantized) {
     const quantType = getModelType(modelName);
     if (quantType === 'q5_0') {
@@ -240,7 +225,6 @@ export function getModelTagline(modelName: string, speed: ProcessingSpeed, accur
   return `${speedText} • ${featureText}`;
 }
 
-// Group models by their base name for better UI organization
 export function groupModelsByBase(models: ModelInfo[]): Record<string, ModelInfo[]> {
   const grouped: Record<string, ModelInfo[]> = {};
 
@@ -252,7 +236,6 @@ export function groupModelsByBase(models: ModelInfo[]): Record<string, ModelInfo
     grouped[baseName].push(model);
   });
 
-  // Sort each group: f16 first, then q5_1, then q5_0, then q4_0
   Object.keys(grouped).forEach(baseName => {
     grouped[baseName].sort((a, b) => {
       const aType = getModelType(a.name);
@@ -266,17 +249,16 @@ export function groupModelsByBase(models: ModelInfo[]): Record<string, ModelInfo
 }
 
 export function getRecommendedModel(systemSpecs?: { ram: number; cores: number }): string {
-  if (!systemSpecs) return 'medium-q5_0'; // Default to balanced quantized model
+  if (!systemSpecs) return 'medium-q5_0';
 
   if (systemSpecs.ram >= 8000 && systemSpecs.cores >= 8) {
-    return 'large-v3'; // High-end system
+    return 'large-v3';
   } else if (systemSpecs.ram >= 4000 && systemSpecs.cores >= 4) {
-    return 'medium'; // Mid-range system
+    return 'medium';
   }
-  return 'small'; // Lower-spec system
+  return 'small';
 }
 
-// Tauri command wrappers for whisper-rs backend
 import { invoke } from '@tauri-apps/api/core';
 
 export class WhisperAPI {
