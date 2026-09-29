@@ -10,7 +10,6 @@ interface HomebrewDatabaseDetectorProps {
   onDecline: () => void;
 }
 
-// Homebrew paths differ between Intel and Apple Silicon Macs
 const HOMEBREW_PATHS = [
   '/opt/homebrew/var/meetily/meeting_minutes.db',  // Apple Silicon (M1/M2/M3)
   '/usr/local/var/meetily/meeting_minutes.db',      // Intel Macs
@@ -32,7 +31,6 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
     try {
       setIsChecking(true);
 
-      // Check all possible Homebrew locations
       for (const path of HOMEBREW_PATHS) {
         const result = await invoke<{ exists: boolean; size: number } | null>('check_homebrew_database', {
           path,
@@ -42,7 +40,7 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
           setHomebrewDbExists(true);
           setDbSize(result.size);
           setDetectedPath(path);
-          break; // Stop checking once we find a valid database
+          break;
         }
       }
     } catch (error) {
@@ -63,7 +61,6 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
 
       toast.success('Database imported successfully! Reloading...');
 
-      // Wait 1 second for user to see success, then reload window to refresh all data
       setTimeout(() => {
         window.location.reload();
       }, 1000);
@@ -114,7 +111,7 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
           <p className="text-sm text-blue-800 mb-3">
             Would you like to import your previous meetings, transcripts, and summaries?
           </p>
-          
+
           {/* Yes/No Buttons */}
           <div className="flex gap-2">
             <button
@@ -134,7 +131,7 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
                 </>
               )}
             </button>
-            
+
             <button
               onClick={handleNo}
               disabled={isImporting}
