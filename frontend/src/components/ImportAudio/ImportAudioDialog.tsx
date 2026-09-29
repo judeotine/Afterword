@@ -38,7 +38,6 @@ import { useSidebar } from '../Sidebar/SidebarProvider';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 
-
 interface ImportAudioDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -79,12 +78,8 @@ export function ImportAudioDialog({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [titleModifiedByUser, setTitleModifiedByUser] = useState(false);
 
-  // Always start as false — represents "dialog has not yet been opened".
-  // Do NOT initialize from the `open` prop: if the component mounts with open=true
-  // (e.g. drag-drop path), we still need the initialization effect to run.
   const prevOpenRef = useRef(false);
 
-  // Use centralized model fetching hook
   const {
     availableModels,
     selectedModelKey,
@@ -97,7 +92,6 @@ export function ImportAudioDialog({
   const handleImportComplete = useCallback((result: ImportResult) => {
     toast.success(`Import complete! ${result.segments_count} segments created.`);
 
-    // Refresh meetings list then navigate to the imported meeting
     refetchMeetings();
     onComplete?.();
     onOpenChange(false);
@@ -125,13 +119,10 @@ export function ImportAudioDialog({
     onError: handleImportError,
   });
 
-  // Reset state only when dialog transitions from closed to open
-  // This prevents re-initialization when config changes while dialog is already open (Bug #4 & #5)
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
 
-    // Only initialize when transitioning from closed (false) to open (true)
     if (open && !wasOpen) {
       reset();
       resetSelection();
@@ -140,7 +131,6 @@ export function ImportAudioDialog({
       setSelectedLang(selectedLanguage || 'auto');
       setShowAdvanced(false);
 
-      // Validate preselected file if provided
       if (preselectedFile) {
         validateFile(preselectedFile).then((info) => {
           if (info) {
@@ -149,12 +139,10 @@ export function ImportAudioDialog({
         });
       }
 
-      // Fetch available models using centralized hook
       fetchModels();
     }
   }, [open, preselectedFile, selectedLanguage, transcriptModelConfig, reset, resetSelection, validateFile, fetchModels]);
 
-  // Update title when fileInfo changes
   useEffect(() => {
     if (fileInfo && !title && !titleModifiedByUser) {
       setTitle(fileInfo.filename);
@@ -204,7 +192,6 @@ export function ImportAudioDialog({
     onOpenChange(false);
   };
 
-  // Prevent closing during processing
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen && isProcessing) {
       return;
