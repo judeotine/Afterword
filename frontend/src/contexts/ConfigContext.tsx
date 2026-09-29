@@ -30,8 +30,6 @@ export interface NotificationSettings {
   system_permission_granted: boolean;
   consent_given: boolean;
   manual_dnd_mode: boolean;
-  /// Marker for the one-time reset of consent auto-granted by older builds.
-  /// Owned by the backend; sending a stale value does not change it.
   consent_migration_v1?: boolean;
   notification_preferences: {
     show_recording_started: boolean;
@@ -45,49 +43,37 @@ export interface NotificationSettings {
   };
 }
 
-/// Result of the `get_system_dnd_status` Tauri command.
-/// `supported` is false where the OS state cannot be read (Windows, Linux, or
-/// an unreadable macOS Focus state); `active` is then always false.
 export interface SystemDndStatus {
   supported: boolean;
   active: boolean;
 }
 
 interface ConfigContextType {
-  // Model configuration
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
 
-  // Transcript model configuration
   transcriptModelConfig: TranscriptModelProps;
   setTranscriptModelConfig: (config: TranscriptModelProps | ((prev: TranscriptModelProps) => TranscriptModelProps)) => void;
 
-  // Device configuration
   selectedDevices: SelectedDevices;
   setSelectedDevices: (devices: SelectedDevices) => void;
 
-  // Language preference
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
 
-  // UI preferences
   showConfidenceIndicator: boolean;
   toggleConfidenceIndicator: (checked: boolean) => void;
 
-  // Beta features
   betaFeatures: BetaFeatures;
   toggleBetaFeature: (featureKey: BetaFeatureKey, enabled: boolean) => void;
 
-  // Ollama models
   models: OllamaModel[];
   modelOptions: Record<ModelConfig['provider'], string[]>;
   error: string;
 
-  // Summary configuration
   isAutoSummary: boolean;
   toggleIsAutoSummary: (checked: boolean) => void;
 
-  // Provider-specific API keys
   providerApiKeys: {
     claude: string | null;
     groq: string | null;
@@ -96,7 +82,6 @@ interface ConfigContextType {
   };
   updateProviderApiKey: (provider: string, apiKey: string | null) => void;
 
-  // Preference settings (lazy loaded)
   notificationSettings: NotificationSettings | null;
   storageLocations: StorageLocations | null;
   isLoadingPreferences: boolean;
@@ -107,9 +92,7 @@ interface ConfigContextType {
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
 
-
 export function ConfigProvider({ children }: { children: ReactNode }) {
-  // Model configuration state
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
     model: 'llama3.2:latest',
@@ -117,15 +100,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     ollamaEndpoint: null
   });
 
-  // Transcript model configuration state
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
     provider: 'parakeet',
     model: 'parakeet-tdt-0.6b-v3-int8',
     apiKey: null
   });
 
-  // Provider-specific API keys (loaded once at startup)
-  // Note: Gemini omitted for now - add when UI support is added
   const [providerApiKeys, setProviderApiKeys] = useState<{
     claude: string | null;
     groq: string | null;
@@ -138,17 +118,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     openrouter: null,
   });
 
-  // Ollama models list and error state
   const [models, setModels] = useState<OllamaModel[]>([]);
   const [error, setError] = useState<string>('');
 
-  // Device configuration state
   const [selectedDevices, setSelectedDevices] = useState<SelectedDevices>({
     micDevice: null,
     systemDevice: null
   });
 
-  // Language preference state
   const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('primaryLanguage');
@@ -157,7 +134,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return 'auto';
   });
 
-  // UI preferences state
   const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showConfidenceIndicator');
@@ -166,7 +142,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return true;
   });
 
-  // Summary configs
   const [isAutoSummary, setisAutoSummary] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('isAutoSummary');
@@ -175,19 +150,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return false;
   });
 
-  // Beta features state (localStorage)
   const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>(() => {
     return loadBetaFeatures();
   });
 
-  // Preference settings state (lazy loaded)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
   const [storageLocations, setStorageLocations] = useState<StorageLocations | null>(null);
   const [isLoadingPreferences, setIsLoadingPreferences] = useState(false);
   const preferencesLoadedRef = useRef(false);
   const isLoadingRef = useRef(false);
 
-  // Load Ollama models (uses saved endpoint, re-runs when endpoint changes after config load)
   useEffect(() => {
     const loadModels = async () => {
       try {
@@ -203,7 +175,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     loadModels();
   }, [modelConfig.ollamaEndpoint]);
 
-  // Load transcript configuration on mount
   useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
@@ -223,7 +194,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     loadTranscriptConfig();
   }, []);
 
-  // Sync language preference to Rust on mount (fixes startup desync bug)
   useEffect(() => {
     if (selectedLanguage) {
       invoke('set_language_preference', { language: selectedLanguage })
@@ -234,20 +204,17 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
           console.error('[ConfigContext] Failed to sync language preference to Rust on startup:', err);
         });
     }
-  }, []); 
+  }, []);
 
-  // Load model configuration on mount
   useEffect(() => {
     const fetchModelConfig = async () => {
       try {
         const data = await configService.getModelConfig();
         if (data && data.provider) {
-          // If provider is custom-openai, fetch the additional config
           if (data.provider === 'custom-openai') {
             try {
               const customConfig = await configService.getCustomOpenAIConfig();
               if (customConfig) {
-                // Merge custom config fields into modelConfig
                 console.log('[ConfigContext] Loading custom OpenAI config:', {
                   endpoint: customConfig.endpoint,
                   model: customConfig.model,
@@ -266,21 +233,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
                   topP: customConfig.topP,
                 }));
 
-                // Seed per-provider model cache from DB
                 if (resolvedModel) {
                   const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
                   map[data.provider] = resolvedModel;
                   localStorage.setItem('providerModelMap', JSON.stringify(map));
                 }
 
-                return; // Early return
+                return;
               }
             } catch (err) {
               console.error('[ConfigContext] Failed to fetch custom OpenAI config:', err);
             }
           }
 
-          // For non-custom-openai providers, just set base config
           setModelConfig(prev => ({
             ...prev,
             provider: data.provider,
@@ -289,7 +254,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
             ollamaEndpoint: data.ollamaEndpoint,
           }));
 
-          // Seed per-provider model cache from DB
           if (data.model) {
             const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
             map[data.provider] = data.model;
@@ -303,7 +267,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     fetchModelConfig();
   }, []);
 
-  // Load all provider API keys on mount
   useEffect(() => {
     const loadAllApiKeys = async () => {
       try {
@@ -311,7 +274,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         const keys = await Promise.all(
           providers.map(p =>
             invoke<string>('api_get_api_key', { provider: p })
-              .catch(() => null) // Gracefully handle missing keys
+              .catch(() => null)
           )
         );
 
@@ -330,7 +293,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     loadAllApiKeys();
   }, []);
 
-  // Listen for model config updates from other components
   useEffect(() => {
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
@@ -338,7 +300,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         console.log('[ConfigContext] Received model-config-updated event:', event.payload);
         setModelConfig(event.payload);
 
-        // Update provider-specific key when config changes
         if (event.payload.apiKey && event.payload.provider !== 'custom-openai') {
           updateProviderApiKey(event.payload.provider, event.payload.apiKey);
         }
@@ -354,7 +315,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Load device preferences on mount
   useEffect(() => {
     const loadDevicePreferences = async () => {
       try {
@@ -373,7 +333,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     loadDevicePreferences();
   }, []);
 
-  // Calculate model options based on available models
   const modelOptions: Record<ModelConfig['provider'], string[]> = {
     ollama: models.map(model => model.name),
     claude: ['claude-3-5-sonnet-latest'],
@@ -384,13 +343,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     'custom-openai': [],
   };
 
-  // Toggle confidence indicator with localStorage persistence
   const toggleConfidenceIndicator = useCallback((checked: boolean) => {
     setShowConfidenceIndicator(checked);
     if (typeof window !== 'undefined') {
       localStorage.setItem('showConfidenceIndicator', checked.toString());
     }
-    // Trigger a custom event to notify other components
     window.dispatchEvent(new CustomEvent('confidenceIndicatorChanged', { detail: checked }));
   }, []);
 
@@ -401,13 +358,11 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Toggle beta feature with localStorage persistence and analytics
   const toggleBetaFeature = useCallback((featureKey: BetaFeatureKey, enabled: boolean) => {
     setBetaFeatures(prev => {
       const updated = { ...prev, [featureKey]: enabled };
       saveBetaFeatures(updated);
 
-      // Track analytics with specific feature
       Analytics.track('beta_feature_toggled', {
         feature: featureKey,
         enabled: enabled.toString(),
@@ -417,19 +372,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Update individual provider API key
   const updateProviderApiKey = useCallback((provider: string, apiKey: string | null) => {
     setProviderApiKeys(prev => ({ ...prev, [provider]: apiKey }));
   }, []);
 
-  // Lazy load preference settings (only loads if not already cached)
   const loadPreferences = useCallback(async () => {
-    // If already loaded, don't reload
     if (preferencesLoadedRef.current) {
       return;
     }
 
-    // If currently loading, don't start another load
     if (isLoadingRef.current) {
       return;
     }
@@ -437,18 +388,15 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isLoadingRef.current = true;
     setIsLoadingPreferences(true);
     try {
-      // Load notification settings from backend
       let settings: NotificationSettings | null = null;
       try {
         settings = await invoke<NotificationSettings>('get_notification_settings');
         setNotificationSettings(settings);
       } catch (notifError) {
         console.error('[ConfigContext] Failed to load notification settings:', notifError);
-        // Use default values if notification settings fail to load
         setNotificationSettings(null);
       }
 
-      // Load storage locations
       const [dbDir, modelsDir, recordingsDir] = await Promise.all([
         invoke<string>('get_database_directory'),
         invoke<string>('whisper_get_models_directory'),
@@ -461,7 +409,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         recordings: recordingsDir
       });
 
-      // Mark as loaded
       preferencesLoadedRef.current = true;
     } catch (error) {
       console.error('[ConfigContext] Failed to load preferences:', error);
@@ -471,7 +418,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Re-read notification settings from the backend, which owns consent state
   const refreshNotificationSettings = useCallback(async (): Promise<NotificationSettings | null> => {
     try {
       const settings = await invoke<NotificationSettings>('get_notification_settings');
@@ -483,29 +429,24 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Update notification settings
   const updateNotificationSettings = useCallback(async (settings: NotificationSettings) => {
     try {
       await invoke('set_notification_settings', { settings });
-      // The backend keeps consent and permission state out of this payload, so
-      // read back what it actually stored instead of trusting the payload.
       const stored = await refreshNotificationSettings();
       if (!stored) {
         setNotificationSettings(settings);
       }
     } catch (error) {
       console.error('[ConfigContext] Failed to update notification settings:', error);
-      throw error; // Re-throw so component can handle error
+      throw error;
     }
   }, [refreshNotificationSettings]);
 
-  // Wrapper for setSelectedLanguage that persists to localStorage and syncs to Rust
   const handleSetSelectedLanguage = useCallback((lang: string) => {
     setSelectedLanguage(lang);
     if (typeof window !== 'undefined') {
       localStorage.setItem('primaryLanguage', lang);
     }
-    // Sync with Rust in-memory state for live recording
     invoke('set_language_preference', { language: lang }).catch(err =>
       console.error('Failed to sync language preference to Rust:', err)
     );
