@@ -11,7 +11,6 @@ export default {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
-        // Consistent color palette
         primary: "hsl(221, 83%, 53%)", // blue-600
         secondary: "hsl(210, 40%, 96%)", // gray-50
         accent: "hsl(221, 83%, 53%)", // blue-600
