@@ -17,6 +17,24 @@ export interface WorkerStatusUpdate {
   error?: string;
 }
 
+export interface RecordingRequest {
+  title: string;
+  duration_s: number;
+  audio_extension: string;
+  size_bytes: number;
+}
+
+export interface UploadTargets {
+  audio_url: string;
+  transcript_url: string;
+  expires_at: string;
+}
+
+export interface RecordingResult {
+  meeting: { id: string; workspace_id: string; title: string; status: string };
+  upload: UploadTargets;
+}
+
 export interface ApiClientOptions {
   baseUrl: string;
   workerToken: string;
@@ -62,6 +80,18 @@ export class ApiClient {
       throw new Error(`status update failed: ${response.status}`);
     }
     return (await response.json()) as WorkerBotJob;
+  }
+
+  async createRecording(jobId: string, recording: RecordingRequest): Promise<RecordingResult> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/worker/bot-jobs/${jobId}/recording`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ worker_id: this.workerId, ...recording }),
+    });
+    if (!response.ok) {
+      throw new Error(`recording failed: ${response.status}`);
+    }
+    return (await response.json()) as RecordingResult;
   }
 
   private headers(): Record<string, string> {
