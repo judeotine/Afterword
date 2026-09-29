@@ -94,7 +94,6 @@ impl ParakeetModel {
     ) -> Result<Session, ParakeetError> {
         let providers = vec![CPUExecutionProvider::default().build()];
 
-        // Try quantized version first if requested, fallback to regular version
         let model_filename = if try_quantized {
             let quantized_name = format!("{}.int8.onnx", model_name);
             let quantized_path = model_dir.as_ref().join(&quantized_name);
@@ -165,7 +164,6 @@ impl ParakeetModel {
             }
         }
 
-        // Create vocab vector with \u2581 replaced with space
         let mut vocab = vec![String::new(); max_id + 1];
         for (token, id) in tokens_with_ids {
             vocab[id] = token.replace('\u{2581}', " ");
@@ -232,7 +230,6 @@ impl ParakeetModel {
     }
 
     pub fn create_decoder_state(&self) -> Result<DecoderState, ParakeetError> {
-        // Get input shapes from decoder model
         let inputs = &self.decoder_joint.inputs;
 
         let state1_shape = inputs
@@ -251,19 +248,9 @@ impl ParakeetModel {
             .tensor_shape()
             .ok_or_else(|| ParakeetError::TensorShape("input_states_2".to_string()))?;
 
-        // Create zero states with batch_size=1
-        // Shape is [2, -1, 640] so we use [2, 1, 640] for batch_size=1
-        let state1 = Array::zeros((
-            state1_shape[0] as usize,
-            1, // batch_size = 1
-            state1_shape[2] as usize,
-        ));
+        let state1 = Array::zeros((state1_shape[0] as usize, 1, state1_shape[2] as usize));
 
-        let state2 = Array::zeros((
-            state2_shape[0] as usize,
-            1, // batch_size = 1
-            state2_shape[2] as usize,
-        ));
+        let state2 = Array::zeros((state2_shape[0] as usize, 1, state2_shape[2] as usize));
 
         Ok((state1, state2))
     }
@@ -272,14 +259,12 @@ impl ParakeetModel {
         &mut self,
         prev_tokens: &[i32],
         prev_state: &DecoderState,
-        encoder_out: &ArrayViewD<f32>, // [time_steps, 1024]
+        encoder_out: &ArrayViewD<f32>,
     ) -> Result<(ArrayD<f32>, DecoderState), ParakeetError> {
         log::trace!("Running Parakeet decoder inference...");
 
-        // Get last token or blank_idx if empty
         let target_token = prev_tokens.last().copied().unwrap_or(self.blank_idx);
 
-        // Prepare inputs matching Python: encoder_out[None, :, None] -> [1, time_steps, 1]
         let encoder_outputs = encoder_out
             .to_owned()
             .insert_axis(ndarray::Axis(0))
@@ -315,10 +300,8 @@ impl ParakeetModel {
             .ok_or_else(|| ParakeetError::OutputNotFound("output_states_2".to_string()))?
             .try_extract_array()?;
 
-        // Squeeze outputs like Python (remove batch dimension)
         let logits = logits.remove_axis(ndarray::Axis(0));
 
-        // Convert ArrayD back to Array3 to match expected return type
         let state1_3d = state1.to_owned().into_dimensionality::<ndarray::Ix3>()?;
         let state2_3d = state2.to_owned().into_dimensionality::<ndarray::Ix3>()?;
 
@@ -330,12 +313,10 @@ impl ParakeetModel {
         waveforms: &ArrayViewD<f32>,
         waveforms_len: &ArrayViewD<i64>,
     ) -> Result<Vec<TimestampedResult>, ParakeetError> {
-        // Preprocess and encode
         let (features, features_lens) = self.preprocess(waveforms, waveforms_len)?;
         let (encoder_out, encoder_out_lens) =
             self.encode(&features.view(), &features_lens.view())?;
 
-        // Decode for each batch item
         let mut results = Vec::new();
         for (encodings, &encodings_len) in encoder_out.outer_iter().zip(encoder_out_lens.iter()) {
             let (tokens, timestamps) =
@@ -349,7 +330,7 @@ impl ParakeetModel {
 
     fn decode_sequence(
         &mut self,
-        encodings: &ArrayViewD<f32>, // [time_steps, 1024]
+        encodings: &ArrayViewD<f32>,
         encodings_len: usize,
     ) -> Result<(Vec<i32>, Vec<usize>), ParakeetError> {
         let mut prev_state = self.create_decoder_state()?;
@@ -361,14 +342,11 @@ impl ParakeetModel {
 
         while t < encodings_len {
             let encoder_step = encodings.slice(ndarray::s![t, ..]);
-            // Convert to dynamic dimension to match decode_step parameter type
+
             let encoder_step_dyn = encoder_step.to_owned().into_dyn();
             let (probs, new_state) =
                 self.decode_step(&tokens, &prev_state, &encoder_step_dyn.view())?;
 
-            // For TDT models, split output into vocab logits and duration logits
-            // output[:vocab_size] = vocabulary logits
-            // output[vocab_size:] = duration logits
             let vocab_logits_slice = probs.as_slice().ok_or_else(|| {
                 ParakeetError::Shape(ndarray::ShapeError::from_kind(
                     ndarray::ErrorKind::IncompatibleShape,
@@ -383,7 +361,6 @@ impl ParakeetModel {
                 (vocab_logits_slice, None)
             };
 
-            // Get argmax token from vocabulary logits only
             let token = vocab_logits
                 .iter()
                 .enumerate()
@@ -399,7 +376,6 @@ impl ParakeetModel {
             }
 
             if let Some(duration_logits) = duration_logits {
-                // TDT: advance by the model's predicted duration (frames to skip).
                 let dur_idx = duration_logits
                     .iter()
                     .enumerate()
@@ -408,8 +384,6 @@ impl ParakeetModel {
                     .unwrap_or(0);
                 let mut skip = TDT_DURATIONS.get(dur_idx).copied().unwrap_or(1);
 
-                // Ensure forward progress on blank-with-zero-duration, and cap
-                // same-frame emissions to avoid runaway repetition.
                 if skip == 0 && (token == self.blank_idx || emitted_tokens >= MAX_TOKENS_PER_STEP) {
                     skip = 1;
                 }
@@ -418,7 +392,6 @@ impl ParakeetModel {
                     emitted_tokens = 0;
                 }
             } else {
-                // RNN-T greedy: advance one frame on blank or after emission cap.
                 if token == self.blank_idx || emitted_tokens >= MAX_TOKENS_PER_STEP {
                     t += 1;
                     emitted_tokens = 0;
@@ -426,7 +399,6 @@ impl ParakeetModel {
             }
         }
 
-        // NEW: Log if no tokens were decoded (helps debugging empty transcriptions)
         if tokens.is_empty() {
             log::debug!(
                 "Parakeet decoded zero tokens (all blank) for audio with {} encoding timesteps - audio may be too short or low energy",
@@ -460,7 +432,7 @@ impl ParakeetModel {
                     }
                 })
                 .to_string(),
-            Err(_) => tokens.join(""), // Fallback if regex failed to compile
+            Err(_) => tokens.join(""),
         };
 
         let float_timestamps: Vec<f32> = timestamps
@@ -482,16 +454,12 @@ impl ParakeetModel {
         let batch_size = 1;
         let samples_len = samples.len();
 
-        // Create waveforms array [batch_size, samples_len]
         let waveforms = Array2::from_shape_vec((batch_size, samples_len), samples)?.into_dyn();
 
-        // Create waveforms_lens array [batch_size] with the actual length
         let waveforms_lens = Array1::from_vec(vec![samples_len as i64]).into_dyn();
 
-        // Run recognition to get detailed results
         let results = self.recognize_batch(&waveforms.view(), &waveforms_lens.view())?;
 
-        // Extract the first (and only) result
         let timestamped_result = results.into_iter().next().ok_or_else(|| {
             ParakeetError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
