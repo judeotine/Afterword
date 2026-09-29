@@ -3,13 +3,9 @@ import { getVersion } from '@tauri-apps/api/app';
 import Image from 'next/image';
 import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch";
 import { UpdateDialog } from "./UpdateDialog";
+import { SignInDialog } from "./SignInDialog";
 import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from './ui/tooltip';
 import { useAccount } from '@/hooks/useAccount';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +16,18 @@ export function About() {
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [isChecking, setIsChecking] = useState(false);
     const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+    const [showSignIn, setShowSignIn] = useState(false);
     const account = useAccount();
+
+    const handleTopUp = () => {
+        const base = account.apiBaseUrl?.replace(/\/+$/, '') ?? '';
+        const url = `${base}/v1/billing/checkout`;
+        try {
+            window.open(url, '_blank');
+        } catch {
+            toast.error('Could not open the billing page');
+        }
+    };
 
     useEffect(() => {
         getVersion().then(setCurrentVersion).catch(console.error);
@@ -130,26 +137,32 @@ export function About() {
                     </>
                 )}
                 <div className="flex items-center justify-center gap-2">
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <span tabIndex={0}>
-                                <Button disabled className="text-xs">
-                                    Sign in
-                                </Button>
-                            </span>
-                        </TooltipTrigger>
-                        <TooltipContent>Coming soon</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <span tabIndex={0}>
-                                <Button disabled variant="outline" className="text-xs">
-                                    Top up credits
-                                </Button>
-                            </span>
-                        </TooltipTrigger>
-                        <TooltipContent>Coming soon</TooltipContent>
-                    </Tooltip>
+                    {account.mode === 'local' ? (
+                        <>
+                            <Button className="text-xs" onClick={() => setShowSignIn(true)}>
+                                Sign in
+                            </Button>
+                            <Button variant="outline" className="text-xs" onClick={handleTopUp}>
+                                Top up credits
+                            </Button>
+                        </>
+                    ) : (
+                        <>
+                            <Button variant="outline" className="text-xs" onClick={handleTopUp}>
+                                Top up credits
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="text-xs"
+                                onClick={async () => {
+                                    await account.signOut();
+                                    toast.success('Signed out');
+                                }}
+                            >
+                                Sign out
+                            </Button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -167,6 +180,7 @@ export function About() {
                 onOpenChange={setShowUpdateDialog}
                 updateInfo={updateInfo}
             />
+            <SignInDialog open={showSignIn} onOpenChange={setShowSignIn} />
         </div>
 
     )
