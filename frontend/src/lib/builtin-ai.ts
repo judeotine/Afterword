@@ -1,4 +1,3 @@
-// Types for Built-in AI (Summary Models) integration
 export interface BuiltInModelInfo {
   name: string;
   display_name: string;
@@ -17,7 +16,6 @@ export type BuiltInModelStatus =
   | { type: 'corrupted', file_size: number, expected_min_size: number }
   | { type: 'error', Error: string };
 
-// Helper functions for status handling
 export function isModelAvailable(status: BuiltInModelStatus): boolean {
   return status.type === 'available';
 }
@@ -60,7 +58,6 @@ export function getStatusLabel(status: BuiltInModelStatus): string {
   }
 }
 
-// Tauri command wrappers for Built-in AI backend
 import { invoke } from '@tauri-apps/api/core';
 
 export class BuiltInAIAPI {
