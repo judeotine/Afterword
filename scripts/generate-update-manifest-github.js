@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-/**
- * Generate Tauri Update Manifest from Local Files for GitHub Releases
- *
- * This script generates a Tauri-compatible update manifest JSON file
- * by reading local bundle files and creating GitHub Release URLs.
- *
- * Usage:
- *   node scripts/generate-update-manifest-github.js <version> [bundle-dir] [output-file] [notes]
- *
- * Example:
- *   node scripts/generate-update-manifest-github.js 0.1.2 frontend/src-tauri/target/release/bundle/updater latest.json "Release notes here"
- */
 
 const fs = require('fs');
 const path = require('path');
@@ -23,9 +11,7 @@ if (!version) {
   process.exit(1);
 }
 
-// Detect system architecture for macOS builds
 function detectMacOSArchitecture(bundleDir) {
-  // Check if bundle directory path contains architecture hints
   if (bundleDir.includes('aarch64') || bundleDir.includes('arm64')) {
     return 'darwin-aarch64';
   }
@@ -33,7 +19,6 @@ function detectMacOSArchitecture(bundleDir) {
     return 'darwin-x86_64';
   }
 
-  // Try to detect from system architecture
   try {
     const os = require('os');
     const arch = os.arch();
@@ -46,11 +31,9 @@ function detectMacOSArchitecture(bundleDir) {
     // Fallback if detection fails
   }
 
-  // Default fallback - will be overridden by filename detection if possible
   return null;
 }
 
-// Remove 'v' prefix from version if present
 const versionClean = version.replace(/^v/, '');
 const versionDir = `v${versionClean}`;
 const pubDate = new Date().toISOString();
@@ -60,7 +43,6 @@ console.log(`GitHub Repository: judeotine/Afterword`);
 console.log(`Bundle Directory: ${bundleDir}`);
 console.log('');
 
-// Check if bundle directory exists
 if (!fs.existsSync(bundleDir)) {
   console.error(`Error: Bundle directory not found: ${bundleDir}`);
   console.error('Make sure you\'ve built the release first: pnpm tauri:build');
@@ -69,14 +51,11 @@ if (!fs.existsSync(bundleDir)) {
 
 const platforms = {};
 
-// Read all files in the bundle directory
 const files = fs.readdirSync(bundleDir);
 
-// Filter to only bundle files (not directories or signature files)
 const bundleFiles = files.filter(filename => {
   const filePath = path.join(bundleDir, filename);
   const stats = fs.statSync(filePath);
-  // Only process files (not directories) and skip signature files
   return stats.isFile() && !filename.endsWith('.sig') && (
     filename.endsWith('.tar.gz') ||
     filename.endsWith('.zip') ||
@@ -92,20 +71,16 @@ bundleFiles.forEach(filename => {
   const name = filename.toLowerCase();
   let platform = null;
 
-  // Detect platform from filename
-  // Check for tar.gz bundles first (most common for macOS/Linux)
   if (name.includes('darwin') || name.includes('macos') || name.includes('.dmg') || (name.includes('.app') && name.includes('.tar.gz'))) {
     if (name.includes('aarch64') || name.includes('arm64') || name.includes('m1') || name.includes('m2')) {
       platform = 'darwin-aarch64';
     } else if (name.includes('x86_64') || name.includes('x64') || name.includes('intel')) {
       platform = 'darwin-x86_64';
     } else {
-      // Try to detect from system/bundle directory if filename doesn't specify
       const detectedArch = detectMacOSArchitecture(bundleDir);
       if (detectedArch) {
         platform = detectedArch;
       } else {
-        // Default to aarch64 for modern macOS builds (most common)
         platform = 'darwin-aarch64';
       }
     }
@@ -116,10 +91,8 @@ bundleFiles.forEach(filename => {
   }
 
   if (platform && !platforms[platform]) {
-    // Generate GitHub Release URL
     const githubUrl = `https://github.com/judeotine/Afterword/releases/download/${versionDir}/${filename}`;
 
-    // Check if signature file exists (look for .sig file with same name)
     const sigFile = path.join(bundleDir, `${filename}.sig`);
     let signature = '';
     if (fs.existsSync(sigFile)) {
