@@ -1,18 +1,4 @@
 #!/usr/bin/env node
-/**
- * Local Update Testing Server
- *
- * Simple HTTP server to serve latest.json for local OTA update testing.
- * Use this to test the update flow before publishing to GitHub Releases.
- *
- * Usage:
- *   1. Generate latest.json with the manifest generator script
- *   2. Run: node scripts/test-update-locally.js
- *   3. Update tauri.conf.json endpoint to: http://localhost:8080/latest.json
- *   4. Build and run an older version of the app to test updates
- *
- * Press Ctrl+C to stop the server
- */
 
 const http = require('http');
 const fs = require('fs');
@@ -25,7 +11,6 @@ console.log('=========================================');
 console.log('  Afterword Update Testing Server');
 console.log('=========================================\n');
 
-// Check if latest.json exists
 if (!fs.existsSync(LATEST_JSON_PATH)) {
   console.error(`❌ Error: latest.json not found at ${LATEST_JSON_PATH}`);
   console.error('\nPlease generate it first:');
@@ -38,7 +23,6 @@ if (!fs.existsSync(LATEST_JSON_PATH)) {
   process.exit(1);
 }
 
-// Read and validate latest.json
 let latestJson;
 try {
   const content = fs.readFileSync(LATEST_JSON_PATH, 'utf8');
@@ -52,12 +36,10 @@ try {
   process.exit(1);
 }
 
-// Create HTTP server
 const server = http.createServer((req, res) => {
   const timestamp = new Date().toISOString();
 
   if (req.url === '/latest.json' || req.url === '/') {
-    // Serve latest.json with proper CORS headers
     const content = fs.readFileSync(LATEST_JSON_PATH, 'utf8');
     res.writeHead(200, {
       'Content-Type': 'application/json',
@@ -69,14 +51,12 @@ const server = http.createServer((req, res) => {
     res.end(content);
     console.log(`[${timestamp}] ✓ Served latest.json (${content.length} bytes)`);
   } else {
-    // 404 for other routes
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
     console.log(`[${timestamp}] ✗ 404 - ${req.url}`);
   }
 });
 
-// Start server
 server.listen(PORT, () => {
   console.log('=========================================');
   console.log(`✓ Server running at http://localhost:${PORT}`);
@@ -112,7 +92,6 @@ server.listen(PORT, () => {
   console.log('=========================================\n');
 });
 
-// Handle server errors
 server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
     console.error(`❌ Error: Port ${PORT} is already in use`);
@@ -123,7 +102,6 @@ server.on('error', (error) => {
   process.exit(1);
 });
 
-// Handle graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n\n=========================================');
   console.log('✓ Server stopped');
