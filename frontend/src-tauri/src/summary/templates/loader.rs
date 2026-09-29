@@ -1,14 +1,12 @@
 use super::defaults;
 use super::types::Template;
-use std::path::PathBuf;
-use tracing::{debug, info, warn};
 use once_cell::sync::Lazy;
+use std::path::PathBuf;
 use std::sync::RwLock;
+use tracing::{debug, info, warn};
 
-// Global storage for the bundled templates directory path
 static BUNDLED_TEMPLATES_DIR: Lazy<RwLock<Option<PathBuf>>> = Lazy::new(|| RwLock::new(None));
 
-/// Set the bundled templates directory path (called once at app startup)
 pub fn set_bundled_templates_dir(path: PathBuf) {
     info!("Bundled templates directory set to: {:?}", path);
     if let Ok(mut dir) = BUNDLED_TEMPLATES_DIR.write() {
@@ -16,12 +14,6 @@ pub fn set_bundled_templates_dir(path: PathBuf) {
     }
 }
 
-/// Get the user's custom templates directory path
-///
-/// Returns the platform-specific application data directory for custom templates:
-/// - macOS: ~/Library/Application Support/Afterword/templates/
-/// - Windows: %APPDATA%\Afterword\templates\
-/// - Linux: ~/.config/Afterword/templates/
 fn get_custom_templates_dir() -> Option<PathBuf> {
     let mut path = dirs::data_dir()?;
     path.push("Afterword");
@@ -29,13 +21,6 @@ fn get_custom_templates_dir() -> Option<PathBuf> {
     Some(path)
 }
 
-/// Load a template from the bundled resources directory
-///
-/// # Arguments
-/// * `template_id` - Template identifier (without .json extension)
-///
-/// # Returns
-/// The template JSON content if found, None otherwise
 fn load_bundled_template(template_id: &str) -> Option<String> {
     let bundled_dir = BUNDLED_TEMPLATES_DIR.read().ok()?.clone()?;
     let template_path = bundled_dir.join(format!("{}.json", template_id));
@@ -44,7 +29,10 @@ fn load_bundled_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded bundled template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded bundled template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -54,13 +42,6 @@ fn load_bundled_template(template_id: &str) -> Option<String> {
     }
 }
 
-/// Load a template from the user's custom templates directory
-///
-/// # Arguments
-/// * `template_id` - Template identifier (without .json extension)
-///
-/// # Returns
-/// The template JSON content if found, None otherwise
 fn load_custom_template(template_id: &str) -> Option<String> {
     let custom_dir = get_custom_templates_dir()?;
     let template_path = custom_dir.join(format!("{}.json", template_id));
@@ -69,7 +50,10 @@ fn load_custom_template(template_id: &str) -> Option<String> {
 
     match std::fs::read_to_string(&template_path) {
         Ok(content) => {
-            info!("Loaded custom template '{}' from {:?}", template_id, template_path);
+            info!(
+                "Loaded custom template '{}' from {:?}",
+                template_id, template_path
+            );
             Some(content)
         }
         Err(e) => {
@@ -79,23 +63,9 @@ fn load_custom_template(template_id: &str) -> Option<String> {
     }
 }
 
-/// Load and parse a template by identifier
-///
-/// This function implements a fallback strategy:
-/// 1. Check user's custom templates directory
-/// 2. Check bundled resources directory (app templates)
-/// 3. Fall back to built-in embedded templates
-/// 4. Return error if not found in any location
-///
-/// # Arguments
-/// * `template_id` - Template identifier (e.g., "daily_standup", "standard_meeting")
-///
-/// # Returns
-/// Parsed and validated Template struct
 pub fn get_template(template_id: &str) -> Result<Template, String> {
     info!("Loading template: {}", template_id);
 
-    // Try custom template first, then bundled, then built-in
     let json_content = if let Some(custom_content) = load_custom_template(template_id) {
         debug!("Using custom template for '{}'", template_id);
         custom_content
@@ -113,17 +83,9 @@ pub fn get_template(template_id: &str) -> Result<Template, String> {
         ));
     };
 
-    // Parse and validate
     validate_and_parse_template(&json_content)
 }
 
-/// Validate and parse template JSON
-///
-/// # Arguments
-/// * `json_content` - Raw JSON string
-///
-/// # Returns
-/// Parsed and validated Template struct
 pub fn validate_and_parse_template(json_content: &str) -> Result<Template, String> {
     let template: Template = serde_json::from_str(json_content)
         .map_err(|e| format!("Failed to parse template JSON: {}", e))?;
@@ -133,19 +95,12 @@ pub fn validate_and_parse_template(json_content: &str) -> Result<Template, Strin
     Ok(template)
 }
 
-/// List all available template identifiers
-///
-/// Returns a combined list of:
-/// - Built-in template IDs
-/// - Bundled template IDs (from app resources)
-/// - Custom template IDs (from user's data directory)
 pub fn list_template_ids() -> Vec<String> {
     let mut ids: Vec<String> = defaults::list_builtin_template_ids()
         .into_iter()
         .map(|s| s.to_string())
         .collect();
 
-    // Add bundled templates if directory is set
     if let Ok(bundled_dir_lock) = BUNDLED_TEMPLATES_DIR.read() {
         if let Some(bundled_dir) = bundled_dir_lock.as_ref() {
             if bundled_dir.exists() {
@@ -170,7 +125,6 @@ pub fn list_template_ids() -> Vec<String> {
         }
     }
 
-    // Add custom templates if directory exists
     if let Some(custom_dir) = get_custom_templates_dir() {
         if custom_dir.exists() {
             match std::fs::read_dir(&custom_dir) {
@@ -197,9 +151,6 @@ pub fn list_template_ids() -> Vec<String> {
     ids
 }
 
-/// List all available templates with their metadata
-///
-/// Returns a list of (id, name, description) tuples
 pub fn list_templates() -> Vec<(String, String, String)> {
     let mut templates = Vec::new();
 
