@@ -59,6 +59,7 @@ type BotJob struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EstimatedMinutes   int32              `json:"estimated_minutes"`
 	BotName            *string            `json:"bot_name"`
+	MeetingID          *uuid.UUID         `json:"meeting_id"`
 }
 
 type CalendarConnection struct {
