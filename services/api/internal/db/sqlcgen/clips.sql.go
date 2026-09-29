@@ -156,11 +156,11 @@ func (q *Queries) ListClipsByWorkspace(ctx context.Context, arg ListClipsByWorks
 
 const updateClip = `-- name: UpdateClip :one
 UPDATE clips SET
-    start_s = COALESCE($1, start_s),
-    end_s = COALESCE($2, end_s),
-    title = COALESCE($3, title),
-    object = COALESCE($4, object),
-    share_token = COALESCE($5, share_token)
+    start_s = COALESCE($1, clips.start_s),
+    end_s = COALESCE($2, clips.end_s),
+    title = COALESCE($3, clips.title),
+    object = COALESCE($4, clips.object),
+    share_token = COALESCE($5, clips.share_token)
 FROM meetings
 WHERE clips.meeting_id = meetings.id
   AND clips.id = $6
