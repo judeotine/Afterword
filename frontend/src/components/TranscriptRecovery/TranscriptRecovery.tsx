@@ -1,9 +1,3 @@
-/**
- * TranscriptRecovery Component
- *
- * Modal dialog for recovering interrupted meetings from IndexedDB.
- * Displays recoverable meetings, allows preview, and enables recovery or deletion.
- */
 
 import React, { useState, useEffect } from 'react';
 import { formatDistanceToNow } from 'date-fns';
@@ -45,7 +39,6 @@ export function TranscriptRecovery({
   const [isRecovering, setIsRecovering] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Reset selection when dialog opens
   useEffect(() => {
     if (isOpen) {
       setSelectedMeetingId(null);
@@ -53,7 +46,6 @@ export function TranscriptRecovery({
     }
   }, [isOpen]);
 
-  // Auto-select first meeting if available
   useEffect(() => {
     if (isOpen && recoverableMeetings.length > 0 && !selectedMeetingId) {
       handleMeetingSelect(recoverableMeetings[0].meetingId);
@@ -66,7 +58,6 @@ export function TranscriptRecovery({
 
     try {
       const transcripts = await onLoadPreview(meetingId);
-      // Limit to first 10 for preview
       setPreviewTranscripts(transcripts.slice(0, 10));
     } catch (error) {
       console.error('Failed to load preview:', error);
@@ -214,13 +205,11 @@ export function TranscriptRecovery({
                           </AlertDescription>
                         </Alert>
                         {previewTranscripts.map((transcript, index) => {
-                          // Handle different timestamp formats
                           const getTimestamp = () => {
                             if (!transcript.timestamp) return '--:--';
                             try {
                               const date = new Date(transcript.timestamp);
                               if (isNaN(date.getTime())) {
-                                // If timestamp is invalid, try audio_start_time
                                 if (transcript.audio_start_time !== undefined) {
                                   const totalSecs = Math.floor(transcript.audio_start_time);
                                   const mins = Math.floor(totalSecs / 60);
