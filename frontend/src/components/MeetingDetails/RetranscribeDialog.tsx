@@ -64,7 +64,6 @@ export function RetranscribeDialog({
   const [error, setError] = useState<string | null>(null);
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
 
-  // Use centralized model fetching hook
   const {
     availableModels,
     selectedModelKey,
@@ -74,16 +73,13 @@ export function RetranscribeDialog({
     resetSelection,
   } = useTranscriptionModels(transcriptModelConfig);
 
-  // Stable refs for callbacks to avoid listener re-registration
   const onCompleteRef = useRef(onComplete);
   const onOpenChangeRef = useRef(onOpenChange);
   useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
   useEffect(() => { onOpenChangeRef.current = onOpenChange; }, [onOpenChange]);
 
-  // Track previous open state to only reset on closed→open transition
   const prevOpenRef = useRef(false);
 
-  // Helper to get selected model details (memoized)
   const selectedModelDetails = useMemo((): ModelOption | undefined => {
     if (!selectedModelKey) return undefined;
     const colonIndex = selectedModelKey.indexOf(':');
@@ -100,8 +96,6 @@ export function RetranscribeDialog({
     }
   }, [isParakeetModel, selectedLang]);
 
-  // Reset state only when dialog transitions from closed to open
-  // This prevents re-initialization when config changes while dialog is already open
   useEffect(() => {
     const wasOpen = prevOpenRef.current;
     prevOpenRef.current = open;
@@ -113,12 +107,10 @@ export function RetranscribeDialog({
       setError(null);
       setSelectedLang(selectedLanguage || 'auto');
 
-      // Fetch available models using centralized hook
       fetchModels();
     }
   }, [open, selectedLanguage, transcriptModelConfig, fetchModels]);
 
-  // Listen for retranscription events
   useEffect(() => {
     if (!open) return;
 
@@ -126,7 +118,6 @@ export function RetranscribeDialog({
     const cleanedUpRef = { current: false };
 
     const setupListeners = async () => {
-      // Progress events
       const unlistenProgress = await listen<RetranscriptionProgress>(
         'retranscription-progress',
         (event) => {
@@ -141,7 +132,6 @@ export function RetranscribeDialog({
       }
       unlisteners.push(unlistenProgress);
 
-      // Completion event
       const unlistenComplete = await listen<RetranscriptionResult>(
         'retranscription-complete',
         async (event) => {
@@ -168,7 +158,6 @@ export function RetranscribeDialog({
       }
       unlisteners.push(unlistenComplete);
 
-      // Error event
       const unlistenError = await listen<RetranscriptionError>(
         'retranscription-error',
         async (event) => {
@@ -244,7 +233,6 @@ export function RetranscribeDialog({
     onOpenChange(false);
   };
 
-  // Prevent closing during processing
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen && isProcessing) {
       return;
