@@ -30,7 +30,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [showRecordingNotification, setShowRecordingNotification] = useState(true);
 
-  // Load recording preferences on component mount
   useEffect(() => {
     const loadPreferences = async () => {
       try {
@@ -38,7 +37,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         setPreferences(prefs);
       } catch (error) {
         console.error('Failed to load recording preferences:', error);
-        // If loading fails, get default folder path
         try {
           const defaultPath = await invoke<string>('get_default_recordings_folder_path');
           setPreferences(prev => ({ ...prev, save_folder: defaultPath }));
@@ -53,7 +51,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     loadPreferences();
   }, []);
 
-  // Load recording notification preference
   useEffect(() => {
     const loadNotificationPref = async () => {
       try {
@@ -73,7 +70,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     setPreferences(newPreferences);
     await savePreferences(newPreferences);
 
-    // Track auto-save setting change
     await Analytics.track('auto_save_recording_toggled', {
       enabled: enabled.toString()
     });
@@ -88,8 +84,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     setPreferences(newPreferences);
     await savePreferences(newPreferences);
 
-    // Track default device preference changes
-    // Note: Individual device selection analytics are tracked in DeviceSelection component
     await Analytics.track('default_devices_changed', {
       has_preferred_microphone: (!!devices.micDevice).toString(),
       has_preferred_system_audio: (!!devices.systemDevice).toString()
@@ -127,7 +121,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       await invoke('set_recording_preferences', { preferences: prefs });
       onSave?.(prefs);
 
-      // Show success toast with device details
       const micDevice = prefs.preferred_mic_device || 'Default';
       const systemDevice = prefs.preferred_system_device || 'Default';
       toast.success("Device preferences saved", {
