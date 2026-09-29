@@ -59,9 +59,7 @@ export function DownloadProgressStep() {
   const retryingRef = useRef(false);
   const retryingSummaryRef = useRef(false);
 
-  // Retry download handler
   const handleRetryDownload = async () => {
-    // Prevent multiple simultaneous retries
     if (retryingRef.current) {
       console.log('[DownloadProgressStep] Retry already in progress, ignoring');
       return;
@@ -70,7 +68,6 @@ export function DownloadProgressStep() {
     console.log('[DownloadProgressStep] Retrying Parakeet download');
     retryingRef.current = true;
 
-    // Reset error state
     setParakeetState((prev) => ({
       ...prev,
       status: 'waiting',
@@ -95,16 +92,13 @@ export function DownloadProgressStep() {
         description: 'Please check your connection and try again.',
       });
     } finally {
-      // Allow retry again after 2 seconds
       setTimeout(() => {
         retryingRef.current = false;
       }, 2000);
     }
   };
 
-  // Retry summary download handler
   const handleRetrySummaryDownload = async () => {
-    // Prevent multiple simultaneous retries
     if (retryingSummaryRef.current) {
       console.log('[DownloadProgressStep] Summary retry already in progress, ignoring');
       return;
@@ -113,7 +107,6 @@ export function DownloadProgressStep() {
     console.log('[DownloadProgressStep] Retrying summary model download');
     retryingSummaryRef.current = true;
 
-    // Reset error state
     setSummaryState((prev) => ({
       ...prev,
       status: 'downloading',
@@ -125,7 +118,6 @@ export function DownloadProgressStep() {
     }));
 
     try {
-      // Call download command directly (no retry command exists for built-in AI)
       const modelName = selectedSummaryModel;
       if (!modelName) {
         throw new Error('Summary model recommendation is not ready yet');
@@ -143,14 +135,12 @@ export function DownloadProgressStep() {
         description: 'Please check your connection and try again.',
       });
     } finally {
-      // Allow retry again after 2 seconds
       setTimeout(() => {
         retryingSummaryRef.current = false;
       }, 2000);
     }
   };
 
-  // Detect platform on mount
   useEffect(() => {
     const checkPlatform = async () => {
       try {
@@ -164,7 +154,6 @@ export function DownloadProgressStep() {
     checkPlatform();
   }, []);
 
-  // Start the required transcription model immediately; summary readiness must not block it.
   useEffect(() => {
     if (parakeetDownloadStartedRef.current) return;
     parakeetDownloadStartedRef.current = true;
@@ -184,7 +173,6 @@ export function DownloadProgressStep() {
     });
   }, []);
 
-  // Start the selected summary model only after the backend recommendation is known.
   useEffect(() => {
     if (summaryDownloadStartedRef.current) return;
     if (!selectedSummaryModel) return;
@@ -193,7 +181,6 @@ export function DownloadProgressStep() {
     startSummaryDownload();
   }, [selectedSummaryModel]);
 
-  // Listen to Parakeet download progress
   useEffect(() => {
     const unlistenProgress = listen<{
       modelName: string;
@@ -250,7 +237,6 @@ export function DownloadProgressStep() {
     };
   }, []);
 
-  // Listen to Summary Model download progress (always downloading for builtin-ai)
   useEffect(() => {
     const unlisten = listen<{
       model: string;
@@ -329,7 +315,6 @@ export function DownloadProgressStep() {
   };
 
   const handleContinue = async () => {
-    // Verify actual model availability (catches state drift)
     try {
       await invoke('parakeet_init');
       const actuallyAvailable = await invoke<boolean>('parakeet_has_available_models');
@@ -352,11 +337,9 @@ export function DownloadProgressStep() {
       console.warn('[DownloadProgressStep] Failed to verify model:', error);
     }
 
-    // Check if downloads are complete for toast notification
     const downloadsComplete = parakeetState.status === 'completed' &&
       summaryState.status === 'completed';
 
-    // Show toast if downloads still in progress
     if (!downloadsComplete) {
       toast.info('Downloads will continue in the background', {
         description: 'You can start using the app. Recording will be available once speech recognition is ready.',
@@ -365,15 +348,12 @@ export function DownloadProgressStep() {
     }
 
     if (isMac) {
-      // macOS: Go to Permissions step (will complete after permissions granted)
       goNext();
     } else {
-      // Non-macOS: Complete onboarding immediately (downloads continue in background)
       setIsCompleting(true);
       try {
         await completeOnboarding();
 
-        // Small delay to ensure state is saved before reload
         await new Promise(resolve => setTimeout(resolve, 100));
 
         window.location.reload();
