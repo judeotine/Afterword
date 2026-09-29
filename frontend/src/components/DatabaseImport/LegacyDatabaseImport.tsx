@@ -23,7 +23,6 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
     try {
       setImportState('selecting');
 
-      // Open file picker
       const selectedPath = await invoke<string | null>('select_legacy_database_path');
 
       if (!selectedPath) {
@@ -33,7 +32,6 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
 
       setImportState('detecting');
 
-      // Detect database from selected path
       const dbPath = await invoke<string | null>('detect_legacy_database', {
         selectedPath,
       });
@@ -68,7 +66,6 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
       setImportState('success');
       toast.success('Database imported successfully! Reloading...');
 
-      // Wait 1 second for user to see success, then reload window to refresh all data
       setTimeout(() => {
         window.location.reload();
       }, 1000);
@@ -90,7 +87,6 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
       setImportState('success');
       toast.success('Database initialized successfully! Starting app...');
 
-      // Wait 1 second for user to see success, then reload window to start fresh
       setTimeout(() => {
         window.location.reload();
       }, 1000);
@@ -107,7 +103,6 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
   const canImport = detectedPath && importState === 'idle';
 
   const handleHomebrewImportSuccess = () => {
-    // The HomebrewDatabaseDetector handles the reload itself
     onComplete();
   };
 
@@ -127,7 +122,7 @@ export function LegacyDatabaseImport({ isOpen, onComplete }: LegacyDatabaseImpor
 
         <div className="space-y-6 py-4">
           {/* Homebrew Database Auto-Detection */}
-          <HomebrewDatabaseDetector 
+          <HomebrewDatabaseDetector
             onImportSuccess={handleHomebrewImportSuccess}
             onDecline={handleHomebrewDecline}
           />
