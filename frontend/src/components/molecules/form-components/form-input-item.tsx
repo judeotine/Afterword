@@ -7,13 +7,13 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Eye, EyeOff } from 'lucide-react';
-import { Control } from 'react-hook-form'; // Import Control type
+import { Control } from 'react-hook-form';
 import { Textarea } from '@/components/ui/textarea';
 
 type IInpuItemProps = {
   name: string;
   placeholder?: string;
-  control: Control<any>; // Add control prop of type Control
+  control: Control<any>;
   type:
     | 'button'
     | 'checkbox'
@@ -71,13 +71,12 @@ export const FormInputItem = ({
   return (
     <div>
       <FormField
-        control={control} // Use the control prop passed from the parent
+        control={control}
         name={name}
         defaultValue={defaultValue}
         disabled={disabled}
         render={({ field }) => (
           <FormItem
-          // className={formStyle}
           >
             <div className={formStyle}>
               <FormLabel className={formLabelStyle}>{label}</FormLabel>
