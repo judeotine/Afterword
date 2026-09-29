@@ -1,12 +1,9 @@
-// src/database/repo/transcript_chunks.rs
-
 use chrono::Utc;
 use log::info as log_info;
 use sqlx::SqlitePool;
 pub struct TranscriptChunksRepository;
 
 impl TranscriptChunksRepository {
-    /// Saves the full transcript text and processing parameters.
     pub async fn save_transcript_data(
         pool: &SqlitePool,
         meeting_id: &str,
