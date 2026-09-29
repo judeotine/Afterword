@@ -185,18 +185,20 @@ export function PreferenceSettings() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Desktop notifications</h3>
-            <p className="text-sm text-gray-600">Let Afterword show system notifications. Off by default.</p>
+            <p className="text-sm text-gray-600">Allow Afterword to show system notifications. Off by default.</p>
           </div>
           <Switch checked={consentGiven} onCheckedChange={handleConsentChange} />
         </div>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Notifications</h3>
-            <p className="text-sm text-gray-600">Enable or disable notifications of start and end of meeting</p>
+        {consentGiven && (
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Recording alerts</h3>
+              <p className="text-sm text-gray-600">Notify me when a recording starts and stops.</p>
+            </div>
+            <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
           </div>
-          <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
-        </div>
+        )}
 
         {dndStatus?.supported && (
           <div className="flex items-center justify-between">
@@ -220,36 +222,6 @@ export function PreferenceSettings() {
         </p>
 
         <div className="space-y-4">
-          {/* Database Location */}
-          {/* <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Database</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.database || 'Loading...'}
-            </div>
-            <button
-              onClick={() => handleOpenFolder('database')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
-          </div> */}
-
-          {/* Models Location */}
-          {/* <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Whisper Models</div>
-            <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.models || 'Loading...'}
-            </div>
-            <button
-              onClick={() => handleOpenFolder('models')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
-          </div> */}
-
           {/* Recordings Location */}
           <div className="p-4 border rounded-lg bg-gray-50">
             <div className="font-medium mb-2">Meeting Recordings</div>
@@ -268,7 +240,7 @@ export function PreferenceSettings() {
 
         <div className="mt-4 p-3 bg-blue-50 rounded-md">
           <p className="text-xs text-blue-800">
-            <strong>Note:</strong> Database and models are stored together in your application data directory for unified management.
+            <strong>Note:</strong> Transcripts, summaries and models are stored in your application data directory and never leave this device unless you sign in to sync.
           </p>
         </div>
       </div>
