@@ -402,6 +402,7 @@ func buildBotJobs(cfg config.Config, pool *db.Pool, components apiComponents, lo
 		BotJobs:      service,
 		Entitlements: entitlements,
 		Middleware:   components.middleware,
+		WorkerAuth:   auth.NewWorkerAuth(os.Getenv("WORKER_TOKEN")),
 	})
 }
 
