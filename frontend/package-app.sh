@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Exit on error
 set -e
 
 echo "Cleaning up previous builds..."
