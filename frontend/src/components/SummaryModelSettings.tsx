@@ -9,7 +9,7 @@ import { Switch } from './ui/switch';
 import { useConfig } from '@/contexts/ConfigContext';
 
 interface SummaryModelSettingsProps {
-  refetchTrigger?: number; // Change this to trigger refetch
+  refetchTrigger?: number;
 }
 
 export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsProps) {
@@ -23,12 +23,10 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
 
   const { isAutoSummary, toggleIsAutoSummary } = useConfig();
 
-  // Reusable fetch function
   const fetchModelConfig = useCallback(async () => {
     try {
       const data = await invoke('api_get_model_config') as any;
       if (data && data.provider !== null) {
-        // Fetch API key if not included and provider requires it
         if (data.provider !== 'ollama' && data.provider !== 'builtin-ai' && !data.apiKey) {
           try {
             const apiKeyData = await invoke('api_get_api_key', {
@@ -39,7 +37,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
             console.error('Failed to fetch API key:', err);
           }
         }
-        // Fetch Custom OpenAI config if that's the active provider
         if (data.provider === 'custom-openai') {
           try {
             const customConfig = (await invoke('api_get_custom_openai_config')) as any;
@@ -51,7 +48,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
               data.maxTokens = customConfig.maxTokens || null;
               data.temperature = customConfig.temperature || null;
               data.topP = customConfig.topP || null;
-              // For custom-openai, model field should match customOpenAIModel
               data.model = customConfig.model || data.model;
             }
           } catch (err) {
@@ -66,19 +62,16 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
     }
   }, []);
 
-  // Fetch on mount
   useEffect(() => {
     fetchModelConfig();
   }, [fetchModelConfig]);
 
-  // Refetch when trigger changes (optional external control)
   useEffect(() => {
     if (refetchTrigger !== undefined && refetchTrigger > 0) {
       fetchModelConfig();
     }
   }, [refetchTrigger, fetchModelConfig]);
 
-  // Listen for model config updates from other components
   useEffect(() => {
     const setupListener = async () => {
       const { listen } = await import('@tauri-apps/api/event');
@@ -98,7 +91,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
     };
   }, []);
 
-  // Save handler
   const handleSaveModelConfig = async (config: ModelConfig) => {
     try {
       await invoke('api_save_model_config', {
@@ -111,7 +103,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
 
       setModelConfig(config);
 
-      // Emit event to sync other components
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
 
