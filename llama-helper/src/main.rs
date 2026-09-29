@@ -15,10 +15,6 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use serde::{Deserialize, Serialize};
 
-// ============================================================================
-// Protocol Messages (JSON over stdin/stdout)
-// ============================================================================
-
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Request {
@@ -27,7 +23,7 @@ enum Request {
         max_tokens: Option<i32>,
         context_size: Option<u32>,
         model_path: Option<String>,
-        // Sampling parameters
+
         temperature: Option<f32>,
         top_k: Option<i32>,
         top_p: Option<f32>,
@@ -123,15 +119,9 @@ impl SamplingConfig {
     }
 }
 
-// ============================================================================
-// VRAM Detection and GPU Layer Calculation
-// ============================================================================
-
-/// Detect available VRAM in GB
 fn detect_vram_gb() -> f32 {
     #[cfg(feature = "metal")]
     {
-        // macOS Metal: Query recommended max working set size
         if let Some(vram) = detect_metal_vram() {
             eprintln!("Metal VRAM detected: {:.2} GB", vram);
             return vram;
@@ -140,17 +130,14 @@ fn detect_vram_gb() -> f32 {
 
     #[cfg(feature = "cuda")]
     {
-        // NVIDIA CUDA: Query device memory
         if let Some(vram) = detect_cuda_vram() {
             eprintln!("CUDA VRAM detected: {:.2} GB", vram);
             return vram;
         }
     }
 
-    /// TODO: Vulkan VRAM detection
-
     eprintln!("VRAM detection not available, using conservative estimate");
-    4.0 // Conservative fallback
+    4.0
 }
 
 #[cfg(feature = "metal")]
@@ -163,7 +150,7 @@ fn detect_metal_vram() -> Option<f32> {
             if let Some(bytes_str) = stdout.split(':').nth(1) {
                 if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
                     let gb = bytes as f32 / (1024.0 * 1024.0 * 1024.0);
-                    // Assume GPU can use ~60% of system memory on Apple Silicon
+
                     return Some(gb * 0.6);
                 }
             }
@@ -174,21 +161,19 @@ fn detect_metal_vram() -> Option<f32> {
 
 #[cfg(feature = "cuda")]
 fn detect_cuda_vram() -> Option<f32> {
-    // Use nvidia-smi to query VRAM
     if let Ok(output) = std::process::Command::new("nvidia-smi")
         .args(&["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
         .output()
     {
         if let Ok(stdout) = String::from_utf8(output.stdout) {
             if let Ok(mb) = stdout.trim().parse::<f32>() {
-                return Some(mb / 1024.0); // Convert MB to GB
+                return Some(mb / 1024.0);
             }
         }
     }
     None
 }
 
-/// Calculate safe GPU layer count based on VRAM, model file size, and context size
 fn calculate_gpu_layers(
     model_path: &PathBuf,
     model_layers: u32,
@@ -204,16 +189,11 @@ fn calculate_gpu_layers(
         return 0;
     }
 
-    // Heuristic: Estimate KV cache size
-    // 7B models (approx > 2.5GB) usually have 4096 hidden dim -> ~256MB per 1k context
-    // 1B models (approx < 2.5GB) usually have 2048 hidden dim -> ~128MB per 1k context
     let kv_per_1k_gb = if file_size_gb > 2.5 { 0.25 } else { 0.12 };
     let total_kv_gb = (context_size as f32 / 1000.0) * kv_per_1k_gb;
 
-    // Safety buffer (500MB) for OS/Display
     let safe_vram = vram_gb - 0.5;
 
-    // For debugging
     eprintln!("📊 VRAM Analysis:");
     eprintln!("   • Available: {:.2} GB", vram_gb);
     eprintln!("   • Safe Limit: {:.2} GB", safe_vram);
@@ -228,12 +208,10 @@ fn calculate_gpu_layers(
         return 0;
     }
 
-    // Calculate cost per layer
     let weight_per_layer = file_size_gb / model_layers as f32;
     let kv_per_layer = total_kv_gb / model_layers as f32;
     let total_per_layer = weight_per_layer + kv_per_layer;
 
-    // Calculate how many layers fit
     let safe_layers = (safe_vram / total_per_layer).floor() as u32;
     let layers = safe_layers.min(model_layers);
 
@@ -258,13 +236,9 @@ fn calculate_gpu_layers(
     layers
 }
 
-/// Get default GPU layer count with smart detection
 fn get_default_gpu_layers(model_path: &PathBuf, context_size: u32) -> u32 {
     let vram = detect_vram_gb();
-    // TODO: Use actual model metadata instead of heuristics
-    // Heuristic: Estimate total layers based on file size
-    // 7B models (Q4) are ~4.1GB and have ~32-35 layers
-    // 1B models (Q4) are ~1.1GB and have ~20-28 layers
+
     let file_size_gb = std::fs::metadata(model_path)
         .map(|m| m.len() as f32 / 1024.0 / 1024.0 / 1024.0)
         .unwrap_or(0.0);
@@ -273,10 +247,6 @@ fn get_default_gpu_layers(model_path: &PathBuf, context_size: u32) -> u32 {
 
     calculate_gpu_layers(model_path, estimated_layers, vram, context_size)
 }
-
-// ============================================================================
-// Model State Management
-// ============================================================================
 
 struct ModelState {
     backend: LlamaBackend,
@@ -315,7 +285,6 @@ impl ModelState {
     }
 
     fn load_model_if_needed(&mut self, model_path: PathBuf, context_size: u32) -> Result<()> {
-        // Check if model is already loaded
         if let Some(ref loaded_path) = self.model_path {
             if loaded_path == &model_path && self.context_size == context_size {
                 eprintln!("✓ Model already loaded");
@@ -326,10 +295,8 @@ impl ModelState {
 
         eprintln!("📥 Loading model: {}", model_path.display());
 
-        // Detect GPU layers
         let gpu_layers = get_default_gpu_layers(&model_path, context_size);
 
-        // Configure model parameters with GPU offload
         let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
         let model_params = pin!(model_params);
 
@@ -355,8 +322,6 @@ impl ModelState {
         let start_time = Instant::now();
         let model = self.model.as_ref().context("Model not loaded")?;
 
-        // Calculate thread count (conservative default: max(1, (Cores / 2) + 2))
-        // This ensures the UI thread is never starved
         let threads: i32 = std::thread::available_parallelism()
             .map(|n| {
                 let cores = n.get() as i32;
@@ -382,7 +347,6 @@ impl ModelState {
 
         eprintln!("📝 Tokenized prompt: {} tokens", tokens_list.len());
 
-        // Use context size for batch capacity to handle long prompts
         let batch_size = self.context_size as usize;
         let mut batch = LlamaBatch::new(batch_size, 1);
 
@@ -448,7 +412,6 @@ impl ModelState {
         let mut sampler = pin!(sampler);
 
         loop {
-            // Check if we've generated enough tokens
             if (n_cur - n_prompt_tokens) >= max_tokens {
                 eprintln!("✓ Reached max_tokens limit");
                 break;
@@ -482,7 +445,6 @@ impl ModelState {
             let _ = decoder.decode_to_string(&output_bytes, &mut token_text, false);
             output.push_str(&token_text);
 
-            // Check for model-specific stop tokens
             let mut should_stop = false;
             for stop_token in &stop_tokens {
                 if output.contains(stop_token) {
@@ -491,7 +453,7 @@ impl ModelState {
                         stop_token,
                         output.len()
                     );
-                    // Remove the stop token from output
+
                     output = output.replace(stop_token, "").trim_end().to_string();
                     should_stop = true;
                     break;
@@ -509,7 +471,6 @@ impl ModelState {
             ctx.decode(&mut batch).context("failed to eval")?;
         }
 
-        // Generation statistics
         let total_time = start_time.elapsed();
         let gen_time = total_time.saturating_sub(prompt_time);
         let output_tokens = (n_cur - n_prompt_tokens) as u64;
@@ -534,10 +495,6 @@ impl ModelState {
     }
 }
 
-// ============================================================================
-// Main Loop with Keep-Alive Protocol
-// ============================================================================
-
 fn send_response(response: &Response) -> Result<()> {
     let json = serde_json::to_string(response)?;
     println!("{}", json);
@@ -546,11 +503,10 @@ fn send_response(response: &Response) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    // Get idle timeout from environment variable (default 5 minutes)
     let idle_timeout_secs = std::env::var("LLAMA_IDLE_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(300); // 5 minutes default
+        .unwrap_or(300);
 
     eprintln!(
         "🦙 llama-helper starting (idle timeout: {}s)",
@@ -564,18 +520,15 @@ fn main() -> Result<()> {
     let mut buffer = String::new();
 
     loop {
-        // Check idle timeout
         if state.seconds_since_activity() > idle_timeout_secs {
             eprintln!("💤 Idle timeout reached, shutting down");
             send_response(&Response::Goodbye)?;
             break;
         }
 
-        // Read line from stdin
         buffer.clear();
         match stdin_lock.read_line(&mut buffer) {
             Ok(0) => {
-                // EOF reached
                 eprintln!("📪 EOF received, shutting down");
                 break;
             }
@@ -585,7 +538,6 @@ fn main() -> Result<()> {
                     continue;
                 }
 
-                // Parse request
                 match serde_json::from_str::<Request>(line) {
                     Ok(Request::Generate {
                         prompt,
@@ -615,7 +567,6 @@ fn main() -> Result<()> {
                         );
                         let stop_tokens = stop_tokens.unwrap_or_else(Vec::new);
 
-                        // Load model if path provided
                         if let Some(path_str) = model_path {
                             let path = PathBuf::from(path_str);
                             if let Err(e) = state.load_model_if_needed(path, context_size) {
@@ -627,13 +578,7 @@ fn main() -> Result<()> {
                             }
                         }
 
-                        // Generate response with sampling parameters
-                        match state.generate(
-                            prompt,
-                            max_tokens,
-                            sampling,
-                            stop_tokens,
-                        ) {
+                        match state.generate(prompt, max_tokens, sampling, stop_tokens) {
                             Ok(text) => {
                                 send_response(&Response::Response { text, error: None })?;
                             }
@@ -679,7 +624,8 @@ mod tests {
 
     #[test]
     fn generate_request_defaults_penalties_when_omitted() {
-        let json = r#"{"type":"generate","prompt":"summarize","temperature":0.5,"top_k":20,"top_p":0.8}"#;
+        let json =
+            r#"{"type":"generate","prompt":"summarize","temperature":0.5,"top_k":20,"top_p":0.8}"#;
         let request: Request = serde_json::from_str(json).unwrap();
         let Request::Generate {
             temperature,
@@ -690,7 +636,8 @@ mod tests {
             repeat_penalty,
             penalty_last_n,
             ..
-        } = request else {
+        } = request
+        else {
             panic!("expected generate request");
         };
 
@@ -724,7 +671,8 @@ mod tests {
             repeat_penalty,
             penalty_last_n,
             ..
-        } = request else {
+        } = request
+        else {
             panic!("expected generate request");
         };
 
