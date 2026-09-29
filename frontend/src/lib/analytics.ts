@@ -27,12 +27,10 @@ export class Analytics {
   private static deviceInfo: DeviceInfo | null = null;
 
   static async init(): Promise<void> {
-    // Prevent duplicate initialization
     if (this.initialized) {
       return;
     }
 
-    // If already initializing, wait for it to complete
     if (this.initializationPromise) {
       return this.initializationPromise;
     }
@@ -102,7 +100,6 @@ export class Analytics {
     }
   }
 
-  // Enhanced user tracking methods for Phase 1
   static async startSession(userId: string): Promise<string | null> {
     if (!this.initialized) {
       console.warn('Analytics not initialized');
@@ -112,7 +109,7 @@ export class Analytics {
     try {
       const sessionId = await invoke('start_analytics_session', { userId });
       this.currentUserId = userId;
-      
+
       return sessionId as string;
     } catch (error) {
       console.error('Failed to start analytics session:', error);
@@ -161,27 +158,23 @@ export class Analytics {
     }
   }
 
-  // User ID management with persistent storage
   static async getPersistentUserId(): Promise<string> {
     try {
-      // First check if we have a stored user ID
       const { Store } = await import('@tauri-apps/plugin-store');
       const store = await Store.load('analytics.json');
-      
+
       let userId = await store.get<string>('user_id');
-      
+
       if (!userId) {
-        // Generate new user ID
         userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         await store.set('user_id', userId);
         await store.set('is_first_launch', true);
         await store.save();
       }
-      
+
       return userId;
     } catch (error) {
       console.error('Failed to get persistent user ID:', error);
-      // Fallback to session storage
       let userId = sessionStorage.getItem('afterword_user_id');
       if (!userId) {
         userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -196,9 +189,9 @@ export class Analytics {
     try {
       const { Store } = await import('@tauri-apps/plugin-store');
       const store = await Store.load('analytics.json');
-      
+
       const isFirstLaunch = await store.get<boolean>('is_first_launch');
-      
+
       if (isFirstLaunch) {
         await this.trackUserFirstLaunch();
         await store.set('is_first_launch', false);
@@ -206,7 +199,6 @@ export class Analytics {
       }
     } catch (error) {
       console.error('Failed to check first launch:', error);
-      // Fallback to session storage
       const isFirstLaunch = sessionStorage.getItem('is_first_launch') === 'true';
       if (isFirstLaunch) {
         await this.trackUserFirstLaunch();
@@ -219,10 +211,10 @@ export class Analytics {
     try {
       const { Store } = await import('@tauri-apps/plugin-store');
       const store = await Store.load('analytics.json');
-      
+
       const today = new Date().toISOString().split('T')[0];
       const lastTrackedDate = await store.get<string>('last_daily_tracked');
-      
+
       if (lastTrackedDate !== today) {
         await this.trackDailyActiveUser();
         await store.set('last_daily_tracked', today);
@@ -237,10 +229,8 @@ export class Analytics {
     return this.currentUserId;
   }
 
-  // Platform/Device detection methods
   static async getPlatform(): Promise<string> {
     try {
-      // Use browser's user agent as fallback
       const userAgent = navigator.userAgent.toLowerCase();
       if (userAgent.includes('mac')) return 'macOS';
       if (userAgent.includes('win')) return 'Windows';
@@ -255,7 +245,6 @@ export class Analytics {
   static async getOSVersion(): Promise<string> {
     try {
       const platform = await this.getPlatform();
-      // Use navigator.userAgent for version info
       const userAgent = navigator.userAgent;
       return `${platform} (${userAgent})`;
     } catch (error) {
@@ -271,7 +260,6 @@ export class Analytics {
       const platform = await this.getPlatform();
       const osVersion = await this.getOSVersion();
 
-      // Detect architecture from user agent
       const userAgent = navigator.userAgent.toLowerCase();
       let architecture = 'unknown';
       if (userAgent.includes('arm') || userAgent.includes('aarch64')) {
@@ -299,7 +287,6 @@ export class Analytics {
     }
   }
 
-  // Helper methods for analytics.json store
   static async calculateDaysSince(dateKey: string): Promise<number | null> {
     try {
       const { Store } = await import('@tauri-apps/plugin-store');
@@ -323,7 +310,6 @@ export class Analytics {
       await store.set('total_meetings', totalMeetings);
       await store.set('last_meeting_date', new Date().toISOString());
 
-      // Update daily count
       const today = new Date().toISOString().split('T')[0];
       const dailyCounts = await store.get<Record<string, number>>('daily_meeting_counts') || {};
       dailyCounts[today] = (dailyCounts[today] || 0) + 1;
@@ -381,7 +367,6 @@ export class Analytics {
     }
   }
 
-  // Enhanced session tracking with platform info
   static async trackSessionStarted(sessionId: string): Promise<void> {
     if (!this.initialized) return;
 
@@ -414,7 +399,7 @@ export class Analytics {
 
     try {
       const deviceInfo = await this.getDeviceInfo();
-      const sessionDuration = (Date.now() - this.sessionStartTime) / 1000; // seconds
+      const sessionDuration = (Date.now() - this.sessionStartTime) / 1000;
 
       await this.track('session_ended', {
         session_id: sessionId,
@@ -428,7 +413,6 @@ export class Analytics {
     }
   }
 
-  // Enhanced meeting completion tracking
   static async trackMeetingCompleted(meetingId: string, metrics: {
     duration_seconds: number;
     transcript_segments: number;
@@ -460,7 +444,6 @@ export class Analytics {
     }
   }
 
-  // Feature usage tracking with platform info
   static async trackFeatureUsedEnhanced(featureName: string, properties?: Record<string, any>): Promise<void> {
     if (!this.initialized) return;
 
@@ -476,7 +459,6 @@ export class Analytics {
         os_version: deviceInfo.os_version
       };
 
-      // Add additional properties if provided
       if (properties) {
         Object.entries(properties).forEach(([key, value]) => {
           trackingProperties[key] = String(value);
@@ -489,7 +471,6 @@ export class Analytics {
     }
   }
 
-  // Copy tracking with frequency
   static async trackCopy(copyType: 'transcript' | 'summary', properties?: Record<string, any>): Promise<void> {
     if (!this.initialized) return;
 
@@ -498,13 +479,11 @@ export class Analytics {
       const { Store } = await import('@tauri-apps/plugin-store');
       const store = await Store.load('analytics.json');
 
-      // Get today's date
       const today = new Date().toISOString().split('T')[0];
       const copyCounts = await store.get<Record<string, any>>('copy_counts') || {};
       const todayCounts = copyCounts[today] || {};
       const copyCount = todayCounts[copyType] || 0;
 
-      // Update copy count
       todayCounts[copyType] = copyCount + 1;
       copyCounts[today] = todayCounts;
       await store.set('copy_counts', copyCounts);
@@ -517,7 +496,6 @@ export class Analytics {
         os_version: deviceInfo.os_version
       };
 
-      // Add additional properties if provided
       if (properties) {
         Object.entries(properties).forEach(([key, value]) => {
           trackingProperties[key] = String(value);
@@ -530,7 +508,6 @@ export class Analytics {
     }
   }
 
-  // Meeting-specific tracking methods
   static async trackMeetingStarted(meetingId: string): Promise<void> {
     if (!this.initialized) return;
 
@@ -591,7 +568,6 @@ export class Analytics {
     }
   }
 
-  // Convenience methods for common events
   static async trackPageView(pageName: string): Promise<void> {
     await this.track(`page_view_${pageName}`, { page: pageName });
   }
@@ -603,47 +579,42 @@ export class Analytics {
   }
 
   static async trackError(errorType: string, errorMessage: string): Promise<void> {
-    await this.track('error', { 
-      error_type: errorType, 
-      error_message: errorMessage 
+    await this.track('error', {
+      error_type: errorType,
+      error_message: errorMessage
     });
   }
 
   static async trackAppStarted(): Promise<void> {
-    await this.track('app_started', { 
-      timestamp: new Date().toISOString() 
+    await this.track('app_started', {
+      timestamp: new Date().toISOString()
     });
   }
 
-  // Cleanup method for app shutdown
   static async cleanup(): Promise<void> {
     await this.endSession();
   }
 
-  // Reset initialization state (useful for testing)
   static reset(): void {
     this.initialized = false;
     this.currentUserId = null;
     this.initializationPromise = null;
   }
 
-  // Wait for analytics to be initialized
   static async waitForInitialization(timeout: number = 5000): Promise<boolean> {
     if (this.initialized) {
       return true;
     }
-    
+
     const startTime = Date.now();
     while (!this.initialized && (Date.now() - startTime) < timeout) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    
+
     return this.initialized;
   }
 
-  // Track backend connection success/failure
   static async trackBackendConnection(success: boolean, error?: string) {
-    // Wait for analytics to be initialized
     const isInitialized = await this.waitForInitialization();
     if (!isInitialized) {
       console.warn('Analytics not initialized within timeout, skipping backend connection tracking');
@@ -666,7 +637,6 @@ export class Analytics {
     }
   }
 
-  // Track transcription errors
   static async trackTranscriptionError(errorMessage: string) {
     if (!this.initialized) {
       console.warn('Analytics not initialized, skipping transcription error tracking');
@@ -688,7 +658,6 @@ export class Analytics {
     }
   }
 
-  // Track transcription success
   static async trackTranscriptionSuccess(duration?: number) {
     if (!this.initialized) {
       console.warn('Analytics not initialized, skipping transcription success tracking');
@@ -710,7 +679,6 @@ export class Analytics {
     }
   }
 
-  // Summary generation analytics
   static async trackSummaryGenerationStarted(
     modelProvider: string,
     modelName: string,
@@ -751,10 +719,10 @@ export class Analytics {
   }
 
   static async trackSummaryGenerationCompleted(
-    modelProvider: string, 
-    modelName: string, 
-    success: boolean, 
-    durationSeconds?: number, 
+    modelProvider: string,
+    modelName: string,
+    success: boolean,
+    durationSeconds?: number,
     errorMessage?: string
   ) {
     if (!this.initialized) {
