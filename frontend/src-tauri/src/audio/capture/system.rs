@@ -1,21 +1,18 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use futures_util::{Stream, StreamExt};
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
+use futures_util::{Stream, StreamExt};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use futures_channel::mpsc;
 #[cfg(target_os = "macos")]
 use super::core_audio::CoreAudioCapture;
 #[cfg(target_os = "linux")]
 use super::pulse_monitor::PulseMonitorCapture;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+use futures_channel::mpsc;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use log::info;
 
-/// System audio capture using a Core Audio tap (macOS), the PulseAudio/PipeWire
-/// default monitor source (Linux), or CPAL (other platforms)
 pub struct SystemAudioCapture {
     _host: cpal::Host,
 }
@@ -28,7 +25,8 @@ impl SystemAudioCapture {
 
     pub fn list_system_devices() -> Result<Vec<String>> {
         let host = cpal::default_host();
-        let devices = host.output_devices()
+        let devices = host
+            .output_devices()
             .map_err(|e| anyhow::anyhow!("Failed to enumerate output devices: {}", e))?;
 
         let mut device_names = Vec::new();
@@ -45,16 +43,14 @@ impl SystemAudioCapture {
         #[cfg(target_os = "macos")]
         {
             info!("Starting Core Audio system capture (macOS)");
-            // Use Core Audio tap for system audio capture
+
             let core_audio = CoreAudioCapture::new()?;
             let core_audio_stream = core_audio.stream()?;
             let sample_rate = core_audio_stream.sample_rate();
 
-            // Convert CoreAudioStream to SystemAudioStream
             let (tx, rx) = mpsc::unbounded::<Vec<f32>>();
             let (drop_tx, drop_rx) = std::sync::mpsc::channel::<()>();
 
-            // Spawn task to forward Core Audio samples
             tokio::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = core_audio_stream;
@@ -62,12 +58,10 @@ impl SystemAudioCapture {
                 let chunk_size = 1024;
 
                 loop {
-                    // Check if we should stop
                     if drop_rx.try_recv().is_ok() {
                         break;
                     }
 
-                    // Poll the Core Audio stream
                     match stream.next().await {
                         Some(sample) => {
                             buffer.push(sample);
@@ -82,7 +76,6 @@ impl SystemAudioCapture {
                     }
                 }
 
-                // Send any remaining samples
                 if !buffer.is_empty() {
                     let _ = tx.unbounded_send(buffer);
                 }
@@ -102,16 +95,14 @@ impl SystemAudioCapture {
         #[cfg(target_os = "linux")]
         {
             info!("Starting PulseAudio/PipeWire monitor capture (Linux)");
-            // Record the monitor source of the default sink
+
             let pulse = PulseMonitorCapture::new(None)?;
             let pulse_stream = pulse.stream()?;
             let sample_rate = pulse_stream.sample_rate();
 
-            // Convert PulseMonitorStream to SystemAudioStream
             let (tx, rx) = mpsc::unbounded::<Vec<f32>>();
             let (drop_tx, drop_rx) = std::sync::mpsc::channel::<()>();
 
-            // Spawn task to forward PulseAudio samples
             tokio::spawn(async move {
                 use futures_util::StreamExt;
                 let mut stream = pulse_stream;
@@ -119,7 +110,6 @@ impl SystemAudioCapture {
                 let chunk_size = 1024;
 
                 loop {
-                    // Check if we should stop
                     if drop_rx.try_recv().is_ok() {
                         break;
                     }
@@ -138,7 +128,6 @@ impl SystemAudioCapture {
                     }
                 }
 
-                // Send any remaining samples
                 if !buffer.is_empty() {
                     let _ = tx.unbounded_send(buffer);
                 }
@@ -157,13 +146,11 @@ impl SystemAudioCapture {
 
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            // Windows loopback capture (WASAPI) is not implemented yet
             anyhow::bail!("System audio capture not yet implemented on Windows")
         }
     }
 
     pub fn check_system_audio_permissions() -> bool {
-        // Check if we can enumerate audio devices
         match cpal::default_host().output_devices() {
             Ok(_) => true,
             Err(_) => false,
@@ -197,7 +184,6 @@ impl SystemAudioStream {
     }
 }
 
-/// Public interface for system audio capture
 pub async fn start_system_audio_capture() -> Result<SystemAudioStream> {
     let capture = SystemAudioCapture::new()?;
     capture.start_system_audio_capture()
