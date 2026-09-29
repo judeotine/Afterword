@@ -3,11 +3,6 @@ export interface LanguageOption {
   label: string;
 }
 
-/**
- * Language options offered in the summary language pickers.
- * Codes must stay in sync with `language_name_from_code` in
- * `frontend/src-tauri/src/summary/processor.rs`.
- */
 export const LANGUAGE_OPTIONS: LanguageOption[] = [
   { code: 'en', label: 'English' },
   { code: 'zh', label: 'Chinese' },
@@ -45,12 +40,6 @@ export const AUTO_VALUE = '__auto__' as const;
 
 const SUPPORTED_CODES: ReadonlySet<string> = new Set(LANGUAGE_OPTIONS.map((o) => o.code));
 
-/**
- * Normalises a raw locale string (from transcription or storage) into a code we
- * can translate into. Handles BCP-47 regional tags: `pt-BR` -> `pt`, `en_GB` -> `en`.
- * Returns null for unsupported languages so callers can fall back to English
- * rather than sending a code Rust will silently drop.
- */
 export function normaliseLanguageCode(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const lower = raw.toLowerCase().replace(/_/g, '-');
