@@ -199,8 +199,8 @@ export function ChunkProgressDisplay({
 
         <div className="max-h-48 overflow-y-auto space-y-1">
           {progress.chunks
-            .slice(-10) // Show last 10 chunks
-            .reverse() // Most recent first
+            .slice(-10)
+            .reverse()
             .map((chunk) => (
               <div
                 key={chunk.chunk_id}
@@ -257,7 +257,6 @@ export function ChunkProgressDisplay({
   );
 }
 
-// Mini version for sidebar or compact display
 export function ChunkProgressMini({ progress, className = '' }: { progress: ProcessingProgress; className?: string }) {
   const completionPercentage = progress.total_chunks > 0
     ? Math.round((progress.completed_chunks / progress.total_chunks) * 100)
