@@ -27,33 +27,33 @@ interface CommandOption {
 }
 
 const COMMANDS: CommandOption[] = [
-  { 
-    id: 'text', 
-    label: 'Text', 
-    type: 'text', 
-    icon: 'T', 
-    description: 'Just start writing with plain text' 
+  {
+    id: 'text',
+    label: 'Text',
+    type: 'text',
+    icon: 'T',
+    description: 'Just start writing with plain text'
   },
-  { 
-    id: 'bullet', 
-    label: 'Bullet List', 
-    type: 'bullet', 
-    icon: '•', 
-    description: 'Create a bulleted list' 
+  {
+    id: 'bullet',
+    label: 'Bullet List',
+    type: 'bullet',
+    icon: '•',
+    description: 'Create a bulleted list'
   },
-  { 
-    id: 'h1', 
-    label: 'Heading 1', 
-    type: 'heading1', 
-    icon: 'H1', 
-    description: 'Big section heading' 
+  {
+    id: 'h1',
+    label: 'Heading 1',
+    type: 'heading1',
+    icon: 'H1',
+    description: 'Big section heading'
   },
-  { 
-    id: 'h2', 
-    label: 'Heading 2', 
-    type: 'heading2', 
-    icon: 'H2', 
-    description: 'Medium section heading' 
+  {
+    id: 'h2',
+    label: 'Heading 2',
+    type: 'heading2',
+    icon: 'H2',
+    description: 'Medium section heading'
   },
 ];
 
@@ -100,7 +100,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
     }
   }, [selectedCommandIndex, showCommands]);
 
-  const filteredCommands = COMMANDS.filter(cmd => 
+  const filteredCommands = COMMANDS.filter(cmd =>
     cmd.label.toLowerCase().includes(commandFilter.toLowerCase())
   );
 
@@ -108,7 +108,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
     if (showCommands) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedCommandIndex(prev => 
+        setSelectedCommandIndex(prev =>
           prev < filteredCommands.length - 1 ? prev + 1 : prev
         );
       } else if (e.key === 'ArrowUp') {
@@ -119,7 +119,6 @@ export const BlockComponent: React.FC<BlockProps> = ({
         const selectedCommand = filteredCommands[selectedCommandIndex];
         handleCommandSelect(selectedCommand);
       } else if (e.key === 'Escape') {
-        // Clear the slash command text when escaping
         const value = textareaRef.current?.value || '';
         const slashIndex = value.lastIndexOf('/');
         if (slashIndex >= 0) {
@@ -135,12 +134,10 @@ export const BlockComponent: React.FC<BlockProps> = ({
 
         const cursorPosition = textarea.selectionStart || 0;
         const selectionEnd = textarea.selectionEnd || cursorPosition;
-        
-        // Get the text before and after the cursor/selection
+
         const textBeforeCursor = block.content.substring(0, cursorPosition);
         const textAfterCursor = block.content.substring(selectionEnd);
-        
-        // Create new block with remaining content and pass the updated current block content
+
         onCreateNewBlock(block.id, textAfterCursor, block.type, textBeforeCursor);
       }
     } else if (e.key === 'Backspace' && onDelete) {
@@ -149,16 +146,13 @@ export const BlockComponent: React.FC<BlockProps> = ({
 
       const cursorPosition = textarea.selectionStart || 0;
       const selectionLength = (textarea.selectionEnd || 0) - cursorPosition;
-      
-      // Only handle backspace at the start of the block (no selection)
+
       if (cursorPosition === 0 && selectionLength === 0) {
         e.preventDefault();
-        
+
         if (block.content === '') {
-          // Empty block - just delete it
           onDelete();
         } else {
-          // Block has content - merge with previous block
           e.currentTarget.dataset.mergeContent = block.content;
           onDelete();
         }
@@ -176,15 +170,13 @@ export const BlockComponent: React.FC<BlockProps> = ({
         onNavigate(e.key === 'ArrowUp' ? 'up' : 'down', cursorPosition);
       }
     } else if (e.key !== 'Delete' && e.key !== 'Backspace') {
-      // Only forward non-deletion events to parent
       onKeyDown(e);
     }
   };
 
   const handleCommandSelect = (command: CommandOption) => {
     if (!textareaRef.current) return;
-    
-    // Remove the slash command text completely
+
     onChange('');
     onTypeChange(command.type);
     setShowCommands(false);
@@ -192,34 +184,31 @@ export const BlockComponent: React.FC<BlockProps> = ({
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
-    
+
     if (value.endsWith('/')) {
       setShowCommands(true);
       setCommandFilter('');
       setSelectedCommandIndex(0);
-      // Don't add the '/' to the content when entering command mode
       return;
     } else if (showCommands) {
       const slashIndex = value.lastIndexOf('/');
       if (slashIndex >= 0) {
         setCommandFilter(value.slice(slashIndex + 1));
-        // Only update content before the slash
         onChange(value.slice(0, slashIndex));
         return;
       } else {
         setShowCommands(false);
       }
     }
-    
+
     onChange(value);
-    
-    // Auto-resize
+
     e.target.style.height = 'auto';
     e.target.style.height = e.target.scrollHeight + 'px';
   };
 
   return (
-    <div 
+    <div
       className={`group relative min-h-[24px] flex items-start rounded transition-all duration-150 ease-in-out
         ${isSelected ? 'bg-blue-50 ring-1 ring-blue-200 shadow-sm' : 'hover:bg-gray-50'}`}
       onMouseDown={onMouseDown}
@@ -254,7 +243,7 @@ export const BlockComponent: React.FC<BlockProps> = ({
         />
 
         {showCommands && (
-          <div 
+          <div
             ref={commandsRef}
             className="absolute left-0 top-full mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50
                        animate-in fade-in slide-in-from-top-2 duration-150"
