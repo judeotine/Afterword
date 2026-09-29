@@ -4,18 +4,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 
-/**
- * Ollama download state synchronized with backend
- * This context provides persistent download state that survives component unmounts,
- * solving:
- * 1. Lost progress when modal closes
- * 2. Duplicate download requests
- * 3. No feedback for background downloads
- */
-
 interface OllamaDownloadState {
-  downloadProgress: Map<string, number>;  // modelName -> progress (0-100)
-  downloadingModels: Set<string>;         // Set of model names currently downloading
+  downloadProgress: Map<string, number>;
+  downloadingModels: Set<string>;
 }
 
 interface OllamaDownloadContextType extends OllamaDownloadState {
@@ -37,17 +28,12 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
   const [downloadProgress, setDownloadProgress] = useState<Map<string, number>>(new Map());
   const [downloadingModels, setDownloadingModels] = useState<Set<string>>(new Set());
 
-  /**
-   * Set up event listeners for download progress
-   * These persist for the lifetime of the app, unlike modal-scoped listeners
-   */
   useEffect(() => {
     console.log('[OllamaDownloadContext] Setting up event listeners');
     const unsubscribers: (() => void)[] = [];
 
     const setupListeners = async () => {
       try {
-        // Download progress
         const unlistenProgress = await listen<{ modelName: string; progress: number }>(
           'ollama-model-download-progress',
           (event) => {
@@ -60,7 +46,6 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
               return newProgress;
             });
 
-            // Add to downloading set if not already there
             setDownloadingModels(prev => {
               if (prev.has(modelName)) return prev;
               const newSet = new Set(prev);
@@ -71,7 +56,6 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
         );
         unsubscribers.push(unlistenProgress);
 
-        // Download complete
         const unlistenComplete = await listen<{ modelName: string }>(
           'ollama-model-download-complete',
           (event) => {
@@ -83,7 +67,6 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
               duration: 4000
             });
 
-            // Clear progress and remove from downloading set
             setDownloadProgress(prev => {
               const newProgress = new Map(prev);
               newProgress.delete(modelName);
@@ -99,7 +82,6 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
         );
         unsubscribers.push(unlistenComplete);
 
-        // Download error
         const unlistenError = await listen<{ modelName: string; error: string }>(
           'ollama-model-download-error',
           (event) => {
@@ -111,7 +93,6 @@ export function OllamaDownloadProvider({ children }: { children: React.ReactNode
               duration: 6000
             });
 
-            // Clear progress and remove from downloading set
             setDownloadProgress(prev => {
               const newProgress = new Map(prev);
               newProgress.delete(modelName);
