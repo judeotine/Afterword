@@ -3,18 +3,15 @@ const tiptapPmResolveBase = path.dirname(require.resolve('@tiptap/pm/model'));
 const resolveFromTiptapPm = (pkg) =>
   require.resolve(pkg, { paths: [tiptapPmResolveBase] });
 
-/** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false, // Disabled for BlockNote compatibility
   output: 'export',
   images: {
     unoptimized: true,
   },
-  // Add basePath configuration
   basePath: '',
   assetPrefix: '/',
 
-  // Add webpack configuration for Tauri
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
@@ -24,7 +21,6 @@ const nextConfig = {
         os: false,
       };
 
-      // Keep ProseMirror single-instanced for BlockNote/Tiptap.
       config.resolve.alias = {
         ...config.resolve.alias,
         '@blocknote/core$': require.resolve('@blocknote/core'),
