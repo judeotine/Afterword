@@ -3,14 +3,12 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use tauri::command;
 
-/// Anthropic (Claude) model information returned to frontend
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AnthropicModel {
     pub id: String,
     pub display_name: Option<String>,
 }
 
-/// API response model from Anthropic
 #[derive(Debug, Deserialize)]
 struct AnthropicApiModel {
     id: String,
@@ -19,25 +17,20 @@ struct AnthropicApiModel {
     created_at: Option<String>,
 }
 
-/// API response wrapper from Anthropic
 #[derive(Debug, Deserialize)]
 struct AnthropicApiResponse {
     data: Vec<AnthropicApiModel>,
 }
 
-/// Cache entry for models
 struct CacheEntry {
     models: Vec<AnthropicModel>,
     fetched_at: Instant,
 }
 
-/// Global cache for Anthropic models (5 minute TTL)
 static MODELS_CACHE: RwLock<Option<CacheEntry>> = RwLock::new(None);
 
-/// Cache TTL in seconds
 const CACHE_TTL_SECS: u64 = 300;
 
-/// Fallback models when API fetch fails (matches frontend hardcoded values)
 const FALLBACK_MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4-5-20250929", "Claude 4.5 Sonnet"),
     ("claude-haiku-4-5-20251001", "Claude 4.5 Haiku"),
@@ -45,7 +38,6 @@ const FALLBACK_MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4-20250514", "Claude 4 Sonnet"),
 ];
 
-/// Get fallback models as AnthropicModel vec
 fn get_fallback_models() -> Vec<AnthropicModel> {
     FALLBACK_MODELS
         .iter()
@@ -56,23 +48,14 @@ fn get_fallback_models() -> Vec<AnthropicModel> {
         .collect()
 }
 
-/// Check if model is a chat-capable model
 fn is_chat_model(model_id: &str) -> bool {
     let id = model_id.to_lowercase();
-    // Include Claude models only
+
     id.starts_with("claude-")
 }
 
-/// Fetch Anthropic models from API
-///
-/// # Arguments
-/// * `api_key` - Anthropic API key
-///
-/// # Returns
-/// Vector of available models, or fallback models on error
 #[command]
 pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<AnthropicModel>, String> {
-    // Return fallback if no API key provided
     let api_key = match api_key {
         Some(key) if !key.trim().is_empty() => key.trim().to_string(),
         _ => {
@@ -81,7 +64,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
         }
     };
 
-    // Check cache first
     {
         let cache = MODELS_CACHE.read().map_err(|e| e.to_string())?;
         if let Some(entry) = cache.as_ref() {
@@ -95,7 +77,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
         }
     }
 
-    // Fetch from API
     log::info!("Fetching Anthropic models from API...");
     let client = reqwest::Client::new();
 
@@ -131,7 +112,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
         }
     };
 
-    // Filter to only chat models and map to our struct
     let models: Vec<AnthropicModel> = api_response
         .data
         .into_iter()
@@ -142,7 +122,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
         })
         .collect();
 
-    // If no models returned, use fallback
     if models.is_empty() {
         log::warn!("No chat models returned from Anthropic API. Using fallback.");
         return Ok(get_fallback_models());
@@ -150,7 +129,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
 
     log::info!("Fetched {} Anthropic models from API", models.len());
 
-    // Update cache
     {
         let mut cache = MODELS_CACHE.write().map_err(|e| e.to_string())?;
         *cache = Some(CacheEntry {
@@ -162,7 +140,6 @@ pub async fn get_anthropic_models(api_key: Option<String>) -> Result<Vec<Anthrop
     Ok(models)
 }
 
-/// Clear the models cache (useful when API key changes)
 pub fn clear_cache() {
     if let Ok(mut cache) = MODELS_CACHE.write() {
         *cache = None;
