@@ -8,7 +8,6 @@ import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
 
-
 interface TranscriptButtonGroupProps {
   transcriptCount: number;
   onCopyTranscript: () => void;
@@ -17,7 +16,6 @@ interface TranscriptButtonGroupProps {
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
 }
-
 
 export function TranscriptButtonGroup({
   transcriptCount,
@@ -31,7 +29,6 @@ export function TranscriptButtonGroup({
   const [showRetranscribeDialog, setShowRetranscribeDialog] = useState(false);
 
   const handleRetranscribeComplete = useCallback(async () => {
-    // Refetch transcripts to show the updated data
     if (onRefetchTranscripts) {
       await onRefetchTranscripts();
     }
