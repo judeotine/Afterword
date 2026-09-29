@@ -1,10 +1,3 @@
-/**
- * Environment validation.
- *
- * PRIVACY_URL has no default on purpose: the consent notice announces that link
- * to every participant, so a deployment must supply one that actually describes
- * it rather than inheriting Afterword's own policy.
- */
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 
