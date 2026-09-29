@@ -29,5 +29,6 @@ macro_rules! perf_trace {
 pub mod audio;
 pub mod config;
 pub mod parakeet_engine;
+pub mod summary;
 pub mod transcript;
 pub mod whisper_engine;
