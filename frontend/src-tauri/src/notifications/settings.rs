@@ -1,69 +1,50 @@
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use dirs;
 use log::info as log_info;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
-use dirs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationSettings {
-    /// Enable recording lifecycle notifications (start/stop/pause/resume)
     pub recording_notifications: bool,
 
-    /// Enable time-based meeting reminders
     pub time_based_reminders: bool,
 
-    /// Enable meeting reminders based on calendar events
     pub meeting_reminders: bool,
 
-    /// Respect system Do Not Disturb settings
     pub respect_do_not_disturb: bool,
 
-    /// Enable notification sounds
     pub notification_sound: bool,
 
-    /// System notification permission has been granted
     pub system_permission_granted: bool,
 
-    /// User has completed the initial notification setup
     pub consent_given: bool,
 
-    /// Manual DND mode (user-controlled)
     pub manual_dnd_mode: bool,
 
-    /// Marker for the one-time reset of consent that older builds granted
-    /// automatically at startup. Absent in files written before that reset.
     #[serde(default)]
     pub consent_migration_v1: bool,
 
-    /// Notification preferences for different types
     pub notification_preferences: NotificationPreferences,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationPreferences {
-    /// Show recording started notifications
     pub show_recording_started: bool,
 
-    /// Show recording stopped notifications
     pub show_recording_stopped: bool,
 
-    /// Show recording paused notifications
     pub show_recording_paused: bool,
 
-    /// Show recording resumed notifications
     pub show_recording_resumed: bool,
 
-    /// Show transcription complete notifications
     pub show_transcription_complete: bool,
 
-    /// Show meeting reminder notifications
     pub show_meeting_reminders: bool,
 
-    /// Show system error notifications
     pub show_system_errors: bool,
 
-    /// Minutes before meeting to show reminder (0 = disabled)
     pub meeting_reminder_minutes: Vec<u64>,
 }
 
@@ -94,14 +75,13 @@ impl Default for NotificationPreferences {
             show_transcription_complete: true,
             show_meeting_reminders: true,
             show_system_errors: true,
-            meeting_reminder_minutes: vec![15, 5], // 15 minutes and 5 minutes before
+            meeting_reminder_minutes: vec![15, 5],
         }
     }
 }
 
-/// Manages notification consent and user preferences
 pub struct ConsentManager<R: Runtime> {
-    #[allow(dead_code)] // Reserved for future functionality
+    #[allow(dead_code)]
     app_handle: AppHandle<R>,
     settings_path: PathBuf,
 }
@@ -116,21 +96,18 @@ impl<R: Runtime> ConsentManager<R> {
         })
     }
 
-    /// Get the path where notification settings are stored
     fn get_settings_path() -> Result<PathBuf> {
-        // Tests redirect the settings file so they never touch the real one.
         #[cfg(test)]
         if let Ok(path) = std::env::var("AFTERWORD_TEST_NOTIFICATION_SETTINGS") {
             return Ok(PathBuf::from(path));
         }
 
-        let mut path = dirs::config_dir()
-            .ok_or_else(|| anyhow!("Could not find config directory"))?;
+        let mut path =
+            dirs::config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
 
         path.push("afterword");
         path.push("notifications.json");
 
-        // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -138,7 +115,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(path)
     }
 
-    /// Load notification settings from disk
     pub async fn load_settings(&self) -> Result<NotificationSettings> {
         if !self.settings_path.exists() {
             log_info!("No notification settings file found, using defaults");
@@ -152,7 +128,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(settings)
     }
 
-    /// Save notification settings to disk
     pub async fn save_settings(&self, settings: &NotificationSettings) -> Result<()> {
         let content = serde_json::to_string_pretty(settings)?;
         tokio::fs::write(&self.settings_path, content).await?;
@@ -161,7 +136,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(())
     }
 
-    /// Check if the user has given consent for notifications
     pub async fn has_consent(&self) -> bool {
         match self.load_settings().await {
             Ok(settings) => settings.consent_given,
@@ -169,7 +143,6 @@ impl<R: Runtime> ConsentManager<R> {
         }
     }
 
-    /// Check if system notification permission has been granted
     pub async fn has_system_permission(&self) -> bool {
         match self.load_settings().await {
             Ok(settings) => settings.system_permission_granted,
@@ -177,7 +150,6 @@ impl<R: Runtime> ConsentManager<R> {
         }
     }
 
-    /// Set user consent for notifications
     pub async fn set_consent(&self, consent: bool) -> Result<()> {
         let mut settings = self.load_settings().await.unwrap_or_default();
         settings.consent_given = consent;
@@ -187,7 +159,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(())
     }
 
-    /// Set system permission status
     pub async fn set_system_permission(&self, granted: bool) -> Result<()> {
         let mut settings = self.load_settings().await.unwrap_or_default();
         settings.system_permission_granted = granted;
@@ -197,7 +168,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(())
     }
 
-    /// Update specific notification preferences
     pub async fn update_preferences(&self, preferences: NotificationPreferences) -> Result<()> {
         let mut settings = self.load_settings().await.unwrap_or_default();
         settings.notification_preferences = preferences;
@@ -207,7 +177,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(())
     }
 
-    /// Enable or disable Do Not Disturb mode
     pub async fn set_dnd_mode(&self, enabled: bool) -> Result<()> {
         let mut settings = self.load_settings().await.unwrap_or_default();
         settings.manual_dnd_mode = enabled;
@@ -217,7 +186,6 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(())
     }
 
-    /// Check if notifications should be shown (considering consent, permissions, and DND)
     pub async fn should_show_notifications(&self) -> bool {
         match self.load_settings().await {
             Ok(settings) => {
@@ -229,7 +197,6 @@ impl<R: Runtime> ConsentManager<R> {
         }
     }
 
-    /// Initialize notification settings on first app launch
     pub async fn initialize_on_first_launch(&self) -> Result<NotificationSettings> {
         if self.settings_path.exists() {
             return self.load_settings().await;
@@ -242,13 +209,9 @@ impl<R: Runtime> ConsentManager<R> {
         Ok(default_settings)
     }
 
-    /// Get settings with migration if needed
     pub async fn get_settings_with_migration(&self) -> Result<NotificationSettings> {
         let mut settings = self.load_settings().await.unwrap_or_default();
 
-        // consent_migration_v1: older builds granted notification consent on the
-        // user's behalf at every startup. Revoke that once, so "notifications are
-        // opt-in" is true for existing installs as well as new ones.
         if !settings.consent_migration_v1 {
             if settings.consent_given {
                 log_info!("Resetting notification consent that was granted automatically by an older build");
@@ -261,15 +224,8 @@ impl<R: Runtime> ConsentManager<R> {
         self.save_settings(&settings).await?;
         Ok(settings)
     }
-
 }
 
-/// Carry over the fields that only consent/permission flows may change.
-///
-/// `set_notification_settings` receives a whole settings struct from the UI,
-/// which can easily be stale (it is cached in the frontend). Preserving these
-/// three fields from the live settings means a preferences write can never
-/// silently revoke consent.
 pub fn preserve_consent_state(
     current: &NotificationSettings,
     incoming: NotificationSettings,
@@ -282,24 +238,22 @@ pub fn preserve_consent_state(
     }
 }
 
-/// Get default notification settings
 pub fn get_default_settings() -> NotificationSettings {
     NotificationSettings::default()
 }
 
-/// Validate notification settings
 pub fn validate_settings(settings: &NotificationSettings) -> Result<()> {
-    // Validate meeting reminder minutes
     for &minutes in &settings.notification_preferences.meeting_reminder_minutes {
-        if minutes > 1440 { // More than 24 hours
-            return Err(anyhow!("Meeting reminder cannot be more than 24 hours (1440 minutes)"));
+        if minutes > 1440 {
+            return Err(anyhow!(
+                "Meeting reminder cannot be more than 24 hours (1440 minutes)"
+            ));
         }
     }
 
     Ok(())
 }
 
-/// Merge settings with defaults (for handling partial updates)
 pub fn merge_with_defaults(partial: NotificationSettings) -> NotificationSettings {
     let _defaults = NotificationSettings::default();
 
