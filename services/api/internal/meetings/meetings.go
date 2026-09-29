@@ -34,6 +34,7 @@ const (
 	KindTranscribe = "transcribe"
 	KindSummarise  = "summarise"
 	KindPurge      = "purge"
+	KindClip       = "clip"
 
 	MaxSegments      = 20000
 	MaxTitleLength   = 300
@@ -194,6 +195,16 @@ type TranscodePayload struct {
 	Bucket      string    `json:"bucket"`
 	Key         string    `json:"key"`
 	Generation  int32     `json:"generation"`
+}
+
+type ClipPayload struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	MeetingID   uuid.UUID `json:"meeting_id"`
+	ClipID      uuid.UUID `json:"clip_id"`
+	SourceKey   string    `json:"source_key"`
+	TargetKey   string    `json:"target_key"`
+	StartS      float64   `json:"start_s"`
+	EndS        float64   `json:"end_s"`
 }
 
 func meetingFromRow(row sqlcgen.Meeting) Meeting {
