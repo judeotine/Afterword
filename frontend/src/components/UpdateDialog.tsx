@@ -28,12 +28,10 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
 
   useEffect(() => {
     if (open && updateInfo?.available) {
-      // Reset state when dialog opens
       setIsDownloading(false);
       setProgress(null);
       setError(null);
 
-      // Get the update object when dialog opens
       check().then((updateResult) => {
         if (updateResult?.available) {
           setUpdate(updateResult);
@@ -45,7 +43,6 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         setError('Failed to prepare update: ' + (err.message || 'Unknown error'));
       });
     } else {
-      // Reset state when dialog closes
       setIsDownloading(false);
       setProgress(null);
       setError(null);
@@ -54,7 +51,6 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   }, [open, updateInfo]);
 
   const handleDownloadAndInstall = async () => {
-    // Get update object if not already available
     let updateToUse: Update | null = update;
     if (!updateToUse) {
       try {
@@ -72,9 +68,8 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       }
     }
 
-    // At this point, updateToUse is guaranteed to be non-null
     if (!updateToUse) {
-      return; // This should never happen, but TypeScript needs this check
+      return;
     }
 
     setIsDownloading(true);
@@ -85,7 +80,6 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       let downloaded = 0;
       let contentLength = 0;
 
-      // Use the official Tauri updater API with progress callbacks
       await updateToUse.downloadAndInstall((event) => {
         switch (event.event) {
           case 'Started':
@@ -125,13 +119,10 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       console.log('[UpdateDialog] Update installed successfully');
       toast.success('Update installed successfully. The app will restart...');
 
-      // Mark download as complete before closing
       setIsDownloading(false);
 
-      // Close dialog before relaunch
       handleOpenChange(false);
 
-      // Relaunch the app
       await relaunch();
     } catch (err: any) {
       console.error('Update failed:', err);
@@ -150,24 +141,19 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
     }
   };
 
-  // Prevent closing the dialog when downloading
   const handleOpenChange = (newOpen: boolean) => {
-    // If trying to close while downloading, prevent it
     if (!newOpen && isDownloading) {
       return;
     }
-    // Otherwise, allow normal close behavior
     onOpenChange(newOpen);
   };
 
-  // Prevent ESC key from closing dialog during download
   const handleEscapeKeyDown = (event: KeyboardEvent) => {
     if (isDownloading) {
       event.preventDefault();
     }
   };
 
-  // Prevent outside clicks from closing dialog during download
   const handleInteractOutside = (event: Event) => {
     if (isDownloading) {
       event.preventDefault();
