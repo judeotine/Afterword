@@ -159,6 +159,11 @@ func (s *Server) Routes(router chi.Router) {
 					r.Post("/share", s.handleCreateShareLink)
 					r.Get("/share", s.handleListShareLinks)
 					r.Delete("/share", s.handleRevokeShareLinks)
+
+					r.Post("/comments", s.handleCreateComment)
+					r.Get("/comments", s.handleListComments)
+					r.Patch("/comments/{"+commentParam+"}", s.handleUpdateComment)
+					r.Delete("/comments/{"+commentParam+"}", s.handleDeleteComment)
 				})
 
 				r.Post("/folders", s.handleCreateFolder)
