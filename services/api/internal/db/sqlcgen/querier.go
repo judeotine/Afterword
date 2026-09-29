@@ -9,6 +9,7 @@ import (
 
 type Querier interface {
 	AcceptWorkspaceInvite(ctx context.Context, arg AcceptWorkspaceInviteParams) (WorkspaceInvite, error)
+	AttachBotJobMeeting(ctx context.Context, arg AttachBotJobMeetingParams) (BotJob, error)
 	ClaimAuthOTPAttempt(ctx context.Context, arg ClaimAuthOTPAttemptParams) (int32, error)
 	ClaimNextBotJob(ctx context.Context, arg ClaimNextBotJobParams) (BotJob, error)
 	ConsumeAuthOTP(ctx context.Context, arg ConsumeAuthOTPParams) (int64, error)
