@@ -25,10 +25,6 @@ export interface BotJobSummary {
   created_at: string;
 }
 
-function channelFor(destination: string): string {
-  return destination.includes('@') ? 'email' : 'phone';
-}
-
 export class AccountApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -50,14 +46,6 @@ export class AccountApi {
   constructor(options: AccountApiOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.fetchImpl = options.fetchImpl ?? fetch;
-  }
-
-  async sendOtp(destination: string): Promise<void> {
-    await this.post('/v1/auth/otp/send', { destination, channel: channelFor(destination) });
-  }
-
-  async verifyOtp(destination: string, code: string): Promise<{ access_token: string; refresh_token: string }> {
-    return this.post('/v1/auth/otp/verify', { destination, code, channel: channelFor(destination) });
   }
 
   async refresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string }> {
