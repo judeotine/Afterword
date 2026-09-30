@@ -18,8 +18,8 @@ interface SessionValue {
   workspaceId: string | null;
   workspaces: Workspace[];
   api: ApiClient;
-  sendCode: (destination: string) => Promise<void>;
-  verifyCode: (destination: string, code: string) => Promise<void>;
+  signInWithGoogle: () => void;
+  completeTokenSignIn: (accessToken: string, refreshToken: string) => Promise<void>;
   selectWorkspace: (workspaceId: string) => void;
   signOut: () => void;
 }
@@ -90,15 +90,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, [api, hydrate]);
 
-  const sendCode = useCallback((destination: string) => api.sendOtp(destination), [api]);
+  const signInWithGoogle = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.location.href = api.googleStartUrl('/sign-in');
+  }, [api]);
 
-  const verifyCode = useCallback(
-    async (destination: string, code: string) => {
-      const tokens = await api.verifyOtp(destination, code);
-      writeStored(tokens.refresh_token);
-      await hydrate(tokens.access_token);
+  const completeTokenSignIn = useCallback(
+    async (token: string, refreshToken: string) => {
+      writeStored(refreshToken);
+      await hydrate(token);
     },
-    [api, hydrate],
+    [hydrate],
   );
 
   const selectWorkspace = useCallback((next: string) => {
@@ -120,12 +124,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       workspaceId,
       workspaces,
       api,
-      sendCode,
-      verifyCode,
+      signInWithGoogle,
+      completeTokenSignIn,
       selectWorkspace,
       signOut,
     }),
-    [ready, accessToken, workspaceId, workspaces, api, sendCode, verifyCode, selectWorkspace, signOut],
+    [ready, accessToken, workspaceId, workspaces, api, signInWithGoogle, completeTokenSignIn, selectWorkspace, signOut],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
