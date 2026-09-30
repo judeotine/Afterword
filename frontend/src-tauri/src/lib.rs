@@ -545,6 +545,7 @@ pub fn run() {
             account::commands::account_store_refresh_token,
             account::commands::account_get_refresh_token,
             account::commands::account_clear_refresh_token,
+            account::google::account_google_sign_in,
             account::sync::sync_enqueue,
             account::sync::sync_pending,
             account::sync::sync_mark_done,
