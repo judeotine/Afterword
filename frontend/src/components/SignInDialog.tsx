@@ -3,9 +3,7 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { useAccount, AccountApiError } from '@/contexts/AccountContext';
+import { useAccount } from '@/contexts/AccountContext';
 import { Loader2 } from 'lucide-react';
 
 interface SignInDialogProps {
@@ -14,61 +12,30 @@ interface SignInDialogProps {
 }
 
 export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
-  const { sendCode, verifyCode, apiBaseUrl } = useAccount();
-  const [stage, setStage] = useState<'destination' | 'code'>('destination');
-  const [destination, setDestination] = useState('');
-  const [code, setCode] = useState('');
+  const { signInWithGoogle, apiBaseUrl } = useAccount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const reset = () => {
-    setStage('destination');
-    setDestination('');
-    setCode('');
-    setError(null);
-    setBusy(false);
-  };
-
   const close = (next: boolean) => {
     if (!next) {
-      reset();
+      setError(null);
+      setBusy(false);
     }
     onOpenChange(next);
   };
 
-  const friendlyError = (err: unknown): string => {
-    if (err instanceof AccountApiError) {
-      return err.message;
-    }
-    if (err instanceof TypeError) {
-      return `Could not reach the server at ${apiBaseUrl}. Check that the backend is running.`;
-    }
-    return 'Something went wrong. Please try again.';
-  };
-
-  const submitDestination = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const handleGoogle = async () => {
     setBusy(true);
     setError(null);
     try {
-      await sendCode(destination.trim());
-      setStage('code');
-    } catch (err) {
-      setError(friendlyError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const submitCode = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await verifyCode(destination.trim(), code.trim());
+      await signInWithGoogle();
       close(false);
     } catch (err) {
-      setError(friendlyError(err));
+      if (err instanceof TypeError) {
+        setError(`Could not reach the server at ${apiBaseUrl}. Check that the backend is running.`);
+      } else {
+        setError(err instanceof Error ? err.message : 'Sign-in did not complete. Please try again.');
+      }
     } finally {
       setBusy(false);
     }
@@ -80,60 +47,38 @@ export function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
         <DialogHeader>
           <DialogTitle>Sign in to Afterword</DialogTitle>
           <DialogDescription>
-            {stage === 'destination'
-              ? 'Enter your email or phone and we will send a one time code.'
-              : `Enter the code we sent to ${destination}.`}
+            Sign in to sync your meetings, share with your team, and send the notetaker to calls.
           </DialogDescription>
         </DialogHeader>
 
-        {stage === 'destination' ? (
-          <form onSubmit={submitDestination} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="signin-destination">Email or phone</Label>
-              <Input
-                id="signin-destination"
-                value={destination}
-                onChange={(event) => setDestination(event.target.value)}
-                placeholder="you@example.com"
-                autoFocus
-                required
-              />
-            </div>
-            {error ? <p className="text-sm text-red-600">{error}</p> : null}
-            <Button type="submit" disabled={busy || !destination.trim()} className="w-full">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send code'}
-            </Button>
-          </form>
-        ) : (
-          <form onSubmit={submitCode} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="signin-code">Verification code</Label>
-              <Input
-                id="signin-code"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="123456"
-                inputMode="numeric"
-                autoFocus
-                required
-              />
-            </div>
-            {error ? <p className="text-sm text-red-600">{error}</p> : null}
-            <Button type="submit" disabled={busy || !code.trim()} className="w-full">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify and continue'}
-            </Button>
-            <button
-              type="button"
-              className="w-full text-sm text-gray-500 hover:text-gray-700"
-              onClick={() => {
-                setStage('destination');
-                setError(null);
-              }}
-            >
-              Use a different address
-            </button>
-          </form>
-        )}
+        <div className="space-y-4">
+          <Button
+            onClick={handleGoogle}
+            disabled={busy}
+            variant="outline"
+            className="flex w-full items-center justify-center gap-3 py-5 text-sm font-medium"
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" />
+                <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.583-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" />
+                <path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z" />
+                <path fill="#EA4335" d="M9 3.583c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.166 6.656 3.583 9 3.583z" />
+              </svg>
+            )}
+            {busy ? 'Waiting for Google...' : 'Continue with Google'}
+          </Button>
+
+          {busy ? (
+            <p className="text-center text-xs text-gray-500">
+              A browser window has opened. Complete sign-in there, then return to the app.
+            </p>
+          ) : null}
+
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        </div>
       </DialogContent>
     </Dialog>
   );
