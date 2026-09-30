@@ -14,8 +14,7 @@ export interface AccountContextValue {
   workspaces: WorkspaceSummary[];
   credits: number | null;
   apiBaseUrl: string;
-  sendCode: (destination: string) => Promise<void>;
-  verifyCode: (destination: string, code: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => Promise<void>;
   refreshBalance: () => Promise<void>;
   sendBot: (meetingUrl: string, botName?: string) => Promise<BotJobSummary>;
@@ -131,20 +130,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     void refreshBalance();
   }, [refreshBalance]);
 
-  const sendCode = useCallback(
-    async (destination: string) => {
-      await api.sendOtp(destination);
-    },
-    [api],
-  );
-
-  const verifyCode = useCallback(
-    async (destination: string, code: string) => {
-      const tokens = await api.verifyOtp(destination, code);
-      await establishSession(tokens);
-    },
-    [api, establishSession],
-  );
+  const signInWithGoogle = useCallback(async () => {
+    if (!isTauri()) {
+      throw new Error('Google sign-in is only available in the desktop app.');
+    }
+    const tokens = await invoke<{ access_token: string; refresh_token: string }>('account_google_sign_in', {
+      apiBaseUrl: DEFAULT_API_BASE_URL,
+    });
+    await establishSession(tokens);
+  }, [establishSession]);
 
   const switchWorkspace = useCallback(
     async (nextWorkspaceId: string) => {
@@ -195,15 +189,14 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       workspaces,
       credits,
       apiBaseUrl: DEFAULT_API_BASE_URL,
-      sendCode,
-      verifyCode,
+      signInWithGoogle,
       switchWorkspace,
       refreshBalance,
       sendBot,
       listBotJobs,
       signOut,
     }),
-    [mode, loading, workspaceId, workspaceName, workspaces, credits, sendCode, verifyCode, switchWorkspace, refreshBalance, sendBot, listBotJobs, signOut],
+    [mode, loading, workspaceId, workspaceName, workspaces, credits, signInWithGoogle, switchWorkspace, refreshBalance, sendBot, listBotJobs, signOut],
   );
 
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>;
