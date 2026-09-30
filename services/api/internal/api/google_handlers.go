@@ -2,7 +2,11 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/hlog"
@@ -15,6 +19,7 @@ const (
 	googleErrorPath       = "/sign-in?error=google"
 	googleStateCookieName = "afterword_google_state"
 	googleStateCookiePath = "/v1/auth/google"
+	desktopCallbackPrefix = "/desktop-callback/"
 )
 
 func (s *Server) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +28,15 @@ func (s *Server) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	started, err := s.google.Start(r.Context(), r.URL.Query().Get("redirect_to"))
+	query := r.URL.Query()
+	redirectTo := query.Get("redirect_to")
+	if port := strings.TrimSpace(query.Get("desktop_port")); port != "" {
+		if _, err := strconv.Atoi(port); err == nil {
+			redirectTo = desktopCallbackPrefix + port
+		}
+	}
+
+	started, err := s.google.Start(r.Context(), redirectTo)
 	if err != nil {
 		s.writeInternalError(w, r, err)
 		return
@@ -71,9 +84,25 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refresh, err := s.refresh.Issue(r.Context(), signIn.User.ID, "web")
+	access, err := s.tokens.Issue(signIn.User.ID, signIn.Workspace.ID, signIn.Role)
 	if err != nil {
 		s.writeInternalError(w, r, err)
+		return
+	}
+
+	refresh, err := s.refresh.Issue(r.Context(), signIn.User.ID, "oauth")
+	if err != nil {
+		s.writeInternalError(w, r, err)
+		return
+	}
+
+	if port, ok := desktopCallbackPort(completed.RedirectTo); ok {
+		loopback := fmt.Sprintf("http://127.0.0.1:%s/?access_token=%s&refresh_token=%s",
+			port,
+			url.QueryEscape(access.Token),
+			url.QueryEscape(refresh.Token),
+		)
+		http.Redirect(w, r, loopback, http.StatusFound)
 		return
 	}
 
@@ -81,9 +110,24 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 	destination := auth.SafeRedirectPath(completed.RedirectTo)
 	if destination == "" {
-		destination = "/"
+		destination = "/sign-in"
 	}
-	s.redirectToApp(w, r, destination)
+	fragment := fmt.Sprintf("#access_token=%s&refresh_token=%s",
+		url.QueryEscape(access.Token),
+		url.QueryEscape(refresh.Token),
+	)
+	s.redirectToApp(w, r, destination+fragment)
+}
+
+func desktopCallbackPort(redirectTo string) (string, bool) {
+	if !strings.HasPrefix(redirectTo, desktopCallbackPrefix) {
+		return "", false
+	}
+	port := strings.TrimPrefix(redirectTo, desktopCallbackPrefix)
+	if port == "" || strings.ContainsAny(port, "/?#") {
+		return "", false
+	}
+	return port, true
 }
 
 func (s *Server) redirectToApp(w http.ResponseWriter, r *http.Request, path string) {
